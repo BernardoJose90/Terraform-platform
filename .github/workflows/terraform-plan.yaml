@@ -1,0 +1,21 @@
+name: Terraform Plan
+
+on:
+  pull_request:
+    paths:
+      - 'environments/**'
+      - 'modules/**'
+
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - name: Terraform Init
+        run: terraform init
+        working-directory: environments/dev
+      - name: Terraform Plan
+        id: plan
+        run: terraform plan -no-color
+        working-directory: environments/dev
