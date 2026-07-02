@@ -3,19 +3,83 @@ name: Terraform Plan
 on:
   pull_request:
     paths:
-      - 'environments/**'
+      - 'management/**'
+      - 'security/**'
+      - 'security-analytics/**'
+      - 'network/**'
+      - 'monitoring/**'
+      - 'production/**'
+      - 'development/**'
       - 'modules/**'
 
 jobs:
   plan:
+    name: Plan (${{ matrix.account }})
     runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        account:
+          - management
+          - security
+          - security-analytics
+          - network
+          - monitoring
+          - production
+          - development
+      fail-fast: false
+
+    permissions:
+      contents: read
+      pull-requests: write
+
     steps:
-      - uses: actions/checkout@v4
-      - uses: hashicorp/setup-terraform@v3
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "~> 1.6"
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region:            eu-west-2
+
       - name: Terraform Init
+        working-directory: ${{ matrix.account }}
         run: terraform init
-        working-directory: environments/dev
+
+      - name: Terraform Validate
+        working-directory: ${{ matrix.account }}
+        run: terraform validate
+
       - name: Terraform Plan
         id: plan
+        working-directory: ${{ matrix.account }}
         run: terraform plan -no-color
-        working-directory: environments/dev
+        continue-on-error: true
+
+      - name: Post plan to PR
+        uses: actions/github-script@v7
+        if: github.event_name == 'pull_request'
+        with:
+          script: |
+            const output = `### Terraform Plan — \`${{ matrix.account }}\`
+            \`\`\`
+            ${{ steps.plan.outputs.stdout }}
+            \`\`\`
+            *Status: \`${{ steps.plan.outcome }}\`*`;
+            github.rest.issues.createComment({
+              issue_number: context.issue.number,
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              body: output
+            });
+
+      - name: Fail if plan failed
+        if: steps.plan.outcome == 'failure'
+        run: exit 1
