@@ -19,12 +19,6 @@ resource "aws_iam_policy" "terraform_org_ssm" {
   })
 }
 
-# Attach the policy to your existing role
-# Replace "YOUR-EXISTING-ROLE-NAME" with your actual role name
-resource "aws_iam_role_policy_attachment" "terraform_org_ssm" {
-  role       = "YOUR-EXISTING-ROLE-NAME"  # ⚠️ CHANGE THIS
-  policy_arn = aws_iam_policy.terraform_org_ssm.arn
-}
 
 # If you don't have an existing role, create one (optional)
 resource "aws_iam_role" "terraform_org" {

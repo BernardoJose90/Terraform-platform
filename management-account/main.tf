@@ -28,7 +28,7 @@
 ###############################################################################
 
 terraform {
-  required_version = ">= 1.6.0"
+  required_version = ">= 1.10.0"
 
   required_providers {
     aws = {
@@ -47,8 +47,9 @@ terraform {
 }
 
 provider "aws" {
-  region = "eu-west-2"
+  region = var.aws_region
 }
+
 
 ###############################################################################
 # 1. Data source — IAM Identity Center instance
@@ -82,9 +83,6 @@ data "aws_ssm_parameter" "account_ids" {
 
 # Build the account_ids map from SSM parameters
 locals {
-  sso_instance_arn  = tolist(data.aws_ssoadmin_instances.this.arns)[0]
-  identity_store_id = tolist(data.aws_ssoadmin_instances.this.identity_store_ids)[0]
-
   # ✅ Read account IDs from SSM (the secure way)
   account_ids = {
     for name in local.account_names :
@@ -228,18 +226,27 @@ resource "aws_identitystore_group_membership" "james_network_team" {
 #   administrators → ReadOnly             → production (extra safety)
 ###############################################################################
 
-# administrators group → AdministratorAccess → all 6 accounts
+# implemented the AWS best practice of giving administrators both full admin and read-only access to production
+# 1️⃣ Administrators → Full Admin → ALL accounts
 resource "aws_ssoadmin_account_assignment" "administrators_admin" {
   for_each = local.account_ids
 
   instance_arn       = local.sso_instance_arn
   permission_set_arn = aws_ssoadmin_permission_set.administrator.arn
+  principal_type     = "GROUP"
+  principal_id       = aws_identitystore_group.administrators.group_id
+  target_type        = "AWS_ACCOUNT"
+  target_id          = each.value
+}
 
-  principal_type = "GROUP"
-  principal_id   = aws_identitystore_group.administrators.group_id
-
-  target_type = "AWS_ACCOUNT"
-  target_id   = each.value
+# 2️⃣ Administrators → Read-Only → Production (Safety net!) 
+resource "aws_ssoadmin_account_assignment" "administrators_readonly_prod" {
+  instance_arn       = local.sso_instance_arn
+  permission_set_arn = aws_ssoadmin_permission_set.read_only.arn
+  principal_type     = "GROUP"
+  principal_id       = aws_identitystore_group.administrators.group_id
+  target_type        = "AWS_ACCOUNT"
+  target_id          = local.account_ids["production"]
 }
 
 # security_team group → AdministratorAccess → security + security-analytics

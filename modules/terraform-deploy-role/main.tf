@@ -10,13 +10,6 @@ data "aws_iam_policy_document" "trust" {
   }
 }
 
-resource "aws_iam_role" "terraform_deploy" {
-  name                 = "TerraformDeploy"
-  assume_role_policy   = data.aws_iam_policy_document.trust.json
-  max_session_duration = 3600
-  tags                 = { ManagedBy = "Terraform" }
-}
-
 # Updated permissions with SSM access (no DynamoDB)
 data "aws_iam_policy_document" "permissions" {
   # VPC, Site-to-Site VPN, and EC2 instances — all live under ec2:
@@ -103,14 +96,21 @@ data "aws_iam_policy_document" "permissions" {
       "s3:ListBucket"
     ]
     resources = [
-      "arn:aws:s3:::james-terraform-state-2026",
-      "arn:aws:s3:::james-terraform-state-2026/*"
+      "arn:aws:s3:::${var.state_bucket_name}",
+      "arn:aws:s3:::${var.state_bucket_name}/*"
     ]
   }
 }
 
+resource "aws_iam_role" "terraform_deploy" {
+  name                 = var.role_name        # fixed: role uses the variable
+  assume_role_policy   = data.aws_iam_policy_document.trust.json
+  max_session_duration = 3600
+  tags                 = { ManagedBy = "Terraform" }
+}
+
 resource "aws_iam_role_policy" "terraform_deploy" {
-  name   = "TerraformDeployPermissions"
+  name   = "TerraformDeployPermissions"       # revert: this can stay a static/internal name
   role   = aws_iam_role.terraform_deploy.id
   policy = data.aws_iam_policy_document.permissions.json
 }
