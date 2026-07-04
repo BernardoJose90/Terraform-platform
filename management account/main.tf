@@ -1,7 +1,7 @@
 ###############################################################################
 # Account: Management (145678291484)
-# Purpose: IAM Identity Center — users, groups, permission sets,
-#          and account assignments managed as code.
+# Purpose: this main.tf files sets up SSO/identity after accounts exist IAM Identity Center — users, groups, permission sets,
+#          and account assignments managed as code this basicaly Sets up who can access those accounts (SSO permissions).
 #
 # FIRST-TIME SETUP — import existing resources before applying:
 #
@@ -60,19 +60,40 @@ locals {
   sso_instance_arn      = tolist(data.aws_ssoadmin_instances.this.arns)[0]
   identity_store_id     = tolist(data.aws_ssoadmin_instances.this.identity_store_ids)[0]
 
-  # Account IDs from terraform-org outputs
+  # Define the list of account names we need
+  account_names = [
+    "security",
+    "security_analytics",
+    "network",
+    "monitoring",
+    "production",
+    "development"
+  ]
+}
+
+###############################################################################
+# 2. Data sources — Fetch account IDs from SSM Parameter Store
+# These are written by the terraform-org repository during its apply.
+###############################################################################
+data "aws_ssm_parameter" "account_ids" {
+  for_each = toset(local.account_names)
+  name     = "/organizations/accounts/${each.value}"
+}
+
+# Build the account_ids map from SSM parameters
+locals {
+  sso_instance_arn  = tolist(data.aws_ssoadmin_instances.this.arns)[0]
+  identity_store_id = tolist(data.aws_ssoadmin_instances.this.identity_store_ids)[0]
+
+  # ✅ Read account IDs from SSM (the secure way)
   account_ids = {
-    security           = "141939821830"
-    security_analytics = "613993872109"
-    network            = "650539477637"
-    monitoring         = "296122127149"
-    production         = "654049396391"
-    development        = "810738287003"
+    for name in local.account_names :
+    name => data.aws_ssm_parameter.account_ids[name].value
   }
 }
 
 ###############################################################################
-# 2. Permission Sets
+# 3. Permission Sets
 # Defines WHAT level of access is granted.
 ###############################################################################
 
@@ -80,7 +101,7 @@ locals {
 resource "aws_ssoadmin_permission_set" "administrator" {
   name             = "AdministratorAccess"
   instance_arn     = local.sso_instance_arn
-  session_duration = "PT2H"   # 2 hour session — adjust as needed
+  session_duration = "PT2H"
   description      = "Full administrator access. For platform engineers only."
 
   tags = { ManagedBy = "Terraform" }
@@ -127,7 +148,7 @@ resource "aws_ssoadmin_managed_policy_attachment" "read_only" {
 }
 
 ###############################################################################
-# 3. Groups
+# 4. Groups
 # Defines WHO gets access. Assign users to groups, not directly to accounts.
 # This is the AWS recommended pattern — it scales as your team grows.
 ###############################################################################
@@ -151,7 +172,7 @@ resource "aws_identitystore_group" "network_team" {
 }
 
 ###############################################################################
-# 4. Users
+# 5. Users
 ###############################################################################
 
 resource "aws_identitystore_user" "james_admin" {
@@ -173,7 +194,7 @@ resource "aws_identitystore_user" "james_admin" {
 }
 
 ###############################################################################
-# 5. Group Memberships
+# 6. Group Memberships
 # Add james.admin to all groups — he is the only user right now.
 # Add more users here as your team grows.
 ###############################################################################
@@ -197,7 +218,7 @@ resource "aws_identitystore_group_membership" "james_network_team" {
 }
 
 ###############################################################################
-# 6. Account Assignments
+# 7. Account Assignments
 # Defines WHERE each group can access and with WHAT permission set.
 #
 # Pattern:

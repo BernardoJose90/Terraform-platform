@@ -17,7 +17,7 @@ resource "aws_iam_role" "terraform_deploy" {
   tags                 = { ManagedBy = "Terraform" }
 }
 
-# Starter permissions — broad but simple for now.
+# Updated permissions with SSM access (no DynamoDB)
 data "aws_iam_policy_document" "permissions" {
   # VPC, Site-to-Site VPN, and EC2 instances — all live under ec2:
   statement {
@@ -28,7 +28,6 @@ data "aws_iam_policy_document" "permissions" {
   }
 
   # Allow attaching an instance profile/role to the EC2 instance.
-  # Scoped so it can only pass roles to EC2, nothing else.
   statement {
     sid       = "PassRoleToEc2"
     effect    = "Allow"
@@ -42,8 +41,6 @@ data "aws_iam_policy_document" "permissions" {
   }
 
   # Only needed if Terraform also creates the IAM role / instance profile
-  # for the server (for SSM, MGN agent, etc.). Drop this block if you
-  # attach an existing role instead.
   statement {
     sid    = "ManageInstanceRoles"
     effect = "Allow"
@@ -65,7 +62,7 @@ data "aws_iam_policy_document" "permissions" {
     resources = ["*"]
   }
 
-  # Optional: VPN tunnel logging to CloudWatch (if you enable it on the connection)
+  # Optional: VPN tunnel logging to CloudWatch
   statement {
     sid    = "VpnLogging"
     effect = "Allow"
@@ -78,6 +75,38 @@ data "aws_iam_policy_document" "permissions" {
     ]
     resources = ["*"]
   }
+
+  # ✅ NEW: SSM Parameter Store permissions
+  statement {
+    sid    = "SSMParameterStore"
+    effect = "Allow"
+    actions = [
+      # Both read and write permissions (module is used in multiple places)
+      "ssm:GetParameter",
+      "ssm:GetParameters",
+      "ssm:DescribeParameters",
+      "ssm:PutParameter",
+      "ssm:DeleteParameter"
+    ]
+    # Using variable for management account ID
+    resources = ["arn:aws:ssm:eu-west-2:${var.management_account_id}:parameter/organizations/*"]
+  }
+
+  # ✅ NEW: S3 permissions for state files
+  statement {
+    sid    = "StateFileAccess"
+    effect = "Allow"
+    actions = [
+      "s3:GetObject",
+      "s3:PutObject",
+      "s3:DeleteObject",
+      "s3:ListBucket"
+    ]
+    resources = [
+      "arn:aws:s3:::james-terraform-state-2026",
+      "arn:aws:s3:::james-terraform-state-2026/*"
+    ]
+  }
 }
 
 resource "aws_iam_role_policy" "terraform_deploy" {
@@ -88,4 +117,9 @@ resource "aws_iam_role_policy" "terraform_deploy" {
 
 output "role_arn" {
   value = aws_iam_role.terraform_deploy.arn
+}
+
+# Optional: Output the role name for easier reference
+output "role_name" {
+  value = aws_iam_role.terraform_deploy.name
 }
