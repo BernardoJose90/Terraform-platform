@@ -5,7 +5,7 @@
 ###############################################################################
 
 terraform {
-  required_version = ">= 1.6.0"
+  required_version = ">= 1.10.0"
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -26,7 +26,7 @@ provider "aws" {
 }
 
 module "vpc" {
-  source = "../modules/vpc"
+  source = "../../modules/vpc"
   name   = "prod-vpc"
   cidr   = "10.1.0.0/16"
 }
