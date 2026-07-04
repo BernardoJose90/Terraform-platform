@@ -54,6 +54,11 @@ This repository contains Terraform configurations for managing a **multi-account
 
 ## 🏛️ Architecture
 
+![Terraform Project Architecture Diagram](assets/Terraform%20Project%20Architecture%20Diagram.drawio.png)
+
+<details>
+<summary>📐 View as ASCII diagram</summary>
+
 ```
 ┌─────────────────────────────────────────────────────────────────────────────────────────────────────┐
 │ AWS ORGANIZATIONS (o-mjxr5tyhsv) │
@@ -157,6 +162,8 @@ This repository contains Terraform configurations for managing a **multi-account
 │ │
 └─────────────────────────────────────────────────────────────────────────────────────────────────────┘
 ```
+
+</details>
 
 ---
 
@@ -485,7 +492,7 @@ var.account_emails
   Enter a value:
 ```
 
-Solution: Ensure your `terraform.tfvars` file exists with all required variables.
+Solution: Ensure your `terraform.tfvars` file exists with all required variables
 
 ---
 
