@@ -48,7 +48,7 @@ This repository contains Terraform configurations for managing a **multi-account
 | 🔄 **Cross-Account Roles** | Secure role assumption from management account |
 | 📦 **Modular Infrastructure** | Reusable modules for VPC and IAM roles |
 | 🗂️ **State Isolation** | Each account has its own isolated Terraform state |
-| 🌍 **Multi-Region** | Development in us-east-1, others in eu-west-2 |
+
 
 ---
 
