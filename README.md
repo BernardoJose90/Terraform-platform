@@ -30,7 +30,7 @@
 
 ## 🎯 Overview
 
-This repository contains Terraform configurations for managing a **multi-account AWS organization** with:
+This repository contains Terraform configurations for managing a **multi-account (management,member accounts)** with:
 
 - ✅ **Centralized Identity Management** using AWS IAM Identity Center (SSO)
 - ✅ **Cross-Account Deployment Roles** for secure infrastructure provisioning
