@@ -20,7 +20,7 @@ resource "aws_iam_policy" "terraform_org_ssm" {
 }
 
 
-# If you don't have an existing role, create one (optional)
+# If we don't have an existing role, create one (optional)
 resource "aws_iam_role" "terraform_org" {
   name = "TerraformOrgRole"
   assume_role_policy = jsonencode({
