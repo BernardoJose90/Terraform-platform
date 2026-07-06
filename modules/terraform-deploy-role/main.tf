@@ -51,9 +51,13 @@ data "aws_iam_policy_document" "trust" {
 # ADDED: Data source to read the OIDC provider
 # This allows other configurations (like Terraform-Org) to reference
 # the provider without trying to create it.
-data "aws_iam_openid_connect_provider" "github" {
+# tdata "aws_iam_openid_connect_provider" "github" {
   # This reads the resource created above
-  arn = aws_iam_openid_connect_provider.github.arn
+  # tarn = aws_iam_openid_connect_provider.github.arn
+# t}
+
+data "aws_iam_openid_connect_provider" "github" {
+  arn = "arn:aws:iam::${var.management_account_id}:oidc-provider/token.actions.githubusercontent.com"
 }
 
 # Updated permissions with SSM access (no DynamoDB)
