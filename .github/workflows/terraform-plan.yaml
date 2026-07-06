@@ -1,85 +1,140 @@
 name: Terraform Plan
 
+# Runs on every PR touching main. Never applies anything — read-only.
+# The account list is discovered at runtime from SSM, not hardcoded here —
+# adding a new account never requires editing this file.
 on:
   pull_request:
-    paths:
-      - 'management/**'
-      - 'security/**'
-      - 'security-analytics/**'
-      - 'network/**'
-      - 'monitoring/**'
-      - 'production/**'
-      - 'development/**'
-      - 'modules/**'
+    branches: [main]
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: tf-plan-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
-  plan:
-    name: Plan (${{ matrix.account }})
+  discover-accounts:
     runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.build-matrix.outputs.matrix }}
+    steps:
+      - name: Configure AWS credentials (discovery role — read-only)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.DISCOVERY_ROLE_ARN }}
+          aws-region: eu-west-2
+          role-session-name: gha-discover-accounts
 
+      - name: Build matrix from SSM account manifest
+        id: build-matrix
+        run: |
+          ACCOUNTS=$(aws ssm get-parameters-by-path \
+            --path "/organizations/accounts/" \
+            --recursive \
+            --query "Parameters[*].{Name:Name,Value:Value}" \
+            --output json)
+
+          TIERS=$(aws ssm get-parameters-by-path \
+            --path "/organizations/tiers/" \
+            --recursive \
+            --query "Parameters[*].{Name:Name,Value:Value}" \
+            --output json)
+
+          MATRIX=$(jq -n --argjson accounts "$ACCOUNTS" --argjson tiers "$TIERS" '
+            ($tiers | map({(.Name | split("/") | last): .Value}) | add) as $tier_map |
+            {
+              include: [
+                $accounts[] | (.Name | split("/") | last) as $account |
+                {
+                  account: $account,
+                  working_directory: (if $account == "management" then "management-account" else "member-accounts/\($account)" end),
+                  role_arn: "arn:aws:iam::\(.Value):role/TerraformPlan",
+                  environment: ($tier_map[$account] // "production-approval")
+                }
+              ]
+            }')
+
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+
+  plan:
+    needs: discover-accounts
+    runs-on: ubuntu-latest
     strategy:
-      matrix:
-        account:
-          - management
-          - security
-          - security-analytics
-          - network
-          - monitoring
-          - production
-          - development
       fail-fast: false
-
-    permissions:
-      contents: read
-      pull-requests: write
+      matrix: ${{ fromJson(needs.discover-accounts.outputs.matrix) }}
 
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "~> 1.6"
+          terraform_version: 1.10.0
 
-      - name: Configure AWS credentials
+      - name: Configure AWS credentials (${{ matrix.account }})
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          aws-access-key-id:     ${{ secrets.AWS_ACCESS_KEY_ID }}
-          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
-          aws-region:            eu-west-2
+          role-to-assume: ${{ matrix.role_arn }}
+          aws-region: eu-west-2
+          role-session-name: gha-plan-${{ matrix.account }}
 
       - name: Terraform Init
-        working-directory: ${{ matrix.account }}
-        run: terraform init
-
-      - name: Terraform Validate
-        working-directory: ${{ matrix.account }}
-        run: terraform validate
+        working-directory: ${{ matrix.working_directory }}
+        run: terraform init -input=false
 
       - name: Terraform Plan
         id: plan
-        working-directory: ${{ matrix.account }}
-        run: terraform plan -no-color
+        working-directory: ${{ matrix.working_directory }}
         continue-on-error: true
+        run: |
+          terraform plan -no-color -input=false -lock-timeout=60s | tee plan_output.txt
 
-      - name: Post plan to PR
+      - name: Post plan as PR comment
         uses: actions/github-script@v7
-        if: github.event_name == 'pull_request'
         with:
           script: |
-            const output = `### Terraform Plan — \`${{ matrix.account }}\`
-            \`\`\`
-            ${{ steps.plan.outputs.stdout }}
-            \`\`\`
-            *Status: \`${{ steps.plan.outcome }}\`*`;
-            github.rest.issues.createComment({
-              issue_number: context.issue.number,
+            const fs = require('fs');
+            const path = `${{ matrix.working_directory }}/plan_output.txt`;
+            let output = '(no output captured)';
+            try {
+              output = fs.readFileSync(path, 'utf8');
+            } catch (e) {}
+
+            if (output.length > 60000) {
+              output = output.slice(0, 60000) + '\n... (truncated, see full logs in Actions run)';
+            }
+
+            const marker = `<!-- terraform-plan-account:${{ matrix.account }} -->`;
+            const status = '${{ steps.plan.outcome }}' === 'success' ? '✅' : '❌';
+            const body = `${marker}\n### ${status} Terraform Plan — \`${{ matrix.account }}\`\n\n<details><summary>Show plan output</summary>\n\n\`\`\`\n${output}\n\`\`\`\n</details>`;
+
+            const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
-              body: output
+              issue_number: context.issue.number,
             });
+            const existing = comments.find(c => c.body.includes(marker));
 
-      - name: Fail if plan failed
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+      - name: Fail job if plan errored
         if: steps.plan.outcome == 'failure'
         run: exit 1

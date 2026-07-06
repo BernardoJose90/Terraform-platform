@@ -231,7 +231,7 @@ echo "🎉 All member accounts deployed!"
 
 ## 🗂️ State Management
 
-All Terraform state is stored in a central S3 bucket:
+All Terraform state is stored in a central S3 bucket in the Management account:
 
 | Account | State File Path |
 |---------|-----------------|

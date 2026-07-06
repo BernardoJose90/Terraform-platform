@@ -1,6 +1,10 @@
-# Trust policy: only the management account may assume this role.
+# Trust policy: the management account (human/break-glass access) AND
+# GitHub Actions via OIDC (CI) may both assume this role. Two separate
+# statements, two separate principals — neither needs to know about the
+# other.
 data "aws_iam_policy_document" "trust" {
   statement {
+    sid     = "ManagementAccountBreakGlass"
     effect  = "Allow"
     actions = ["sts:AssumeRole"]
     principals {
@@ -8,6 +12,36 @@ data "aws_iam_policy_document" "trust" {
       identifiers = ["arn:aws:iam::${var.management_account_id}:root"]
     }
   }
+
+  statement {
+    sid     = "GitHubActionsCI"
+    effect  = "Allow"
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+    principals {
+      type        = "Federated"
+      identifiers = [aws_iam_openid_connect_provider.github.arn]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+    condition {
+      test     = "StringLike"
+      variable = "token.actions.githubusercontent.com:sub"
+      values   = ["repo:${var.github_org}/${var.github_repo}:ref:refs/heads/main"]
+    }
+  }
+}
+
+# The OIDC provider — only needs to exist once per account. If this account
+# already has one from another stack, remove this block and reference the
+# existing provider's ARN in the trust policy above instead (swap
+# aws_iam_openid_connect_provider.github.arn for the existing ARN).
+resource "aws_iam_openid_connect_provider" "github" {
+  url             = "https://token.actions.githubusercontent.com"
+  client_id_list  = ["sts.amazonaws.com"]
+  thumbprint_list = ["6938fd4d98bab03faadb97b34396831e3780aea1"]
 }
 
 # Updated permissions with SSM access (no DynamoDB)
@@ -68,24 +102,22 @@ data "aws_iam_policy_document" "permissions" {
     ]
     resources = ["*"]
   }
-
-  # ✅ NEW: SSM Parameter Store permissions
+  # SSM Parameter Store permissions
   statement {
     sid    = "SSMParameterStore"
     effect = "Allow"
     actions = [
-      # Both read and write permissions (module is used in multiple places)
+
       "ssm:GetParameter",
       "ssm:GetParameters",
       "ssm:DescribeParameters",
       "ssm:PutParameter",
       "ssm:DeleteParameter"
     ]
-    # Using variable for management account ID
+
     resources = ["arn:aws:ssm:eu-west-2:${var.management_account_id}:parameter/organizations/*"]
   }
-
-  # ✅ NEW: S3 permissions for state files
+  # S3 permissions for state files
   statement {
     sid    = "StateFileAccess"
     effect = "Allow"
@@ -103,14 +135,18 @@ data "aws_iam_policy_document" "permissions" {
 }
 
 resource "aws_iam_role" "terraform_deploy" {
-  name                 = var.role_name        # fixed: role uses the variable
+  name                 = var.role_name
   assume_role_policy   = data.aws_iam_policy_document.trust.json
   max_session_duration = 3600
-  tags                 = { ManagedBy = "Terraform" }
+  tags = {
+    ManagedBy   = "Terraform"
+    Repo        = "${var.github_org}/${var.github_repo}"
+    AccountName = var.account_name
+  }
 }
 
 resource "aws_iam_role_policy" "terraform_deploy" {
-  name   = "TerraformDeployPermissions"       # revert: this can stay a static/internal name
+  name   = "TerraformDeployPermissions"
   role   = aws_iam_role.terraform_deploy.id
   policy = data.aws_iam_policy_document.permissions.json
 }
@@ -119,7 +155,54 @@ output "role_arn" {
   value = aws_iam_role.terraform_deploy.arn
 }
 
-# Optional: Output the role name for easier reference
+
 output "role_name" {
   value = aws_iam_role.terraform_deploy.name
+}
+
+# --- Separate, read-only role for PR plans ---
+#
+# terraform-plan.yml only needs read access. This is a genuinely NEW role
+# (different name, "TerraformPlan" not "TerraformDeploy"), so no collision
+# with the role above.
+data "aws_iam_policy_document" "github_oidc_trust_plan" {
+  statement {
+    sid     = "GitHubActionsPlan"
+    effect  = "Allow"
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+    principals {
+      type        = "Federated"
+      identifiers = [aws_iam_openid_connect_provider.github.arn]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+    condition {
+      test     = "StringLike"
+      variable = "token.actions.githubusercontent.com:sub"
+      values   = ["repo:${var.github_org}/${var.github_repo}:*"]
+    }
+  }
+}
+
+resource "aws_iam_role" "terraform_plan" {
+  name                 = "TerraformPlan"
+  assume_role_policy   = data.aws_iam_policy_document.github_oidc_trust_plan.json
+  max_session_duration = 3600
+  tags = {
+    ManagedBy   = "github-actions"
+    Repo        = "${var.github_org}/${var.github_repo}"
+    AccountName = var.account_name
+  }
+}
+
+resource "aws_iam_role_policy_attachment" "terraform_plan_readonly" {
+  role       = aws_iam_role.terraform_plan.name
+  policy_arn = "arn:aws:iam::aws:policy/ReadOnlyAccess"
+}
+
+output "plan_role_arn" {
+  value = aws_iam_role.terraform_plan.arn
 }

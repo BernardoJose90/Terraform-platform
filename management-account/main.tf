@@ -53,7 +53,7 @@ provider "aws" {
 
 ###############################################################################
 # 1. Data source — IAM Identity Center instance
-# Looks up your existing SSO instance automatically.
+# Looks up our existing SSO instance automatically.
 ###############################################################################
 data "aws_ssoadmin_instances" "this" {}
 
@@ -70,6 +70,8 @@ locals {
     "production",
     "development"
   ]
+  # account_names = [ "security", "security_analytics", "network", "monitoring", "production","development"]
+
 }
 
 ###############################################################################
@@ -276,4 +278,12 @@ resource "aws_ssoadmin_account_assignment" "network_team_network_admin" {
 
   target_type = "AWS_ACCOUNT"
   target_id   = local.account_ids["network"]
+}
+
+module "terraform_deploy_role" {
+  source       = "../../modules/terraform-deploy-role"
+  state_bucket_name     = "james-terraform-state-2026"
+  github_org            = "your-org"           # replace with your real GitHub org/username
+  github_repo           = "Terraform-platform" # replace with your real repo name
+  account_name          = "management"           # change per account
 }

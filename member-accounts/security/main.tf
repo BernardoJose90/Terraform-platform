@@ -25,8 +25,11 @@ provider "aws" {
   region = var.aws_region
 }
 
+# ONE module call — merged, not duplicated. Path matches your existing
+# working reference ("../modules/..."); if your actual directory depth
+# needs "../../modules/..." instead, use whichever one your OTHER already-
+# working stacks use — just make sure this file only has ONE such block.
 module "terraform_deploy_role" {
-  source                = "../modules/terraform-deploy-role"
-  management_account_id = "145678291484"
-  state_bucket_name     = "james-terraform-state-2026"
+  source       = "../../modules/terraform-deploy-role"
+  account_name          = "security"           # change per account
 }

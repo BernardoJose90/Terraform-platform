@@ -1,0 +1,98 @@
+name: Terraform Apply
+
+# Runs on merge to main. The account list, working directory, deploy role,
+# and approval tier are all discovered at runtime from the SSM account
+# manifest — adding a new account never requires editing this file.
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  discover-accounts:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.build-matrix.outputs.matrix }}
+    steps:
+      - name: Configure AWS credentials (discovery role — read-only)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.DISCOVERY_ROLE_ARN }}
+          aws-region: eu-west-2
+          role-session-name: gha-discover-accounts
+
+      - name: Build matrix from SSM account manifest
+        id: build-matrix
+        run: |
+          ACCOUNTS=$(aws ssm get-parameters-by-path \
+            --path "/organizations/accounts/" \
+            --recursive \
+            --query "Parameters[*].{Name:Name,Value:Value}" \
+            --output json)
+
+          TIERS=$(aws ssm get-parameters-by-path \
+            --path "/organizations/tiers/" \
+            --recursive \
+            --query "Parameters[*].{Name:Name,Value:Value}" \
+            --output json)
+
+          MATRIX=$(jq -n --argjson accounts "$ACCOUNTS" --argjson tiers "$TIERS" '
+            ($tiers | map({(.Name | split("/") | last): .Value}) | add) as $tier_map |
+            {
+              include: [
+                $accounts[] | (.Name | split("/") | last) as $account |
+                {
+                  account: $account,
+                  working_directory: (if $account == "management" then "management-account" else "member-accounts/\($account)" end),
+                  role_arn: "arn:aws:iam::\(.Value):role/TerraformDeploy",
+                  environment: ($tier_map[$account] // "production-approval")
+                }
+              ]
+            }')
+
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+
+  apply:
+    needs: discover-accounts
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix: ${{ fromJson(needs.discover-accounts.outputs.matrix) }}
+
+    # matrix.environment comes straight from the SSM manifest's "tier"
+    # field — "production-approval" (gated, needs a reviewer) or
+    # "automated" (no gate). Both must exist as GitHub Environments —
+    # see SETUP.md.
+    environment: ${{ matrix.environment }}
+
+    concurrency:
+      group: tf-apply-${{ matrix.account }}
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.10.0
+
+      - name: Configure AWS credentials (${{ matrix.account }})
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ matrix.role_arn }}
+          aws-region: eu-west-2
+          role-session-name: gha-apply-${{ matrix.account }}
+
+      - name: Terraform Init
+        working-directory: ${{ matrix.working_directory }}
+        run: terraform init -input=false
+
+      - name: Terraform Apply
+        working-directory: ${{ matrix.working_directory }}
+        run: terraform apply -auto-approve -input=false -lock-timeout=120s

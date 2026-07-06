@@ -25,14 +25,15 @@ provider "aws" {
   region = var.aws_region
 }
 
-module "terraform_deploy_role" {
-  source                = "../modules/terraform-deploy-role"
-  management_account_id = "145678291484"
-  state_bucket_name     = "james-terraform-state-2026"
-}
+
 
 module "vpc" {
   source = "../../modules/vpc"
   name   = "prod-vpc"
   cidr   = "10.2.0.0/16"
+}
+
+module "terraform_deploy_role" {
+  source                = "../../modules/terraform-deploy-role"
+  account_name          = "production"
 }
