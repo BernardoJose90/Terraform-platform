@@ -19,7 +19,8 @@ data "aws_iam_policy_document" "trust" {
     actions = ["sts:AssumeRoleWithWebIdentity"]
     principals {
       type        = "Federated"
-      identifiers = [aws_iam_openid_connect_provider.github.arn]
+      # CHANGED: Use data source instead of resource
+      identifiers = [data.aws_iam_openid_connect_provider.github.arn]
     }
     condition {
       test     = "StringEquals"
@@ -34,14 +35,25 @@ data "aws_iam_policy_document" "trust" {
   }
 }
 
-# The OIDC provider — only needs to exist once per account. If this account
-# already has one from another stack, remove this block and reference the
-# existing provider's ARN in the trust policy above instead (swap
-# aws_iam_openid_connect_provider.github.arn for the existing ARN).
+# The OIDC provider — only needs to exist once per account. 
+# KEEP THIS - Terraform-platform created it and manages it.
 resource "aws_iam_openid_connect_provider" "github" {
   url             = "https://token.actions.githubusercontent.com"
   client_id_list  = ["sts.amazonaws.com"]
   thumbprint_list = ["6938fd4d98bab03faadb97b34396831e3780aea1"]
+  
+  # ADDED: Protect this account-level resource from accidental deletion
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+# ADDED: Data source to read the OIDC provider
+# This allows other configurations (like Terraform-Org) to reference
+# the provider without trying to create it.
+data "aws_iam_openid_connect_provider" "github" {
+  # This reads the resource created above
+  arn = aws_iam_openid_connect_provider.github.arn
 }
 
 # Updated permissions with SSM access (no DynamoDB)
@@ -155,7 +167,6 @@ output "role_arn" {
   value = aws_iam_role.terraform_deploy.arn
 }
 
-
 output "role_name" {
   value = aws_iam_role.terraform_deploy.name
 }
@@ -172,7 +183,8 @@ data "aws_iam_policy_document" "github_oidc_trust_plan" {
     actions = ["sts:AssumeRoleWithWebIdentity"]
     principals {
       type        = "Federated"
-      identifiers = [aws_iam_openid_connect_provider.github.arn]
+      # CHANGED: Use data source instead of resource
+      identifiers = [data.aws_iam_openid_connect_provider.github.arn]
     }
     condition {
       test     = "StringEquals"
