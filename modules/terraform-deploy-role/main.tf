@@ -57,7 +57,7 @@ data "aws_iam_policy_document" "trust" {
 # t}
 
 data "aws_iam_openid_connect_provider" "github" {
-  arn = "arn:aws:iam::${var.management_account_id}:oidc-provider/token.actions.githubusercontent.com"
+  arn = "arn:aws:iam::145678291484:oidc-provider/token.actions.githubusercontent.com"
 }
 
 # Updated permissions with SSM access (no DynamoDB)
