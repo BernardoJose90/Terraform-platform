@@ -37,16 +37,16 @@ data "aws_iam_policy_document" "trust" {
 
 # The OIDC provider — only needs to exist once per account. 
 # KEEP THIS - Terraform-platform created it and manages it.
-resource "aws_iam_openid_connect_provider" "github" {
-  url             = "https://token.actions.githubusercontent.com"
-  client_id_list  = ["sts.amazonaws.com"]
-  thumbprint_list = ["6938fd4d98bab03faadb97b34396831e3780aea1"]
+# resource "aws_iam_openid_connect_provider" "github" {
+#   url             = "https://token.actions.githubusercontent.com"
+#   client_id_list  = ["sts.amazonaws.com"]
+ #  thumbprint_list = ["6938fd4d98bab03faadb97b34396831e3780aea1"]
   
   # ADDED: Protect this account-level resource from accidental deletion
-  lifecycle {
-    prevent_destroy = true
-  }
-}
+ #  lifecycle {
+ #    prevent_destroy = true
+ #  }
+# }
 
 # ADDED: Data source to read the OIDC provider
 # This allows other configurations (like Terraform-Org) to reference
