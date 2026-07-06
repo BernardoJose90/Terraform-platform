@@ -281,9 +281,6 @@ resource "aws_ssoadmin_account_assignment" "network_team_network_admin" {
 }
 
 module "terraform_deploy_role" {
-  source       = "../../modules/terraform-deploy-role"
-  state_bucket_name     = "james-terraform-state-2026"
-  github_org            = "your-org"           # replace with your real GitHub org/username
-  github_repo           = "Terraform-platform" # replace with your real repo name
+  source       = "../modules/terraform-deploy-role"
   account_name          = "management"           # change per account
 }
