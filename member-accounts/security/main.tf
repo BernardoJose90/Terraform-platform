@@ -25,6 +25,7 @@ terraform {
 provider "aws" {
   alias  = "management"
   region = var.aws_region
+  profile = "management"
 }
 
 # ✅ Read the security account ID from SSM
