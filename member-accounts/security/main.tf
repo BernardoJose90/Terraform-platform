@@ -23,8 +23,8 @@ terraform {
 
 # ✅ Provider for reading SSM from management account
 provider "aws" {
-  alias  = "management"
-  region = var.aws_region
+  alias   = "management"
+  region  = var.aws_region
   profile = "management"
 }
 
@@ -41,7 +41,7 @@ resource "terraform_data" "account_id" {
 
 # ✅ Main provider with assume_role to security account
 provider "aws" {
-  region = var.aws_region
+  region              = var.aws_region
   allowed_account_ids = [terraform_data.account_id.input]
   assume_role {
     role_arn     = "arn:aws:iam::${terraform_data.account_id.input}:role/OrganizationAccountAccessRole"

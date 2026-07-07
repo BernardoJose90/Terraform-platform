@@ -13,10 +13,10 @@ terraform {
     }
   }
   backend "s3" {
-    bucket       = "james-terraform-state-2026"   # same bucket as management
-    key          = "security-analytics/terraform.tfstate"  # different key
+    bucket       = "james-terraform-state-2026"           # same bucket as management
+    key          = "security-analytics/terraform.tfstate" # different key
     region       = "eu-west-2"
-    use_lockfile = true                            # native S3 locking
+    use_lockfile = true # native S3 locking
     encrypt      = true
   }
 }
@@ -26,6 +26,6 @@ provider "aws" {
 }
 
 module "terraform_deploy_role" {
-  source                = "../../modules/terraform-deploy-role"
-  account_name          = "security-analytics"
+  source       = "../../modules/terraform-deploy-role"
+  account_name = "security-analytics"
 }

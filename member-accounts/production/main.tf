@@ -14,9 +14,9 @@ terraform {
   }
   backend "s3" {
     bucket       = "james-terraform-state-2026"   # same bucket as management
-    key          = "production/terraform.tfstate"  # different key
+    key          = "production/terraform.tfstate" # different key
     region       = "eu-west-2"
-    use_lockfile = true                            # native S3 locking
+    use_lockfile = true # native S3 locking
     encrypt      = true
   }
 }
@@ -34,6 +34,6 @@ module "vpc" {
 }
 
 module "terraform_deploy_role" {
-  source                = "../../modules/terraform-deploy-role"
-  account_name          = "production"
+  source       = "../../modules/terraform-deploy-role"
+  account_name = "production"
 }
