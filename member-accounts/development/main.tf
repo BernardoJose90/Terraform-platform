@@ -18,6 +18,7 @@ terraform {
     region       = "eu-west-2"
     use_lockfile = true                            # native S3 locking
     encrypt      = true
+
   }
 }
 
