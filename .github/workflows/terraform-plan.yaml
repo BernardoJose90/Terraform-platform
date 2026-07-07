@@ -3,9 +3,11 @@ name: Terraform Plan
 # Runs on every PR touching main. Never applies anything — read-only.
 # The account list is discovered at runtime from SSM, not hardcoded here —
 # adding a new account never requires editing this file.
+
 on:
   pull_request:
     branches: [main]
+  workflow_dispatch:
 
 permissions:
   id-token: write
@@ -43,18 +45,21 @@ jobs:
             --recursive \
             --query "Parameters[*].{Name:Name,Value:Value}" \
             --output json)
-
+            
           MATRIX=$(jq -n --argjson accounts "$ACCOUNTS" --argjson tiers "$TIERS" '
             ($tiers | map({(.Name | split("/") | last): .Value}) | add) as $tier_map |
             {
               include: [
                 $accounts[] | (.Name | split("/") | last) as $account |
+                # SKIP management account - it's managed by Terraform-org repo
+                if $account != "management" then
                 {
                   account: $account,
-                  working_directory: (if $account == "management" then "management-account" else "member-accounts/\($account)" end),
+                  working_directory: "member-accounts/\($account)",
                   role_arn: "arn:aws:iam::\(.Value):role/TerraformPlan",
                   environment: ($tier_map[$account] // "production-approval")
                 }
+                else empty end
               ]
             }')
 
@@ -111,14 +116,15 @@ jobs:
             const marker = `<!-- terraform-plan-account:${{ matrix.account }} -->`;
             const status = '${{ steps.plan.outcome }}' === 'success' ? '✅' : '❌';
             const body = `${marker}\n### ${status} Terraform Plan — \`${{ matrix.account }}\`\n\n<details><summary>Show plan output</summary>\n\n\`\`\`\n${output}\n\`\`\`\n</details>`;
-
+           
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
             });
+           
             const existing = comments.find(c => c.body.includes(marker));
-
+            
             if (existing) {
               await github.rest.issues.updateComment({
                 owner: context.repo.owner,

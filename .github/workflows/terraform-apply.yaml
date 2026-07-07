@@ -3,6 +3,7 @@ name: Terraform Apply
 # Runs on merge to main. The account list, working directory, deploy role,
 # and approval tier are all discovered at runtime from the SSM account
 # manifest — adding a new account never requires editing this file.
+
 on:
   push:
     branches: [main]
@@ -33,7 +34,7 @@ jobs:
             --recursive \
             --query "Parameters[*].{Name:Name,Value:Value}" \
             --output json)
-
+            
           TIERS=$(aws ssm get-parameters-by-path \
             --path "/organizations/tiers/" \
             --recursive \
@@ -45,12 +46,15 @@ jobs:
             {
               include: [
                 $accounts[] | (.Name | split("/") | last) as $account |
+                # SKIP management account - it's managed by Terraform-org repo
+                if $account != "management" then
                 {
                   account: $account,
-                  working_directory: (if $account == "management" then "management-account" else "member-accounts/\($account)" end),
+                  working_directory: "member-accounts/\($account)",
                   role_arn: "arn:aws:iam::\(.Value):role/TerraformDeploy",
                   environment: ($tier_map[$account] // "production-approval")
                 }
+                else empty end
               ]
             }')
 
