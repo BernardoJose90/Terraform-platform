@@ -21,32 +21,28 @@ terraform {
   }
 }
 
-# First provider with alias for reading SSM
+# ✅ Provider for reading SSM from management account
 provider "aws" {
-  alias  = "management"
-  region = var.aws_region
+  alias   = "management"
+  region  = var.aws_region
+  profile = "management"
 }
 
+# ✅ Read the development account ID from SSM
 data "aws_ssm_parameter" "development_account_id" {
   provider = aws.management
   name     = "/organizations/accounts/development"
 }
 
-# Use terraform_data to resolve the value without alias issues
-resource "terraform_data" "dev_account_id" {
-  input = data.aws_ssm_parameter.development_account_id.value
-}
-
-# Default provider with assume_role
+# ✅ Provider for Development account - NO assume_role needed!
 provider "aws" {
   region = var.aws_region
+  profile = "development"  # 👈 Uses your SSO profile directly
   
-  allowed_account_ids = [terraform_data.dev_account_id.input]
+  # ✅ This ensures we only deploy to the development account
+  allowed_account_ids = [data.aws_ssm_parameter.development_account_id.value]
   
-  assume_role {
-    role_arn     = "arn:aws:iam::${terraform_data.dev_account_id.input}:role/OrganizationAccountAccessRole"
-    session_name = "TerraformDev"
-  }
+
 }
 
 # Modules use the default provider (no alias needed)
