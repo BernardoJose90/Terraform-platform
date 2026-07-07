@@ -1,7 +1,5 @@
 # Trust policy: the management account (human/break-glass access) AND
-# GitHub Actions via OIDC (CI) may both assume this role. Two separate
-# statements, two separate principals — neither needs to know about the
-# other.
+# GitHub Actions via OIDC (CI) may both assume this role.
 data "aws_iam_policy_document" "trust" {
   statement {
     sid     = "ManagementAccountBreakGlass"
@@ -17,15 +15,14 @@ data "aws_iam_policy_document" "trust" {
       values   = ["true"]
     }
   }
-
+  
   statement {
     sid     = "GitHubActionsCI"
     effect  = "Allow"
     actions = ["sts:AssumeRoleWithWebIdentity"]
     principals {
       type        = "Federated"
-      # CHANGED: Use data source instead of resource
-      identifiers = [data.aws_iam_openid_connect_provider.github.arn]
+      identifiers = [aws_iam_openid_connect_provider.github.arn]
     }
     condition {
       test     = "StringEquals"
@@ -40,15 +37,22 @@ data "aws_iam_policy_document" "trust" {
   }
 }
 
-
-
-data "aws_iam_openid_connect_provider" "github" {
-  arn = "arn:aws:iam::145678291484:oidc-provider/token.actions.githubusercontent.com"
+# ✅ Create OIDC provider in the target account
+resource "aws_iam_openid_connect_provider" "github" {
+  url             = "https://token.actions.githubusercontent.com"
+  client_id_list  = ["sts.amazonaws.com"]
+  thumbprint_list = ["6938fd4d98bab03faadb97b34396831e3780aea1"]
+  
+  tags = {
+    ManagedBy   = "Terraform"
+    Repo        = "${var.github_org}/${var.github_repo}"
+    AccountName = var.account_name
+  }
 }
 
-# Updated permissions with SSM access (no DynamoDB)
+# Updated permissions with SSM access
 data "aws_iam_policy_document" "permissions" {
-  # VPC, Site-to-Site VPN, and EC2 instances — all live under ec2:
+  # VPC, Site-to-Site VPN, and EC2 instances
   statement {
     sid       = "NetworkAndCompute"
     effect    = "Allow"
@@ -56,20 +60,7 @@ data "aws_iam_policy_document" "permissions" {
     resources = ["*"]
   }
 
-  # Allow attaching an instance profile/role to the EC2 instance.
-  # statement {
-  #   sid       = "PassRoleToEc2"
-  #   effect    = "Allow"
-  #   actions   = ["iam:PassRole"]
-  #   resources = ["*"]
-  #   condition {
-  #     test     = "StringEquals"
-  #     variable = "iam:PassedToService"
-  #     values   = ["ec2.amazonaws.com"]
-  #   }
-  # }
-
-  # Only needed if Terraform also creates the IAM role / instance profile
+  # IAM role management
   statement {
     sid    = "ManageInstanceRoles"
     effect = "Allow"
@@ -91,7 +82,7 @@ data "aws_iam_policy_document" "permissions" {
     resources = ["*"]
   }
 
-  # Optional: VPN tunnel logging to CloudWatch
+  # CloudWatch logging
   statement {
     sid    = "VpnLogging"
     effect = "Allow"
@@ -104,12 +95,13 @@ data "aws_iam_policy_document" "permissions" {
     ]
     resources = ["*"]
   }
-  # SSM Parameter Store permissions
+
+  # SSM Parameter Store
   statement {
     sid    = "SSMParameterStore"
     effect = "Allow"
     actions = [
-
+      
       "ssm:GetParameter",
       "ssm:GetParameters",
       "ssm:DescribeParameters",
@@ -119,7 +111,8 @@ data "aws_iam_policy_document" "permissions" {
 
     resources = ["arn:aws:ssm:eu-west-2:${var.management_account_id}:parameter/organizations/*"]
   }
-  # S3 permissions for state files
+
+  # S3 state files
   statement {
     sid    = "StateFileAccess"
     effect = "Allow"
@@ -162,10 +155,7 @@ output "role_name" {
 }
 
 # --- Separate, read-only role for PR plans ---
-#
-# terraform-plan.yml only needs read access. This is a genuinely NEW role
-# (different name, "TerraformPlan" not "TerraformDeploy"), so no collision
-# with the role above.
+
 data "aws_iam_policy_document" "github_oidc_trust_plan" {
   statement {
     sid     = "GitHubActionsPlan"
@@ -173,8 +163,7 @@ data "aws_iam_policy_document" "github_oidc_trust_plan" {
     actions = ["sts:AssumeRoleWithWebIdentity"]
     principals {
       type        = "Federated"
-      # CHANGED: Use data source instead of resource
-      identifiers = [data.aws_iam_openid_connect_provider.github.arn]
+      identifiers = [aws_iam_openid_connect_provider.github.arn]
     }
     condition {
       test     = "StringEquals"
