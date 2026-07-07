@@ -22,11 +22,11 @@ terraform {
 }
 
 # ✅ Provider for reading SSM from management account
-provider "aws" {
-  alias   = "management"
-  region  = var.aws_region
-  profile = "management"
-}
+#provider "aws" {
+#  alias   = "management"
+#  region  = var.aws_region
+#  profile = "management"
+#}
 
 # ✅ Read the development account ID from SSM
 data "aws_ssm_parameter" "development_account_id" {
