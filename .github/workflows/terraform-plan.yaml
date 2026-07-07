@@ -1,7 +1,7 @@
 name: Terraform Plan
 
 # Runs on every PR touching main. Never applies anything — read-only.
-# The account list is discovered at runtime from SSM, not hardcoded here --—
+# The account list is discovered at runtime from SSM, not hardcoded here -—
 # adding a new account never requires editing this file.
 
 on:
