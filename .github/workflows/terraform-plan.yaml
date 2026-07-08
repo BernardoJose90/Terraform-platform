@@ -307,20 +307,4 @@ jobs:
           name: plan-${{ matrix.account }}
           path: ${{ matrix.working_directory }}/plan_output.txt
           retention-days: 7
-          
-  plan-summary:
-    name: Plan Summary
-    needs: plan
-    runs-on: ubuntu-latest
-    if: always()
-    steps:
-      - name: Summary of all plans
-        run: |
-          echo "════════════════════════════════════════════════════════════"
-          echo "📋 Terraform Plan Summary"
-          echo "════════════════════════════════════════════════════════════"
-          echo ""
-          
-          # Get the plan results from the matrix
-          echo "✅ Plans completed:"
-          echo "${{ toJson(needs.plan.result) }}"
+        
