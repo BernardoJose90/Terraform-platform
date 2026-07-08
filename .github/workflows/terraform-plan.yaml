@@ -127,21 +127,20 @@ jobs:
             --query "Parameters[*].{Name:Name,Value:Value}" \
             --output json)
             
+          # ✅ FIXED jq command - properly handles account discovery
           MATRIX=$(jq -n --argjson accounts "$ACCOUNTS" --argjson tiers "$TIERS" '
             ($tiers | map({(.Name | split("/") | last): .Value}) | add) as $tier_map |
             {
               include: [
-                $accounts[] | (.Name | split("/") | last) as $account |
-                # SKIP management account - it's managed by Terraform-org repo
-                if $account != "management" then
+                $accounts[] | 
+                select(.Name | split("/") | last != "management") |
                 {
-                  account: $account,
-                  working_directory: "member-accounts/\($account)",
-                  role_arn: "arn:aws:iam::\(.Value):role/TerraformPlan",
-                  environment: ($tier_map[$account] // "production-approval"),
+                  account: (.Name | split("/") | last),
+                  working_directory: ("member-accounts/" + (.Name | split("/") | last)),
+                  role_arn: ("arn:aws:iam::" + .Value + ":role/TerraformPlan"),
+                  environment: ($tier_map[(.Name | split("/") | last)] // "production-approval"),
                   account_id: .Value
                 }
-                else empty end
               ]
             }')
 
@@ -240,7 +239,7 @@ jobs:
               output = output.slice(0, 60000) + `\n... (truncated, [view full logs](${fullLogLink}))`;
             }
 
-            # Check if plan had changes
+            // Check if plan had changes
             const hasChanges = !output.includes("No changes") && !output.includes("0 to add, 0 to change, 0 to destroy");
             const statusIcon = '${{ steps.plan.outputs.plan_exit_code }}' === '0' ? (hasChanges ? '📝' : '✅') : '❌';
             
