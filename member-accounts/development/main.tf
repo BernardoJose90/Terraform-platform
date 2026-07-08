@@ -42,7 +42,7 @@ provider "aws" {
   # ✅ This ensures we only deploy to the development account
   allowed_account_ids = [data.aws_ssm_parameter.development_account_id.value]
 
-  
+
 }
 
 # Modules use the default provider (no alias needed)

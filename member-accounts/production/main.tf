@@ -42,14 +42,14 @@ provider "aws" {
   # ✅ This ensures we only deploy to the development account
   allowed_account_ids = [data.aws_ssm_parameter.production_account_id.value]
 
-  
+
 }
 
- # module "vpc" {
- #   source = "../../modules/vpc"
- #   name   = "prod-vpc"
- #   cidr   = "10.2.0.0/16"
- # }
+# module "vpc" {
+#   source = "../../modules/vpc"
+#   name   = "prod-vpc"
+#   cidr   = "10.2.0.0/16"
+# }
 
 module "terraform_deploy_role" {
   source       = "../../modules/terraform-deploy-role"
