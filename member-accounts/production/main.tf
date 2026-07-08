@@ -13,43 +13,42 @@ terraform {
     }
   }
   backend "s3" {
-    bucket       = "james-terraform-state-2026"   # same bucket as management
-    key          = "production/terraform.tfstate" # different key
+    bucket       = "james-terraform-state-2026"
+    key          = "production/terraform.tfstate"
     region       = "eu-west-2"
-    use_lockfile = true # native S3 locking
+    use_lockfile = true
     encrypt      = true
   }
 }
 
-# ✅ Provider for reading SSM from management account
+# ✅ Provider for reading SSM from management account (assumes cross-account role)
 provider "aws" {
-  alias   = "management"
-  region  = var.aws_region
-  profile = "management"
+  alias  = "management"
+  region = var.aws_region
+  assume_role {
+    role_arn = "arn:aws:iam::145678291484:role/SSMReadOnly"
+  }
 }
 
-# ✅ Read the development account ID from SSM
+# ✅ Read the production account ID from SSM
 data "aws_ssm_parameter" "production_account_id" {
   provider = aws.management
   name     = "/organizations/accounts/production"
 }
 
-# ✅ Provider for Development account - NO assume_role needed!
+# ✅ Main provider for the production account itself — no profile needed
 provider "aws" {
-  region  = var.aws_region
-  profile = "production" # 👈 Uses your SSO profile directly
-
-  # ✅ This ensures we only deploy to the development account
+  region              = var.aws_region
   allowed_account_ids = [data.aws_ssm_parameter.production_account_id.value]
 
 
 }
 
-module "vpc" {
-  source = "../../modules/vpc"
-  name   = "prod-vpc"
-  cidr   = "10.4.0.0/16"
-}
+# module "vpc" {
+#   source = "../../modules/vpc"
+#   name   = "prod-vpc"
+#   cidr   = "10.4.0.0/16"
+# }
 
 module "terraform_deploy_role" {
   source       = "../../modules/terraform-deploy-role"

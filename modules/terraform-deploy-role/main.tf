@@ -110,6 +110,13 @@ data "aws_iam_policy_document" "permissions" {
     resources = ["arn:aws:ssm:eu-west-2:${var.management_account_id}:parameter/organizations/*"]
   }
 
+  statement {
+    sid       = "AssumeManagementSSMReadOnly"
+    effect    = "Allow"
+    actions   = ["sts:AssumeRole"]
+    resources = ["arn:aws:iam::${var.management_account_id}:role/SSMReadOnly"]
+  }
+
   # S3 state files
   statement {
     sid    = "StateFileAccess"
@@ -125,6 +132,7 @@ data "aws_iam_policy_document" "permissions" {
       "arn:aws:s3:::${var.state_bucket_name}/*"
     ]
   }
+
 }
 
 resource "aws_iam_role" "terraform_deploy" {
@@ -209,6 +217,19 @@ resource "aws_iam_role" "terraform_plan" {
     Repo        = "${var.github_org}/${var.github_repo}"
     AccountName = var.account_name
   }
+}
+
+resource "aws_iam_role_policy" "terraform_plan_assume_ssm_readonly" {
+  name = "AssumeManagementSSMReadOnly"
+  role = aws_iam_role.terraform_plan.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = "sts:AssumeRole"
+      Resource = "arn:aws:iam::${var.management_account_id}:role/SSMReadOnly"
+    }]
+  })
 }
 
 resource "aws_iam_role_policy_attachment" "terraform_plan_readonly" {
