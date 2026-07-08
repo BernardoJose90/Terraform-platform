@@ -101,14 +101,12 @@ data "aws_iam_policy_document" "permissions" {
     sid    = "SSMParameterStore"
     effect = "Allow"
     actions = [
-
       "ssm:GetParameter",
       "ssm:GetParameters",
       "ssm:DescribeParameters",
       "ssm:PutParameter",
       "ssm:DeleteParameter"
     ]
-
     resources = ["arn:aws:ssm:eu-west-2:${var.management_account_id}:parameter/organizations/*"]
   }
 
@@ -178,6 +176,30 @@ data "aws_iam_policy_document" "github_oidc_trust_plan" {
   }
 }
 
+# ✅ S3 permissions for TerraformPlan role
+data "aws_iam_policy_document" "plan_s3_access" {
+  statement {
+    sid    = "StateFileAccess"
+    effect = "Allow"
+    actions = [
+      "s3:GetObject",
+      "s3:PutObject",
+      "s3:DeleteObject",
+      "s3:ListBucket"
+    ]
+    resources = [
+      "arn:aws:s3:::${var.state_bucket_name}",
+      "arn:aws:s3:::${var.state_bucket_name}/*"
+    ]
+  }
+}
+
+# ✅ Custom policy for TerraformPlan role
+resource "aws_iam_policy" "terraform_plan_s3" {
+  name   = "TerraformPlanS3Policy"
+  policy = data.aws_iam_policy_document.plan_s3_access.json
+}
+
 resource "aws_iam_role" "terraform_plan" {
   name                 = "TerraformPlan"
   assume_role_policy   = data.aws_iam_policy_document.github_oidc_trust_plan.json
@@ -192,6 +214,12 @@ resource "aws_iam_role" "terraform_plan" {
 resource "aws_iam_role_policy_attachment" "terraform_plan_readonly" {
   role       = aws_iam_role.terraform_plan.name
   policy_arn = "arn:aws:iam::aws:policy/ReadOnlyAccess"
+}
+
+# ✅ Attach S3 policy to TerraformPlan role
+resource "aws_iam_role_policy_attachment" "terraform_plan_s3" {
+  role       = aws_iam_role.terraform_plan.name
+  policy_arn = aws_iam_policy.terraform_plan_s3.arn
 }
 
 output "plan_role_arn" {
