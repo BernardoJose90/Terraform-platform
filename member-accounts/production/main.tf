@@ -48,7 +48,7 @@ provider "aws" {
 module "vpc" {
   source = "../../modules/vpc"
   name   = "prod-vpc"
-  cidr   = "10.2.0.0/16"
+  cidr   = "10.3.0.0/16"
 }
 
 module "terraform_deploy_role" {
