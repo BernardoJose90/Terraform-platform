@@ -29,10 +29,13 @@ data "aws_iam_policy_document" "trust" {
       variable = "token.actions.githubusercontent.com:aud"
       values   = ["sts.amazonaws.com"]
     }
+    # ✅ FIXED: Use repo:* to match all GitHub Actions contexts
     condition {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_org}/${var.github_repo}:ref:refs/heads/main"]
+      values = [
+        "repo:${var.github_org}/${var.github_repo}:*"
+      ]
     }
   }
 }
@@ -132,7 +135,6 @@ data "aws_iam_policy_document" "permissions" {
       "arn:aws:s3:::${var.state_bucket_name}/*"
     ]
   }
-
 }
 
 resource "aws_iam_role" "terraform_deploy" {
