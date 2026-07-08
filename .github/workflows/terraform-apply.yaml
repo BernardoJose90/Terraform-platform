@@ -249,47 +249,4 @@ jobs:
           path: ${{ matrix.working_directory }}/plan_output.txt
           retention-days: 7
           
-  plan-summary:
-    name: Plan Summary
-    needs: plan
-    runs-on: ubuntu-latest
-    if: always()
-    steps:
-      - name: Summary of all plans
-        run: |
-          echo "════════════════════════════════════════════════════════════"
-          echo "📋 Terraform Plan Summary"
-          echo "════════════════════════════════════════════════════════════"
-          echo ""
-          
-          echo "| Account | Account ID | Status |"
-          echo "|---------|------------|--------|"
-          
-          PLAN_RESULTS='${{ toJson(needs.plan.result) }}'
-          
-          if [ -n "$PLAN_RESULTS" ] && [ "$PLAN_RESULTS" != "null" ]; then
-            echo "$PLAN_RESULTS" | jq -r '
-              .[] | 
-              "| \(.outputs.account // "unknown") | \(.outputs.account_id // "N/A") | \(.conclusion | ascii_upcase) |"
-            '
-            
-            SUCCESS_COUNT=$(echo "$PLAN_RESULTS" | jq '[.[] | select(.conclusion == "success")] | length')
-            FAILURE_COUNT=$(echo "$PLAN_RESULTS" | jq '[.[] | select(.conclusion == "failure")] | length')
-            TOTAL_COUNT=$(echo "$PLAN_RESULTS" | jq 'length')
-            
-            echo ""
-            echo "📊 Summary:"
-            echo "  ✅ Success: $SUCCESS_COUNT"
-            echo "  ❌ Failed: $FAILURE_COUNT"
-            echo "  📋 Total: $TOTAL_COUNT"
-            echo ""
-            
-            if [ $FAILURE_COUNT -gt 0 ]; then
-              echo "⚠️ Some accounts failed. Check the individual job logs for details."
-              exit 1
-            elif [ $SUCCESS_COUNT -eq $TOTAL_COUNT ]; then
-              echo "🎉 All plans completed successfully!"
-            fi
-          else
-            echo "⚠️ No plan results available"
-          fi
+ 
