@@ -48,7 +48,7 @@ module "vpc" {
   source = "../../modules/vpc"
   name   = "prod-vpc"
   cidr   = "10.40.0.0/16"
- }
+}
 
 module "terraform_deploy_role" {
   source       = "../../modules/terraform-deploy-role"
