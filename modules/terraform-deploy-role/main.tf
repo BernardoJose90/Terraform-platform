@@ -157,6 +157,7 @@ data "aws_iam_policy_document" "permissions" {
       "arn:aws:s3:::${var.state_bucket_name}/*"
     ]
   }
+
 }
 
 resource "aws_iam_role" "terraform_deploy" {
