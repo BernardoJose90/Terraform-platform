@@ -127,8 +127,8 @@ jobs:
             --query "Parameters[*].{Name:Name,Value:Value}" \
             --output json)
             
-          # ✅ FIXED jq command - properly handles account discovery
-          MATRIX=$(jq -n --argjson accounts "$ACCOUNTS" --argjson tiers "$TIERS" '
+          # ✅ FIXED - Use jq -c for compact single-line JSON output
+          MATRIX=$(jq -c -n --argjson accounts "$ACCOUNTS" --argjson tiers "$TIERS" '
             ($tiers | map({(.Name | split("/") | last): .Value}) | add) as $tier_map |
             {
               include: [
@@ -293,3 +293,4 @@ jobs:
           echo ""
           echo "📋 Accounts planned:"
           echo "${{ toJson(needs.plan.result) }}"
+          
