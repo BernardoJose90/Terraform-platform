@@ -22,11 +22,11 @@ terraform {
 }
 
 # ✅ Provider for reading SSM from management account
-#provider "aws" {
-#  alias   = "management"
-#  region  = var.aws_region
-#  profile = "management"
-#}
+provider "aws" {
+  alias   = "management"
+  region  = var.aws_region
+  profile = "management"
+}
 
 # ✅ Read the development account ID from SSM
 data "aws_ssm_parameter" "development_account_id" {
@@ -42,7 +42,7 @@ provider "aws" {
   # ✅ This ensures we only deploy to the development account
   allowed_account_ids = [data.aws_ssm_parameter.development_account_id.value]
 
-
+  
 }
 
 # Modules use the default provider (no alias needed)
