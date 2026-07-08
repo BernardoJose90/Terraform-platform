@@ -82,7 +82,7 @@ data "aws_iam_policy_document" "permissions" {
       "iam:GetInstanceProfile",
       "iam:AddRoleToInstanceProfile",
       "iam:RemoveRoleFromInstanceProfile",
-      
+
       # ✅ ADDED: IAM read permissions for OIDC and policies
       "iam:GetOpenIDConnectProvider",
       "iam:ListOpenIDConnectProviders",
@@ -148,7 +148,7 @@ data "aws_iam_policy_document" "permissions" {
       "arn:aws:s3:::${var.state_bucket_name}/*"
     ]
   }
-  
+
 }
 
 resource "aws_iam_role" "terraform_deploy" {
