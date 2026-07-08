@@ -82,14 +82,14 @@ data "aws_iam_policy_document" "permissions" {
       "iam:DeleteRolePolicy",
       "iam:UpdateRole",
       "iam:UpdateAssumeRolePolicy",
-      
+
       # Instance profile management
       "iam:CreateInstanceProfile",
       "iam:DeleteInstanceProfile",
       "iam:GetInstanceProfile",
       "iam:AddRoleToInstanceProfile",
       "iam:RemoveRoleFromInstanceProfile",
-      
+
       # OIDC and Policy management
       "iam:GetOpenIDConnectProvider",
       "iam:ListOpenIDConnectProviders",
