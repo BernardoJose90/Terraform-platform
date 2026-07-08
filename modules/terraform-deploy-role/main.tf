@@ -53,7 +53,7 @@ resource "aws_iam_openid_connect_provider" "github" {
   }
 }
 
-# Updated permissions with SSM access
+# ✅ COMPLETE: Permissions with ALL required IAM actions
 data "aws_iam_policy_document" "permissions" {
   # VPC, Site-to-Site VPN, and EC2 instances
   statement {
@@ -63,11 +63,12 @@ data "aws_iam_policy_document" "permissions" {
     resources = ["*"]
   }
 
-  # IAM role management
+  # ✅ COMPLETE IAM permissions
   statement {
     sid    = "ManageInstanceRoles"
     effect = "Allow"
     actions = [
+      # Role management
       "iam:CreateRole",
       "iam:GetRole",
       "iam:DeleteRole",
@@ -76,11 +77,32 @@ data "aws_iam_policy_document" "permissions" {
       "iam:DetachRolePolicy",
       "iam:ListRolePolicies",
       "iam:ListAttachedRolePolicies",
+      "iam:GetRolePolicy",
+      "iam:PutRolePolicy",
+      "iam:DeleteRolePolicy",
+      "iam:UpdateRole",
+      "iam:UpdateAssumeRolePolicy",
+      
+      # Instance profile management
       "iam:CreateInstanceProfile",
       "iam:DeleteInstanceProfile",
       "iam:GetInstanceProfile",
       "iam:AddRoleToInstanceProfile",
-      "iam:RemoveRoleFromInstanceProfile"
+      "iam:RemoveRoleFromInstanceProfile",
+      
+      # OIDC and Policy management
+      "iam:GetOpenIDConnectProvider",
+      "iam:ListOpenIDConnectProviders",
+      "iam:CreateOpenIDConnectProvider",
+      "iam:DeleteOpenIDConnectProvider",
+      "iam:GetPolicy",
+      "iam:ListPolicies",
+      "iam:CreatePolicy",
+      "iam:DeletePolicy",
+      "iam:GetPolicyVersion",
+      "iam:ListPolicyVersions",
+      "iam:CreatePolicyVersion",
+      "iam:DeletePolicyVersion"
     ]
     resources = ["*"]
   }
