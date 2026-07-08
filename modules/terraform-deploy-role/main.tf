@@ -53,7 +53,7 @@ resource "aws_iam_openid_connect_provider" "github" {
   }
 }
 
-# Updated permissions with SSM access
+# ✅ UPDATED: Permissions with SSM access AND IAM read permissions
 data "aws_iam_policy_document" "permissions" {
   # VPC, Site-to-Site VPN, and EC2 instances
   statement {
@@ -63,11 +63,12 @@ data "aws_iam_policy_document" "permissions" {
     resources = ["*"]
   }
 
-  # IAM role management
+  # ✅ IAM role management - Added missing IAM read permissions
   statement {
     sid    = "ManageInstanceRoles"
     effect = "Allow"
     actions = [
+      # Create and manage roles
       "iam:CreateRole",
       "iam:GetRole",
       "iam:DeleteRole",
@@ -80,7 +81,19 @@ data "aws_iam_policy_document" "permissions" {
       "iam:DeleteInstanceProfile",
       "iam:GetInstanceProfile",
       "iam:AddRoleToInstanceProfile",
-      "iam:RemoveRoleFromInstanceProfile"
+      "iam:RemoveRoleFromInstanceProfile",
+
+      # ✅ ADDED: IAM read permissions for OIDC and policies
+      "iam:GetOpenIDConnectProvider",
+      "iam:ListOpenIDConnectProviders",
+      "iam:CreateOpenIDConnectProvider",
+      "iam:DeleteOpenIDConnectProvider",
+      "iam:GetPolicy",
+      "iam:ListPolicies",
+      "iam:CreatePolicy",
+      "iam:DeletePolicy",
+      "iam:GetPolicyVersion",
+      "iam:ListPolicyVersions"
     ]
     resources = ["*"]
   }
@@ -135,6 +148,7 @@ data "aws_iam_policy_document" "permissions" {
       "arn:aws:s3:::${var.state_bucket_name}/*"
     ]
   }
+
 }
 
 resource "aws_iam_role" "terraform_deploy" {
