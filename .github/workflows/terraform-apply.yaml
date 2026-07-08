@@ -85,7 +85,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: 
       - validate-format
-      # - security-scan  # ⚠️ COMMENTED OUT - remove dependency
+      
     outputs:
       matrix: ${{ steps.build-matrix.outputs.matrix }}
     steps:
@@ -112,26 +112,27 @@ jobs:
             --query "Parameters[*].{Name:Name,Value:Value}" \
             --output json)
 
+          # ✅ FIXED jq command
           MATRIX=$(jq -n --argjson accounts "$ACCOUNTS" --argjson tiers "$TIERS" '
             ($tiers | map({(.Name | split("/") | last): .Value}) | add) as $tier_map |
             {
               include: [
-                $accounts[] | (.Name | split("/") | last) as $account |
-                # SKIP management account - it's managed by Terraform-org repo
-                if $account != "management" then
+                $accounts[] | 
+                select(.Name | split("/") | last != "management") |
                 {
-                  account: $account,
-                  working_directory: "member-accounts/\($account)",
-                  role_arn: "arn:aws:iam::\(.Value):role/TerraformDeploy",
-                  environment: ($tier_map[$account] // "production-approval"),
+                  account: (.Name | split("/") | last),
+                  working_directory: ("member-accounts/" + (.Name | split("/") | last)),
+                  role_arn: ("arn:aws:iam::" + .Value + ":role/TerraformDeploy"),
+                  environment: ($tier_map[(.Name | split("/") | last)] // "production-approval"),
                   account_id: .Value
                 }
-                else empty end
+
               ]
             }')
 
           echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
           echo "Discovered accounts: $(echo $MATRIX | jq '.include | length')"
+
 
   apply:
     name: Terraform Apply - ${{ matrix.account }}
