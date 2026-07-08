@@ -23,30 +23,26 @@ terraform {
 
 # ✅ Provider for reading SSM from management account
 provider "aws" {
-  alias  = "management"
-  region = var.aws_region
+  alias   = "management"
+  region  = var.aws_region
   profile = "management"
 }
 
-# ✅ Read the security account ID from SSM
-data "aws_ssm_parameter" "account_id" {
+# ✅ Read the development account ID from SSM
+data "aws_ssm_parameter" "security_account_id" {
   provider = aws.management
   name     = "/organizations/accounts/security"
 }
 
-# ✅ Resolve the value to break the dependency cycle
-resource "terraform_data" "account_id" {
-  input = data.aws_ssm_parameter.account_id.value
-}
-
-# ✅ Main provider with assume_role to security account
+# ✅ Provider for Development account - NO assume_role needed!
 provider "aws" {
-  region = var.aws_region
-  allowed_account_ids = [terraform_data.account_id.input]
-  assume_role {
-    role_arn     = "arn:aws:iam::${terraform_data.account_id.input}:role/OrganizationAccountAccessRole"
-    session_name = "TerraformSecurity"
-  }
+  region  = var.aws_region
+  profile = "security" # 👈 Uses your SSO profile directly
+
+  # ✅ This ensures we only deploy to the development account
+  allowed_account_ids = [data.aws_ssm_parameter.security_account_id.value]
+
+
 }
 
 # ✅ Modules

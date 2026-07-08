@@ -15,7 +15,7 @@ data "aws_iam_policy_document" "trust" {
       values   = ["true"]
     }
   }
-  
+
   statement {
     sid     = "GitHubActionsCI"
     effect  = "Allow"
@@ -42,7 +42,7 @@ resource "aws_iam_openid_connect_provider" "github" {
   url             = "https://token.actions.githubusercontent.com"
   client_id_list  = ["sts.amazonaws.com"]
   thumbprint_list = ["6938fd4d98bab03faadb97b34396831e3780aea1"]
-  
+
   tags = {
     ManagedBy   = "Terraform"
     Repo        = "${var.github_org}/${var.github_repo}"
@@ -101,7 +101,7 @@ data "aws_iam_policy_document" "permissions" {
     sid    = "SSMParameterStore"
     effect = "Allow"
     actions = [
-      
+
       "ssm:GetParameter",
       "ssm:GetParameters",
       "ssm:DescribeParameters",

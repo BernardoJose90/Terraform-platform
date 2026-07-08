@@ -36,12 +36,12 @@ data "aws_ssm_parameter" "development_account_id" {
 
 # ✅ Provider for Development account - NO assume_role needed!
 provider "aws" {
-  region = var.aws_region
-  profile = "development"  # 👈 Uses your SSO profile directly
-  
+  region  = var.aws_region
+  profile = "development" # 👈 Uses your SSO profile directly
+
   # ✅ This ensures we only deploy to the development account
   allowed_account_ids = [data.aws_ssm_parameter.development_account_id.value]
-  
+
 
 }
 

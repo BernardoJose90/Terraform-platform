@@ -11,7 +11,7 @@ on:
 
 permissions:
   id-token: write
-  contents: read
+  contents: write  # ✅ Changed from 'read' to 'write' for auto-commit
   pull-requests: write
   security-events: write
 
@@ -29,17 +29,27 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}  # ✅ Checkout the PR branch
+          fetch-depth: 0
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
-      - name: Terraform Format Check
+      - name: Terraform Format
         id: fmt
         run: |
-          terraform fmt -check -recursive
-        continue-on-error: false
+          terraform fmt -recursive
+          if [ -n "$(git status --porcelain)" ]; then
+            echo "Formatting applied - committing changes"
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git add .
+            git commit -m "style: auto-format Terraform files"
+            git push
+          fi
 
       - name: Terraform Validate (all accounts)
         run: |
