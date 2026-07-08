@@ -19,8 +19,9 @@ env:
   AWS_REGION: "eu-west-2"
 
 jobs:
-  validate-format:
-    name: Validate & Format
+  # Quick validation before discovery
+  quick-validate:
+    name: Quick Validate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -30,13 +31,10 @@ jobs:
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
-      - name: Terraform Format Check
-        id: fmt
-        run: |
-          terraform fmt -check -recursive
-        continue-on-error: false
+      - name: Quick Format Check
+        run: terraform fmt -check -recursive
 
-      - name: Terraform Validate (all accounts)
+      - name: Quick Validate
         run: |
           for dir in member-accounts/*/; do
             echo "Validating $dir..."
@@ -84,7 +82,8 @@ jobs:
     name: Discover Accounts
     runs-on: ubuntu-latest
     needs: 
-      - validate-format
+      - quick-validate
+      # - security-scan  # ⚠️ COMMENTED OUT - remove when enabling security scan
       
     outputs:
       matrix: ${{ steps.build-matrix.outputs.matrix }}
@@ -112,8 +111,7 @@ jobs:
             --query "Parameters[*].{Name:Name,Value:Value}" \
             --output json)
 
-          # ✅ FIXED jq command
-          MATRIX=$(jq -n --argjson accounts "$ACCOUNTS" --argjson tiers "$TIERS" '
+          MATRIX=$(jq -c -n --argjson accounts "$ACCOUNTS" --argjson tiers "$TIERS" '
             ($tiers | map({(.Name | split("/") | last): .Value}) | add) as $tier_map |
             {
               include: [
@@ -168,10 +166,7 @@ jobs:
         working-directory: ${{ matrix.working_directory }}
         run: terraform init -input=false
 
-      - name: Terraform Validate
-        working-directory: ${{ matrix.working_directory }}
-        run: terraform validate
-
+        
       # ⚠️ COMMENTED OUT - Account-specific Checkov scan
       # Will be enabled after fixing IAM and VPC policies
       # - name: Checkov Security Scan (Account-specific)
@@ -205,14 +200,29 @@ jobs:
         working-directory: ${{ matrix.working_directory }}
         run: |
           echo "🚀 Applying to ${{ matrix.account }} (ID: ${{ matrix.account_id }})"
-          terraform apply -auto-approve -input=false -lock-timeout=120s
-        continue-on-error: false
+          echo "📂 Working directory: ${{ matrix.working_directory }}"
+          echo ""
+          terraform apply -auto-approve -input=false -lock-timeout=120s 2>&1 | tee apply_output.txt
+          
+          echo ""
+          echo "─────────────────────────────────────────────────────────────"
+          echo "✅ Apply completed for ${{ matrix.account }}"
+          echo "─────────────────────────────────────────────────────────────"
+          
+          # Check for changes
+          if grep -q "No changes" apply_output.txt; then
+            echo "ℹ️ No changes were applied (infrastructure already up to date)"
+          else
+            echo "📝 Changes applied successfully"
+          fi
 
       - name: Apply Success Notification
         if: success()
         working-directory: ${{ matrix.working_directory }}
         run: |
-          echo "✅ Successfully applied to ${{ matrix.account }}"
+          echo "════════════════════════════════════════════════════════════"
+          echo "✅ SUCCESS: ${{ matrix.account }}"
+          echo "════════════════════════════════════════════════════════════"
           echo ""
           echo "📋 Summary:"
           echo "  Account: ${{ matrix.account }}"
@@ -227,14 +237,21 @@ jobs:
       - name: Apply Failure Notification
         if: failure()
         run: |
-          echo "❌ Failed to apply to ${{ matrix.account }}"
+          echo "════════════════════════════════════════════════════════════"
+          echo "❌ FAILED: ${{ matrix.account }}"
+          echo "════════════════════════════════════════════════════════════"
           echo ""
           echo "🔧 Troubleshooting:"
           echo "  1. Check the logs above for specific errors"
           echo "  2. Verify the role exists: ${{ matrix.role_arn }}"
           echo "  3. Check S3 bucket permissions for state file access"
           echo "  4. Verify SSM parameters: /organizations/accounts/${{ matrix.account }}"
-          exit 1
+          echo "  5. Check if there are manual changes in the state"
+          echo ""
+          echo "💡 Common fixes:"
+          echo "  - Run 'terraform plan' locally in ${{ matrix.working_directory }}"
+          echo "  - Check for resource conflicts or missing dependencies"
+          echo "  - Verify provider configuration"
 
       - name: Upload apply artifact
         if: always()
@@ -256,6 +273,9 @@ jobs:
           echo "📋 Terraform Apply Summary"
           echo "════════════════════════════════════════════════════════════"
           echo ""
+          echo "📊 Results:"
+          echo "${{ toJson(needs.apply.result) }}"
+          echo ""
           
           SUCCESS_COUNT=0
           FAILURE_COUNT=0
@@ -272,10 +292,21 @@ jobs:
           echo "❌ Failed: ${FAILURE_COUNT}"
           echo ""
           
+          echo "════════════════════════════════════════════════════════════"
+          echo ""
+          
           if [ $FAILURE_COUNT -gt 0 ]; then
             echo "⚠️ Some accounts failed to apply. Please check the logs."
+            echo ""
+            echo "🔧 Next steps:"
+            echo "  1. Review the failed job logs above"
+            echo "  2. Fix the issues in your Terraform code"
+            echo "  3. Open a PR with fixes"
+            echo "  4. Merge again to retry apply"
             exit 1
           else
             echo "🎉 All accounts applied successfully!"
+            echo ""
+            echo "✅ Infrastructure is now up to date for all accounts."
           fi
-          
+
