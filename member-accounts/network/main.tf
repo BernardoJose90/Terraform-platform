@@ -21,35 +21,34 @@ terraform {
   }
 }
 
-# ✅ Provider for reading SSM from management account
+# ✅ Provider for reading SSM from management account (assumes cross-account role)
 provider "aws" {
-  alias   = "management"
-  region  = var.aws_region
-  profile = "management"
+  alias  = "management"
+  region = var.aws_region
+  assume_role {
+    role_arn = "arn:aws:iam::145678291484:role/SSMReadOnly"
+  }
 }
 
-# ✅ Read the development account ID from SSM
+# ✅ Read the production account ID from SSM
 data "aws_ssm_parameter" "network_account_id" {
   provider = aws.management
   name     = "/organizations/accounts/network"
 }
 
-# ✅ Provider for Development account - NO assume_role needed!
+# ✅ Main provider for the production account itself — no profile needed
 provider "aws" {
-  region  = var.aws_region
-  profile = "network" # 👈 Uses your SSO profile directly
-
-  # ✅ This ensures we only deploy to the development account
+  region              = var.aws_region
   allowed_account_ids = [data.aws_ssm_parameter.network_account_id.value]
 
 
 }
 
-module "vpc" {
-  source = "../../modules/vpc"
-  name   = "network-vpc"
-  cidr   = "10.1.0.0/16"
-}
+# module "vpc" {
+#   source = "../../modules/vpc"
+#   name   = "network-vpc"
+#   cidr   = "10.1.0.0/16"
+# }
 
 module "terraform_deploy_role" {
   source       = "../../modules/terraform-deploy-role"
