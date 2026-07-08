@@ -45,11 +45,11 @@ provider "aws" {
 
 }
 
-# module "vpc" {
-#   source = "../../modules/vpc"
-#   name   = "network-vpc"
-#   cidr   = "10.1.0.0/16"
-# }
+module "vpc" {
+ source = "../../modules/vpc"
+ name   = "network-vpc"
+ cidr   = "10.1.0.0/16"
+ }
 
 module "terraform_deploy_role" {
   source       = "../../modules/terraform-deploy-role"
