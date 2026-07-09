@@ -45,11 +45,11 @@ provider "aws" {
 }
 
 # Modules use the default provider (no alias needed)
-module "vpc" {
-  source = "../../modules/vpc"
-  name   = "developer-vpc"
-  cidr   = "10.32.0.0/16"
-}
+# module "vpc" {
+#   source = "../../modules/vpc"
+#   name   = "developer-vpc"
+#   cidr   = "10.32.0.0/16"
+# }
 
 module "terraform_deploy_role" {
   source       = "../../modules/terraform-deploy-role"
