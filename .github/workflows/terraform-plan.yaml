@@ -28,7 +28,7 @@ jobs:
     name: Validate & Format
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           ref: ${{ github.head_ref }}  # ✅ Checkout the PR branch
           fetch-depth: 0
@@ -67,7 +67,7 @@ jobs:
   #   name: Security Scan (Checkov)
   #   runs-on: ubuntu-latest
   #   steps:
-  #     - uses: actions/checkout@v4
+  #     - uses: actions/checkout@v6
   #
   #     - name: Checkov Security Scan - All Accounts
   #       id: checkov
@@ -157,7 +157,7 @@ jobs:
       matrix: ${{ fromJson(needs.discover-accounts.outputs.matrix) }}
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
