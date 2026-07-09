@@ -44,11 +44,7 @@ provider "aws" {
 
 }
 
-# ✅ Modules
-module "terraform_deploy_role" {
-  source       = "../../modules/terraform-deploy-role"
-  account_name = "security"
-}
+
 
 # Optional: Add VPC if needed
 # module "vpc" {
@@ -56,3 +52,17 @@ module "terraform_deploy_role" {
 #   name   = "security-vpc"
 #   cidr   = "10.1.0.0/16"
 # }
+
+module "terraform_deploy_role" {
+  source       = "../../modules/terraform-deploy-role"
+  account_name = "security"
+
+  # GitHub repository information (case-sensitive!)
+  github_org  = "BernardoJose90"
+  github_repo = "Terraform-platform"
+
+  # AWS account configuration
+  management_account_id = "145678291484"
+  state_bucket_name     = "james-terraform-state-2026"
+  role_name             = "TerraformDeploy"
+}

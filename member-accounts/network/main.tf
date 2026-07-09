@@ -44,13 +44,22 @@ provider "aws" {
 
 }
 
-module "vpc" {
-  source = "../../modules/vpc"
-  name   = "network-vpc"
-  cidr   = "10.80.0.0/16"
-}
+# module "vpc" {
+#   source = "../../modules/vpc"
+#   name   = "network-vpc"
+#   cidr   = "10.80.0.0/16"
+# }
 
 module "terraform_deploy_role" {
   source       = "../../modules/terraform-deploy-role"
-  account_name = "network" # change per account
+  account_name = "network"
+
+  # GitHub repository information (case-sensitive!)
+  github_org  = "BernardoJose90"
+  github_repo = "Terraform-platform"
+
+  # AWS account configuration
+  management_account_id = "145678291484"
+  state_bucket_name     = "james-terraform-state-2026"
+  role_name             = "TerraformDeploy"
 }

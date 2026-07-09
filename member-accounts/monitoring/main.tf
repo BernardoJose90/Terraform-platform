@@ -45,7 +45,17 @@ provider "aws" {
 
 }
 
+
 module "terraform_deploy_role" {
   source       = "../../modules/terraform-deploy-role"
-  account_name = "monitoring" # change per account
+  account_name = "monitoring"
+
+  # GitHub repository information (case-sensitive!)
+  github_org  = "BernardoJose90"
+  github_repo = "Terraform-platform"
+
+  # AWS account configuration
+  management_account_id = "145678291484"
+  state_bucket_name     = "james-terraform-state-2026"
+  role_name             = "TerraformDeploy"
 }
