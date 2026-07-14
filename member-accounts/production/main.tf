@@ -58,7 +58,7 @@ module "terraform_deploy_role" {
   role_name             = "TerraformDeploy"
 }
 
-
+/*  
 module "nat_vpc" {
   source = "../../modules/vpc"
 
@@ -73,3 +73,4 @@ module "nat_vpc" {
 
   tags = { Environment = "production" }
 }
+*/
