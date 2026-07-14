@@ -10,6 +10,7 @@ variable "amazon_side_asn" {
 variable "share_with_principals" {
   description = "Account IDs or Org/OU ARNs to share the TGW with via RAM"
   type        = list(string)
+  sensitive = false
 }
 
 variable "tags" {
