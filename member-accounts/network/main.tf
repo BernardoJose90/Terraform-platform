@@ -92,7 +92,7 @@ module "nat_vpc" {
   cidr = "10.99.0.0/16"
 
   azs             = ["eu-west-2a", "eu-west-2b"]
-  private_subnets = ["10.99.1.0/24", "10.99.2.0/24"]   # TGW attachment subnets
+  private_subnets = ["10.99.1.0/24", "10.99.2.0/24"]     # TGW attachment subnets
   public_subnets  = ["10.99.101.0/24", "10.99.102.0/24"] # NAT GW + IGW live here
 
   enable_nat_gateway     = true
@@ -104,11 +104,11 @@ module "nat_vpc" {
 module "nat_vpc_tgw_attachment" {
   source = "../../modules/tgw-attachment"
 
-  name                = "network-nat-vpc"
-  tgw_id              = module.tgw.tgw_id
-  tgw_route_table_id  = module.tgw.tgw_route_table_id
-  vpc_id              = module.nat_vpc.vpc_id
-  subnet_ids          = module.nat_vpc.private_subnet_ids
+  name               = "network-nat-vpc"
+  tgw_id             = module.tgw.tgw_id
+  tgw_route_table_id = module.tgw.tgw_route_table_id
+  vpc_id             = module.nat_vpc.vpc_id
+  subnet_ids         = module.nat_vpc.private_subnet_ids
 
   tags = { Environment = "network" }
 }

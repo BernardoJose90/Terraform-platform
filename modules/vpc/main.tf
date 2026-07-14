@@ -11,8 +11,8 @@ module "vpc" {
 
   # Only the network account VPC should set these to true.
   # Spoke VPCs stay private-only and route egress via the TGW instead.
-  enable_nat_gateway = var.enable_nat_gateway
-  single_nat_gateway = var.single_nat_gateway
+  enable_nat_gateway     = var.enable_nat_gateway
+  single_nat_gateway     = var.single_nat_gateway
   one_nat_gateway_per_az = var.one_nat_gateway_per_az
 
   # Spokes generally have no public subnets / IGW at all — enable_nat_gateway
