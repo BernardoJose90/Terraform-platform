@@ -40,12 +40,9 @@ data "aws_ssm_parameter" "network_account_id" {
 provider "aws" {
   region              = var.aws_region
   allowed_account_ids = [data.aws_ssm_parameter.network_account_id.value]
-
-
 }
 
-
-
+# ✅ module to create terraform deploy role in network account
 module "terraform_deploy_role" {
   source       = "../../modules/terraform-deploy-role"
   account_name = "network"
@@ -60,23 +57,25 @@ module "terraform_deploy_role" {
   role_name             = "TerraformDeploy"
 }
 
+# ✅ Read the development account ID from SSM
 data "aws_ssm_parameter" "dev_account_id" {
   provider = aws.management
   name     = "/organizations/accounts/development"
 }
 
+# ✅ Read the production account ID from SSM
 data "aws_ssm_parameter" "prod_account_id" {
   provider = aws.management
   name     = "/organizations/accounts/production"
 }
 
+# ✅ module to create a Transit Gateway and share it with the other accounts in the org
 module "tgw" {
   source = "../../modules/tgw"
 
   name = "core-tgw"
 
-  # Org ARN shares with every account in the org; swap for a list of
-  # specific account IDs if you'd rather be explicit.
+  # The TGW is shared with the development and production accounts via RAM.
   share_with_principals = [
     nonsensitive(data.aws_ssm_parameter.dev_account_id.value),
     nonsensitive(data.aws_ssm_parameter.prod_account_id.value)
@@ -84,7 +83,7 @@ module "tgw" {
   tags = { Environment = "network" }
 }
 
-# The NAT/egress VPC — the only VPC in the whole setup with an IGW + NAT GW.
+# ✅ module to create a NAT VPC with private subnets for TGW attachment and public subnets for NAT Gateways
 module "nat_vpc" {
   source = "../../modules/vpc"
 
