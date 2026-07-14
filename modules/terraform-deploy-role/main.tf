@@ -158,6 +158,21 @@ data "aws_iam_policy_document" "permissions" {
     ]
   }
 
+  statement {
+    sid    = "RAMPermissions"
+    effect = "Allow"
+    actions = [
+      "ram:CreateResourceShare",
+      "ram:DeleteResourceShare",
+      "ram:AssociateResourceShare",
+      "ram:DisassociateResourceShare",
+      "ram:GetResourceShares",
+      "ram:GetResourceShareAssociations",
+      "ram:EnableSharingWithAwsOrganization"
+    ]
+    resources = ["*"]
+  }
+
 }
 
 resource "aws_iam_role" "terraform_deploy" {
