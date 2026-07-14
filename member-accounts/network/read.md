@@ -60,16 +60,6 @@ module "terraform_deploy_role" {
   role_name             = "TerraformDeploy"
 }
 
-data "aws_ssm_parameter" "dev_account_id" {
-  provider = aws.management
-  name     = "/organizations/accounts/development"
-}
-
-data "aws_ssm_parameter" "prod_account_id" {
-  provider = aws.management
-  name     = "/organizations/accounts/production"
-}
-
 module "tgw" {
   source = "../../modules/tgw"
 
@@ -77,10 +67,8 @@ module "tgw" {
 
   # Org ARN shares with every account in the org; swap for a list of
   # specific account IDs if you'd rather be explicit.
-  share_with_principals = [
-    data.aws_ssm_parameter.dev_account_id.value,
-    data.aws_ssm_parameter.prod_account_id.value
-  ]
+  share_with_principals = ["arn:aws:organizations::<MGMT_ACCOUNT_ID>:organization/o-xxxxxxxx"]
+
   tags = { Environment = "network" }
 }
 
