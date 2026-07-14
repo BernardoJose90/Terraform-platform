@@ -122,11 +122,12 @@ module "nat_vpc_tgw_attachment" {
 # here since we didn't pass tgw_id into module.nat_vpc — this VPC IS the
 # egress point, so its private subnets already route 0.0.0.0/0 to NAT.)
 
+/*
 output "tgw_id" {
   value = module.tgw.tgw_id
 }
 
-/*
+
 output "tgw_route_table_id" {
   value = module.tgw.tgw_route_table_id
 }
