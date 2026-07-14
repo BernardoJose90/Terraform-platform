@@ -40,12 +40,9 @@ data "aws_ssm_parameter" "network_account_id" {
 provider "aws" {
   region              = var.aws_region
   allowed_account_ids = [data.aws_ssm_parameter.network_account_id.value]
-
-
 }
 
-
-
+# ✅ module to create terraform deploy role in network account
 module "terraform_deploy_role" {
   source       = "../../modules/terraform-deploy-role"
   account_name = "network"
@@ -60,11 +57,13 @@ module "terraform_deploy_role" {
   role_name             = "TerraformDeploy"
 }
 
+# ✅ Read the development account ID from SSM
 data "aws_ssm_parameter" "dev_account_id" {
   provider = aws.management
   name     = "/organizations/accounts/development"
 }
 
+# ✅ Read the production account ID from SSM
 data "aws_ssm_parameter" "prod_account_id" {
   provider = aws.management
   name     = "/organizations/accounts/production"
