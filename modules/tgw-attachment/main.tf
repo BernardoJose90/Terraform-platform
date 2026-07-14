@@ -9,7 +9,24 @@ resource "aws_ec2_transit_gateway_vpc_attachment" "this" {
   subnet_ids         = var.subnet_ids
 
   tags = merge(var.tags, { Name = "${var.name}-tgw-attachment" })
+
+  lifecycle {
+    # If AWS marks it as failed, recreate it
+    # Instead of trying to modify a failed resource
+    create_before_destroy = true
+    
+    # Prevent Terraform from trying to "fix" a failed resource
+    # This avoids perpetual diff loops
+    ignore_changes = [
+      # Don't try to change these after creation
+      # AWS manages these internally
+      security_group_referencing_support,
+      appliance_mode_support
+    ]
+  }
 }
+
+
 
 # Associate this attachment with the network account's TGW route table.
 # Requires the network account's TGW route table ID as input — pass it

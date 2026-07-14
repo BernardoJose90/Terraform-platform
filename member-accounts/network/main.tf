@@ -69,7 +69,9 @@ data "aws_ssm_parameter" "prod_account_id" {
   name     = "/organizations/accounts/production"
 }
 
+
 # The NAT/egress VPC — the only VPC in the whole setup with an IGW + NAT GW. /*  */
+/* 
 module "nat_vpc" {
   source = "../../modules/vpc"
 
@@ -85,6 +87,7 @@ module "nat_vpc" {
 
   tags = { Environment = "network" }
 }
+*/
 
 /* 
 module "tgw" {
