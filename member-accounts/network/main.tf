@@ -119,13 +119,14 @@ module "nat_vpc_tgw_attachment" {
 # Send spoke-bound-for-internet traffic arriving at the NAT VPC out through
 # its NAT Gateways. (The NAT VPC's own private_to_tgw route isn't created
 # here since we didn't pass tgw_id into module.nat_vpc — this VPC IS the
-# egress point, so its private subnets already route 0.0.0.0/0 to NAT.)
+# egress point, so its private subnets already route 0.0.0.0/0 to NAT.).
 
+/*
 output "tgw_id" {
   value = module.tgw.tgw_id
 }
 
-/*
+
 output "tgw_route_table_id" {
   value = module.tgw.tgw_route_table_id
 }
