@@ -69,7 +69,7 @@ module "nat_vpc" {
   private_subnets = ["10.1.1.0/24", "10.1.2.0/24"]     # TGW attachment subnets
   public_subnets  = ["10.1.101.0/24", "10.1.102.0/24"] # NAT GW + IGW live here
 
-  enable_nat_gateway     = false
+  enable_nat_gateway = false
 
   tags = { Environment = "production" }
 }
