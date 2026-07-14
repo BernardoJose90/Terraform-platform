@@ -70,21 +70,7 @@ data "aws_ssm_parameter" "prod_account_id" {
   name     = "/organizations/accounts/production"
 }
 
-module "tgw" {
-  source = "../../modules/tgw"
-
-  name = "core-tgw"
-
-  # Org ARN shares with every account in the org; swap for a list of
-  # specific account IDs if you'd rather be explicit.
-  share_with_principals = [
-    nonsensitive(data.aws_ssm_parameter.dev_account_id.value),
-    nonsensitive(data.aws_ssm_parameter.prod_account_id.value)
-  ]
-  tags = { Environment = "network" }
-}
-
-# The NAT/egress VPC — the only VPC in the whole setup with an IGW + NAT GW.
+# The NAT/egress VPC — the only VPC in the whole setup with an IGW + NAT GW. /*  */
 module "nat_vpc" {
   source = "../../modules/vpc"
 
@@ -101,6 +87,23 @@ module "nat_vpc" {
   tags = { Environment = "network" }
 }
 
+/* 
+module "tgw" {
+  source = "../../modules/tgw"
+
+  name = "core-tgw"
+
+  # Org ARN shares with every account in the org; swap for a list of
+  # specific account IDs if you'd rather be explicit.
+  share_with_principals = [
+    nonsensitive(data.aws_ssm_parameter.dev_account_id.value),
+    nonsensitive(data.aws_ssm_parameter.prod_account_id.value)
+  ]
+  tags = { Environment = "network" }
+}
+*/
+
+/*
 module "nat_vpc_tgw_attachment" {
   source = "../../modules/tgw-attachment"
 
@@ -112,6 +115,7 @@ module "nat_vpc_tgw_attachment" {
 
   tags = { Environment = "network" }
 }
+*/
 
 # Send spoke-bound-for-internet traffic arriving at the NAT VPC out through
 # its NAT Gateways. (The NAT VPC's own private_to_tgw route isn't created
