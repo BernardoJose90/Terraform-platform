@@ -14,7 +14,7 @@ resource "aws_ec2_transit_gateway_vpc_attachment" "this" {
     # If AWS marks it as failed, recreate it
     # Instead of trying to modify a failed resource
     create_before_destroy = true
-    
+
     # Prevent Terraform from trying to "fix" a failed resource
     # This avoids perpetual diff loops
     ignore_changes = [
