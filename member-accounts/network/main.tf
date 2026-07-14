@@ -47,7 +47,7 @@ module "terraform_deploy_role" {
   source       = "../../modules/terraform-deploy-role"
   account_name = "network"
 
-# GitHub repository information (case-sensitive!)
+  # GitHub repository information (case-sensitive!)
   github_org  = "BernardoJose90"
   github_repo = "Terraform-platform"
 
