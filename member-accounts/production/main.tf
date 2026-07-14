@@ -44,8 +44,6 @@ provider "aws" {
 
 }
 
-
-
 module "terraform_deploy_role" {
   source       = "../../modules/terraform-deploy-role"
   account_name = "production"
@@ -58,4 +56,20 @@ module "terraform_deploy_role" {
   management_account_id = "145678291484"
   state_bucket_name     = "james-terraform-state-2026"
   role_name             = "TerraformDeploy"
+}
+
+
+module "nat_vpc" {
+  source = "../../modules/vpc"
+
+  name = "network-production-vpc"
+  cidr = "10.1.0.0/16"
+
+  azs             = ["eu-west-2a", "eu-west-2b"]
+  private_subnets = ["10.1.1.0/24", "10.1.2.0/24"]     # TGW attachment subnets
+  public_subnets  = ["10.1.2.0/24", "10.1.2.0/24"] # NAT GW + IGW live here
+
+  enable_nat_gateway     = false
+
+  tags = { Environment = "production" }
 }
