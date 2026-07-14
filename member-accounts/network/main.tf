@@ -30,13 +30,13 @@ provider "aws" {
   }
 }
 
-# ✅ Read the production account ID from SSM
+# ✅ Read the network account ID from SSM
 data "aws_ssm_parameter" "network_account_id" {
   provider = aws.management
   name     = "/organizations/accounts/network"
 }
 
-# ✅ Main provider for the production account itself — no profile needed
+# ✅ Main provider for the network account itself — no profile needed
 provider "aws" {
   region              = var.aws_region
   allowed_account_ids = [data.aws_ssm_parameter.network_account_id.value]
@@ -78,8 +78,8 @@ module "tgw" {
   # Org ARN shares with every account in the org; swap for a list of
   # specific account IDs if you'd rather be explicit.
   share_with_principals = [
-    data.aws_ssm_parameter.dev_account_id.value,
-    data.aws_ssm_parameter.prod_account_id.value
+    nonsensitive(data.aws_ssm_parameter.dev_account_id.value),
+    nonsensitive(data.aws_ssm_parameter.prod_account_id.value)
   ]
   tags = { Environment = "network" }
 }
