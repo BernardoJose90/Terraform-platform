@@ -126,6 +126,8 @@ output "tgw_id" {
   value = module.tgw.tgw_id
 }
 
+/*
 output "tgw_route_table_id" {
   value = module.tgw.tgw_route_table_id
 }
+*/
