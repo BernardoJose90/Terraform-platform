@@ -80,7 +80,7 @@ module "prod_vpc" {
   enable_nat_gateway     = true
   one_nat_gateway_per_az = true
 
-  tags = { 
+  tags = {
     Environment = "production"
     ManagedBy   = "Terraform"
   }
@@ -93,12 +93,12 @@ module "prod_vpc" {
 module "prod_tgw_attachment" {
   source = "../../modules/tgw-attachment"
 
-  name                = "production-vpc"
-  tgw_id              = data.terraform_remote_state.network.outputs.tgw_id
-  vpc_id              = module.prod_vpc.vpc_id
-  subnet_ids          = module.prod_vpc.private_subnet_ids
+  name       = "production-vpc"
+  tgw_id     = data.terraform_remote_state.network.outputs.tgw_id
+  vpc_id     = module.prod_vpc.vpc_id
+  subnet_ids = module.prod_vpc.private_subnet_ids
 
-  tags = { 
+  tags = {
     Environment = "production"
     ManagedBy   = "Terraform"
   }

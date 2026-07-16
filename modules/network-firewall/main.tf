@@ -8,13 +8,13 @@ data "aws_availability_zones" "available" {
 locals {
   # Convert AZ names (eu-west-2a) to AZ IDs (euw2-az1)
   az_id_map = {
-    for az in data.aws_availability_zones.available.names : 
+    for az in data.aws_availability_zones.available.names :
     az => data.aws_availability_zones.available.zone_ids[index(data.aws_availability_zones.available.names, az)]
   }
-  
+
   # Convert the provided AZ names to AZ IDs
   availability_zone_ids = [
-    for az in var.availability_zones : 
+    for az in var.availability_zones :
     local.az_id_map[az]
   ]
 }

@@ -1,11 +1,11 @@
 # Transit Gateway
 resource "aws_ec2_transit_gateway" "this" {
-  description                    = var.name
-  amazon_side_asn                = var.amazon_side_asn
-  auto_accept_shared_attachments = "enable"
+  description                     = var.name
+  amazon_side_asn                 = var.amazon_side_asn
+  auto_accept_shared_attachments  = "enable"
   default_route_table_association = "disable"
   default_route_table_propagation = "disable"
-  tags = merge(var.tags, { Name = var.name })
+  tags                            = merge(var.tags, { Name = var.name })
 }
 
 # ============================================================
@@ -37,7 +37,7 @@ resource "aws_ec2_transit_gateway_route_table" "dev_spoke" {
 resource "aws_ram_resource_share" "tgw" {
   name                      = "${var.name}-share"
   allow_external_principals = false
-  tags = var.tags
+  tags                      = var.tags
 }
 
 # Share the TGW itself
@@ -48,7 +48,7 @@ resource "aws_ram_resource_association" "tgw" {
 
 # Share principals (prod/dev accounts)
 resource "aws_ram_principal_association" "tgw" {
-  for_each = toset(var.share_with_principals)
+  for_each           = toset(var.share_with_principals)
   principal          = each.value
   resource_share_arn = aws_ram_resource_share.tgw.arn
 }
