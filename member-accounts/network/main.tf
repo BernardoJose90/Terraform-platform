@@ -153,11 +153,10 @@ resource "aws_ssm_parameter" "dev_spoke_route_table_id" {
 module "nat_vpc_tgw_attachment" {
   source = "../../modules/tgw-attachment"
 
-  name               = "network-nat-vpc"
-  tgw_id             = module.tgw.tgw_id
-  tgw_route_table_id = module.tgw.tgw_route_table_ids.firewall_forwarding
-  vpc_id             = module.nat_vpc.vpc_id
-  subnet_ids         = module.nat_vpc.private_subnet_ids
+  name       = "network-nat-vpc"
+  tgw_id     = module.tgw.tgw_id
+  vpc_id     = module.nat_vpc.vpc_id
+  subnet_ids = module.nat_vpc.private_subnet_ids
 
   tags = { Environment = "network" }
 }

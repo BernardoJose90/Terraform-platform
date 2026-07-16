@@ -6,9 +6,6 @@ variable "tgw_id" {
   type = string
 }
 
-variable "tgw_route_table_id" {
-  type = string
-}
 
 variable "vpc_id" {
   type = string
