@@ -1,6 +1,25 @@
-# Stateful rule group — placeholder deny/allow logic. Replace with your
-# actual east-west / north-south policy (5-tuple, domain-list, or Suricata
-# rules depending on what you need).
+# ============================================================
+# Data source to get AZ IDs from AZ names
+# ============================================================
+data "aws_availability_zones" "available" {
+  state = "available"
+}
+
+locals {
+  # Convert AZ names (eu-west-2a) to AZ IDs (euw2-az1)
+  az_id_map = {
+    for az in data.aws_availability_zones.available.names : 
+    az => data.aws_availability_zones.available.zone_ids[index(data.aws_availability_zones.available.names, az)]
+  }
+  
+  # Convert the provided AZ names to AZ IDs
+  availability_zone_ids = [
+    for az in var.availability_zones : 
+    local.az_id_map[az]
+  ]
+}
+
+# Stateful rule group
 resource "aws_networkfirewall_rule_group" "cross_env_block" {
   capacity = var.rule_group_capacity
   name     = "${var.name}-cross-env-block"
@@ -12,11 +31,11 @@ resource "aws_networkfirewall_rule_group" "cross_env_block" {
         action = "DROP"
         header {
           protocol         = "IP"
-          source            = "10.20.0.0/16"
+          source           = var.dev_cidr
           source_port      = "ANY"
-          destination        = "10.30.0.0/16"
+          destination      = var.prod_cidr
           destination_port = "ANY"
-          direction         = "ANY"
+          direction        = "ANY"
         }
         rule_option {
           keyword = "sid:1"
@@ -40,23 +59,24 @@ resource "aws_networkfirewall_firewall_policy" "this" {
     }
 
     stateful_engine_options {
-      rule_order = "STRICT_ORDER"
+      rule_order = "DEFAULT_ACTION_ORDER"
     }
   }
 
   tags = var.tags
 }
 
-# TGW-attached firewall. Requires an AWS provider version that supports
-# transit_gateway_id / availability_zone_mapping on this resource —
-# confirm against your pinned provider's docs before applying.
+# ============================================================
+# ✅ TGW-attached firewall with dynamic AZ ID conversion
+# ============================================================
 resource "aws_networkfirewall_firewall" "this" {
   name                = var.name
   firewall_policy_arn = aws_networkfirewall_firewall_policy.this.arn
-  transit_gateway_id  = var.tgw_id
+
+  transit_gateway_id = var.tgw_id
 
   dynamic "availability_zone_mapping" {
-    for_each = var.availability_zones
+    for_each = local.availability_zone_ids
     content {
       availability_zone_id = availability_zone_mapping.value
     }
@@ -65,8 +85,7 @@ resource "aws_networkfirewall_firewall" "this" {
   tags = var.tags
 }
 
-# Associate the firewall's TGW attachment with the firewall-forwarding
-# route table (the "post-inspection router" in the design doc).
+# Associate the firewall's TGW attachment with the firewall-forwarding route table
 resource "aws_ec2_transit_gateway_route_table_association" "firewall" {
   transit_gateway_attachment_id  = aws_networkfirewall_firewall.this.firewall_status[0].transit_gateway_attachment_sync_states[0].attachment_id
   transit_gateway_route_table_id = var.tgw_firewall_forwarding_route_table_id
