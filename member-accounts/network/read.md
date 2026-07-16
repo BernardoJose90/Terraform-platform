@@ -113,3 +113,7 @@ output "tgw_id" {
 output "tgw_route_table_id" {
   value = module.tgw.tgw_route_table_id
 }
+
+
+  nonsensitive(data.aws_ssm_parameter.dev_account_id.value),
+  nonsensitive(data.aws_ssm_parameter.prod_account_id.value)
