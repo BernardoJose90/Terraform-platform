@@ -153,11 +153,10 @@ resource "aws_ssm_parameter" "dev_spoke_route_table_id" {
 module "nat_vpc_tgw_attachment" {
   source = "../../modules/tgw-attachment"
 
-  name                = "network-nat-vpc"
-  tgw_id              = module.tgw.tgw_id
-  tgw_route_table_id  = module.tgw.tgw_route_table_ids.firewall_forwarding
-  vpc_id              = module.nat_vpc.vpc_id
-  subnet_ids          = module.nat_vpc.private_subnet_ids
+  name               = "network-nat-vpc"
+  tgw_id             = module.tgw.tgw_id
+  vpc_id             = module.nat_vpc.vpc_id
+  subnet_ids         = module.nat_vpc.private_subnet_ids
 
   tags = { Environment = "network" }
 }
@@ -169,10 +168,10 @@ module "nat_vpc_tgw_attachment" {
 module "network_firewall" {
   source = "../../modules/network-firewall"
 
-  name                                      = "core-network-firewall"
-  tgw_id                                    = module.tgw.tgw_id
-  availability_zones                        = ["eu-west-2a", "eu-west-2b"]
-  tgw_firewall_forwarding_route_table_id   = module.tgw.tgw_route_table_ids.firewall_forwarding
+  name                                   = "core-network-firewall"
+  tgw_id                                 = module.tgw.tgw_id
+  availability_zones                     = ["eu-west-2a", "eu-west-2b"]
+  tgw_firewall_forwarding_route_table_id = module.tgw.tgw_route_table_ids.firewall_forwarding
 
   prod_cidr = "10.20.0.0/16"
   dev_cidr  = "10.30.0.0/16"
@@ -208,7 +207,7 @@ module "routes_firewall_forwarding" {
   routes = {
     "10.20.0.0/16" = local.prod_attachment_id
     "10.30.0.0/16" = local.dev_attachment_id
-    "0.0.0.0/0"     = module.nat_vpc_tgw_attachment.attachment_id
+    "0.0.0.0/0"    = module.nat_vpc_tgw_attachment.attachment_id
   }
 }
 
@@ -221,7 +220,7 @@ module "routes_prod_spoke" {
 
   tgw_route_table_id = module.tgw.tgw_route_table_ids.prod_spoke
   routes = {
-    "0.0.0.0/0"     = module.network_firewall.tgw_attachment_id
+    "0.0.0.0/0"    = module.network_firewall.tgw_attachment_id
     "10.30.0.0/16" = module.network_firewall.tgw_attachment_id
   }
 }
@@ -234,7 +233,7 @@ module "routes_dev_spoke" {
 
   tgw_route_table_id = module.tgw.tgw_route_table_ids.dev_spoke
   routes = {
-    "0.0.0.0/0"     = module.network_firewall.tgw_attachment_id
+    "0.0.0.0/0"    = module.network_firewall.tgw_attachment_id
     "10.20.0.0/16" = module.network_firewall.tgw_attachment_id
   }
 }
