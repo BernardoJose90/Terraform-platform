@@ -9,7 +9,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.0"
+      version = ">= 5.83.0"
     }
   }
   backend "s3" {
@@ -62,9 +62,7 @@ data "aws_ssm_parameter" "prod_account_id" {
 }
 
 # --- Read Prod/Dev's own TGW attachment IDs from their state files ---
-# Prod and Dev create their own tgw-attachment resource (it must run in the
-# spoke account per that module's design), then output attachment_id. We
-# read it here via remote state since all accounts share one state bucket.
+
 data "terraform_remote_state" "production" {
   backend = "s3"
   config = {
@@ -81,6 +79,20 @@ data "terraform_remote_state" "development" {
     key    = "development/terraform.tfstate"
     region = "eu-west-2"
   }
+}
+
+/* */
+# ============================================================
+# LOCALS: Safely handle missing prod/dev outputs
+# ============================================================
+locals {
+  # Try to get attachment IDs from remote state, default to null if not found
+  prod_attachment_id = try(data.terraform_remote_state.production.outputs.attachment_id, null)
+  dev_attachment_id  = try(data.terraform_remote_state.development.outputs.attachment_id, null)
+
+  # Check if prod/dev have been applied
+  prod_applied = local.prod_attachment_id != null
+  dev_applied  = local.dev_attachment_id != null
 }
 
 # --- The NAT/egress VPC — the only VPC with an IGW + NAT GW ---
@@ -112,36 +124,63 @@ module "tgw" {
   tags = { Environment = "network" }
 }
 
-# Egress VPC's attachment associates with the firewall_forwarding table —
-# it only ever receives already-inspected traffic, same as the firewall's
-# own attachment.
+# ============================================================
+# SSM PARAMETERS (for prod/dev to discover TGW)
+# ============================================================
+resource "aws_ssm_parameter" "tgw_id" {
+  name  = "/transit-gateway/production/tgw-id"
+  type  = "String"
+  value = module.tgw.tgw_id
+  tags  = { Environment = "network" }
+}
+
+resource "aws_ssm_parameter" "prod_spoke_route_table_id" {
+  name  = "/transit-gateway/production/prod-spoke-rt-id"
+  type  = "String"
+  value = module.tgw.tgw_route_table_ids.prod_spoke
+  tags  = { Environment = "network" }
+}
+
+resource "aws_ssm_parameter" "dev_spoke_route_table_id" {
+  name  = "/transit-gateway/production/dev-spoke-rt-id"
+  type  = "String"
+  value = module.tgw.tgw_route_table_ids.dev_spoke
+  tags  = { Environment = "network" }
+}
+
+# --- TGW Attachment for NAT VPC ---
+# Associate with firewall_forwarding route table (post-inspection)
 module "nat_vpc_tgw_attachment" {
   source = "../../modules/tgw-attachment"
 
   name                = "network-nat-vpc"
   tgw_id              = module.tgw.tgw_id
-  tgw_route_table_id = module.tgw.tgw_route_table_ids.firewall_forwarding
+  tgw_route_table_id  = module.tgw.tgw_route_table_ids.firewall_forwarding
   vpc_id              = module.nat_vpc.vpc_id
   subnet_ids          = module.nat_vpc.private_subnet_ids
 
   tags = { Environment = "network" }
 }
 
-# --- The firewall itself ---
+# ============================================================
+# Network Firewall — TGW-attached mode
+# ============================================================
+# The firewall runs in an AWS-managed VPC, not in the NAT VPC
 module "network_firewall" {
   source = "../../modules/network-firewall"
 
-  name                                     = "core-network-firewall"
-  tgw_id                                     = module.tgw.tgw_id
-  tgw_firewall_forwarding_route_table_id = module.tgw.tgw_route_table_ids.firewall_forwarding
-  availability_zones                       = ["eu-west-2a", "eu-west-2b"] # verify these match your AZ-ID format
+  name                                      = "core-network-firewall"
+  tgw_id                                    = module.tgw.tgw_id
+  availability_zones                        = ["eu-west-2a", "eu-west-2b"]
+  tgw_firewall_forwarding_route_table_id   = module.tgw.tgw_route_table_ids.firewall_forwarding
 
   prod_cidr = "10.20.0.0/16"
-  dev_cidr   = "10.30.0.0/16"
+  dev_cidr  = "10.30.0.0/16"
 
   tags = { Environment = "network" }
 }
 
+# --- Outputs ---
 output "tgw_id" {
   value = module.tgw.tgw_id
 }
@@ -150,21 +189,35 @@ output "tgw_route_table_ids" {
   value = module.tgw.tgw_route_table_ids
 }
 
-# tgw-firewall-forwarding-rt: post-inspection routing to real destinations
+output "firewall_tgw_attachment_id" {
+  value = module.network_firewall.tgw_attachment_id
+}
+
+# ============================================================
+# ROUTES: Conditional modules that only create routes if prod/dev exist
+# ============================================================
+
+# --- Routes for firewall_forwarding route table ---
+# This is where traffic goes AFTER inspection
 module "routes_firewall_forwarding" {
   source = "../../modules/tgw-static-routes"
 
+  count = local.prod_applied && local.dev_applied ? 1 : 0
+
   tgw_route_table_id = module.tgw.tgw_route_table_ids.firewall_forwarding
   routes = {
-    "10.20.0.0/16" = data.terraform_remote_state.production.outputs.attachment_id
-    "10.30.0.0/16" = data.terraform_remote_state.development.outputs.attachment_id
+    "10.20.0.0/16" = local.prod_attachment_id
+    "10.30.0.0/16" = local.dev_attachment_id
     "0.0.0.0/0"     = module.nat_vpc_tgw_attachment.attachment_id
   }
 }
 
-# tgw-prod-spoke-rt: everything not local goes to the firewall for inspection
+# --- Routes for prod_spoke route table ---
+# Everything goes to firewall for inspection first
 module "routes_prod_spoke" {
   source = "../../modules/tgw-static-routes"
+
+  count = local.prod_applied ? 1 : 0
 
   tgw_route_table_id = module.tgw.tgw_route_table_ids.prod_spoke
   routes = {
@@ -173,9 +226,11 @@ module "routes_prod_spoke" {
   }
 }
 
-# tgw-dev-spoke-rt: mirror of prod
+# --- Routes for dev_spoke route table ---
 module "routes_dev_spoke" {
   source = "../../modules/tgw-static-routes"
+
+  count = local.dev_applied ? 1 : 0
 
   tgw_route_table_id = module.tgw.tgw_route_table_ids.dev_spoke
   routes = {
@@ -183,3 +238,15 @@ module "routes_dev_spoke" {
     "10.20.0.0/16" = module.network_firewall.tgw_attachment_id
   }
 }
+
+# ============================================================
+# NOTIFICATIONS: Inform if prod/dev routes are missing
+# ============================================================
+output "routes_status" {
+  value = {
+    prod_routes_created = local.prod_applied
+    dev_routes_created  = local.dev_applied
+    message             = local.prod_applied && local.dev_applied ? "✅ All routes to prod/dev have been created." : "⚠️ Prod/dev routes not created. Apply production and development accounts first, then run 'terraform apply' again."
+  }
+}
+
