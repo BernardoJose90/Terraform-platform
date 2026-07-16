@@ -1,57 +1,5 @@
-# Trust policy: the management account (human/break-glass access) AND
-# GitHub Actions via OIDC (CI) may both assume this role.
-data "aws_iam_policy_document" "trust" {
-  statement {
-    sid     = "ManagementAccountBreakGlass"
-    effect  = "Allow"
-    actions = ["sts:AssumeRole"]
-    principals {
-      type        = "AWS"
-      identifiers = ["arn:aws:iam::${var.management_account_id}:root"]
-    }
-    condition {
-      test     = "Bool"
-      variable = "aws:MultiFactorAuthPresent"
-      values   = ["true"]
-    }
-  }
-
-  statement {
-    sid     = "GitHubActionsCI"
-    effect  = "Allow"
-    actions = ["sts:AssumeRoleWithWebIdentity"]
-    principals {
-      type        = "Federated"
-      identifiers = [aws_iam_openid_connect_provider.github.arn]
-    }
-    condition {
-      test     = "StringEquals"
-      variable = "token.actions.githubusercontent.com:aud"
-      values   = ["sts.amazonaws.com"]
-    }
-    # ✅ FIXED: Use repo:* to match all GitHub Actions contexts
-    condition {
-      test     = "StringLike"
-      variable = "token.actions.githubusercontent.com:sub"
-      values = [
-        "repo:${var.github_org}/${var.github_repo}:*"
-      ]
-    }
-  }
-}
-
-# ✅ Create OIDC provider in the target account
-resource "aws_iam_openid_connect_provider" "github" {
-  url             = "https://token.actions.githubusercontent.com"
-  client_id_list  = ["sts.amazonaws.com"]
-  thumbprint_list = ["6938fd4d98bab03faadb97b34396831e3780aea1"]
-
-  tags = {
-    ManagedBy   = "Terraform"
-    Repo        = "${var.github_org}/${var.github_repo}"
-    AccountName = var.account_name
-  }
-}
+# Get current account ID for dynamic permissions
+data "aws_caller_identity" "current" {}
 
 # ✅ COMPLETE: Permissions with ALL required IAM actions
 data "aws_iam_policy_document" "permissions" {
@@ -121,18 +69,26 @@ data "aws_iam_policy_document" "permissions" {
     resources = ["*"]
   }
 
-  # SSM Parameter Store
+  # ✅ FIXED: SSM Parameter Store - Access to both management AND current account
   statement {
     sid    = "SSMParameterStore"
     effect = "Allow"
     actions = [
       "ssm:GetParameter",
       "ssm:GetParameters",
+      "ssm:GetParametersByPath",  # Added for recursive parameter access
       "ssm:DescribeParameters",
       "ssm:PutParameter",
       "ssm:DeleteParameter"
     ]
-    resources = ["arn:aws:ssm:eu-west-2:${var.management_account_id}:parameter/organizations/*"]
+    resources = [
+      # Management account SSM parameters
+      "arn:aws:ssm:eu-west-2:${var.management_account_id}:parameter/organizations/*",
+      "arn:aws:ssm:eu-west-2:${var.management_account_id}:parameter/transit-gateway/*",
+      # Current account SSM parameters (where this role is deployed)
+      "arn:aws:ssm:eu-west-2:${data.aws_caller_identity.current.account_id}:parameter/organizations/*",
+      "arn:aws:ssm:eu-west-2:${data.aws_caller_identity.current.account_id}:parameter/transit-gateway/*"
+    ]
   }
 
   statement {
@@ -158,6 +114,7 @@ data "aws_iam_policy_document" "permissions" {
     ]
   }
 
+  # ✅ FIXED: RAM Permissions - Added missing ListResourceSharePermissions
   statement {
     sid    = "RAMPermissions"
     effect = "Allow"
@@ -168,121 +125,38 @@ data "aws_iam_policy_document" "permissions" {
       "ram:DisassociateResourceShare",
       "ram:GetResourceShares",
       "ram:GetResourceShareAssociations",
+      "ram:ListResourceSharePermissions",  # 🔥 MISSING - Added this
       "ram:EnableSharingWithAwsOrganization"
     ]
     resources = ["*"]
   }
 
-}
-
-resource "aws_iam_role" "terraform_deploy" {
-  name                 = var.role_name
-  assume_role_policy   = data.aws_iam_policy_document.trust.json
-  max_session_duration = 3600
-  tags = {
-    ManagedBy   = "Terraform"
-    Repo        = "${var.github_org}/${var.github_repo}"
-    AccountName = var.account_name
-  }
-}
-
-resource "aws_iam_role_policy" "terraform_deploy" {
-  name   = "TerraformDeployPermissions"
-  role   = aws_iam_role.terraform_deploy.id
-  policy = data.aws_iam_policy_document.permissions.json
-}
-
-output "role_arn" {
-  value = aws_iam_role.terraform_deploy.arn
-}
-
-output "role_name" {
-  value = aws_iam_role.terraform_deploy.name
-}
-
-# --- Separate, read-only role for PR plans ---
-
-data "aws_iam_policy_document" "github_oidc_trust_plan" {
+  # ✅ NEW: Network Firewall permissions (completely missing)
   statement {
-    sid     = "GitHubActionsPlan"
-    effect  = "Allow"
-    actions = ["sts:AssumeRoleWithWebIdentity"]
-    principals {
-      type        = "Federated"
-      identifiers = [aws_iam_openid_connect_provider.github.arn]
-    }
-    condition {
-      test     = "StringEquals"
-      variable = "token.actions.githubusercontent.com:aud"
-      values   = ["sts.amazonaws.com"]
-    }
-    condition {
-      test     = "StringLike"
-      variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_org}/${var.github_repo}:*"]
-    }
-  }
-}
-
-# ✅ S3 permissions for TerraformPlan role
-data "aws_iam_policy_document" "plan_s3_access" {
-  statement {
-    sid    = "StateFileAccess"
+    sid    = "NetworkFirewall"
     effect = "Allow"
     actions = [
-      "s3:GetObject",
-      "s3:PutObject",
-      "s3:DeleteObject",
-      "s3:ListBucket"
+      # Read operations
+      "network-firewall:DescribeFirewall",
+      "network-firewall:DescribeFirewallPolicy",
+      "network-firewall:DescribeRuleGroup",
+      "network-firewall:ListFirewalls",
+      "network-firewall:ListFirewallPolicies",
+      "network-firewall:ListRuleGroups",
+      "network-firewall:ListTagsForResource",
+      # Write operations (if you need to create/update)
+      "network-firewall:CreateFirewall",
+      "network-firewall:UpdateFirewall",
+      "network-firewall:DeleteFirewall",
+      "network-firewall:CreateFirewallPolicy",
+      "network-firewall:UpdateFirewallPolicy",
+      "network-firewall:DeleteFirewallPolicy",
+      "network-firewall:CreateRuleGroup",
+      "network-firewall:UpdateRuleGroup",
+      "network-firewall:DeleteRuleGroup",
+      "network-firewall:AssociateFirewallPolicy",
+      "network-firewall:DisassociateFirewallPolicy"
     ]
-    resources = [
-      "arn:aws:s3:::${var.state_bucket_name}",
-      "arn:aws:s3:::${var.state_bucket_name}/*"
-    ]
+    resources = ["*"]
   }
-}
-
-# ✅ Custom policy for TerraformPlan role
-resource "aws_iam_policy" "terraform_plan_s3" {
-  name   = "TerraformPlanS3Policy"
-  policy = data.aws_iam_policy_document.plan_s3_access.json
-}
-
-resource "aws_iam_role" "terraform_plan" {
-  name                 = "TerraformPlan"
-  assume_role_policy   = data.aws_iam_policy_document.github_oidc_trust_plan.json
-  max_session_duration = 3600
-  tags = {
-    ManagedBy   = "github-actions"
-    Repo        = "${var.github_org}/${var.github_repo}"
-    AccountName = var.account_name
-  }
-}
-
-resource "aws_iam_role_policy" "terraform_plan_assume_ssm_readonly" {
-  name = "AssumeManagementSSMReadOnly"
-  role = aws_iam_role.terraform_plan.id
-  policy = jsonencode({
-    Version = "2012-10-17"
-    Statement = [{
-      Effect   = "Allow"
-      Action   = "sts:AssumeRole"
-      Resource = "arn:aws:iam::${var.management_account_id}:role/SSMReadOnly"
-    }]
-  })
-}
-
-resource "aws_iam_role_policy_attachment" "terraform_plan_readonly" {
-  role       = aws_iam_role.terraform_plan.name
-  policy_arn = "arn:aws:iam::aws:policy/ReadOnlyAccess"
-}
-
-# ✅ Attach S3 policy to TerraformPlan role
-resource "aws_iam_role_policy_attachment" "terraform_plan_s3" {
-  role       = aws_iam_role.terraform_plan.name
-  policy_arn = aws_iam_policy.terraform_plan_s3.arn
-}
-
-output "plan_role_arn" {
-  value = aws_iam_role.terraform_plan.arn
 }
