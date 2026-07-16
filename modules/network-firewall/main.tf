@@ -12,11 +12,11 @@ resource "aws_networkfirewall_rule_group" "cross_env_block" {
         action = "DROP"
         header {
           protocol         = "IP"
-          source            = "10.20.0.0/16"
+          source           = "10.20.0.0/16"
           source_port      = "ANY"
-          destination        = "10.30.0.0/16"
+          destination      = "10.30.0.0/16"
           destination_port = "ANY"
-          direction         = "ANY"
+          direction        = "ANY"
         }
         rule_option {
           keyword = "sid:1"
