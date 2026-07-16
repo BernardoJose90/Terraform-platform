@@ -11,7 +11,7 @@ output "tgw_arn" {
 output "tgw_route_table_ids" {
   value = {
     firewall_forwarding = aws_ec2_transit_gateway_route_table.firewall_forwarding.id
-    prod_spoke           = aws_ec2_transit_gateway_route_table.prod_spoke.id
-    dev_spoke             = aws_ec2_transit_gateway_route_table.dev_spoke.id
+    prod_spoke          = aws_ec2_transit_gateway_route_table.prod_spoke.id
+    dev_spoke           = aws_ec2_transit_gateway_route_table.dev_spoke.id
   }
 }

@@ -137,31 +137,31 @@ output "tgw_route_table_id" {
 
 # tgw-firewall-forwarding-rt: post-inspection routing to real destinations
 module "routes_firewall_forwarding" {
-  source              = "../modules/tgw-static-routes"
+  source             = "../modules/tgw-static-routes"
   tgw_route_table_id = module.tgw.tgw_route_table_ids.firewall_forwarding
   routes = {
     "10.20.0.0/16" = module.tgw_attach_prod.attachment_id
     "10.30.0.0/16" = module.tgw_attach_dev.attachment_id
-    "0.0.0.0/0"     = module.tgw_attach_egress.attachment_id
+    "0.0.0.0/0"    = module.tgw_attach_egress.attachment_id
   }
 }
 
 # tgw-prod-spoke-rt: everything not local goes to the firewall for inspection
 module "routes_prod_spoke" {
-  source              = "../modules/tgw-static-routes"
+  source             = "../modules/tgw-static-routes"
   tgw_route_table_id = module.tgw.tgw_route_table_ids.prod_spoke
   routes = {
-    "0.0.0.0/0"     = module.network_firewall.tgw_attachment_id
+    "0.0.0.0/0"    = module.network_firewall.tgw_attachment_id
     "10.30.0.0/16" = module.network_firewall.tgw_attachment_id # dev, via firewall
   }
 }
 
 # tgw-dev-spoke-rt: mirror of prod
 module "routes_dev_spoke" {
-  source              = "../modules/tgw-static-routes"
+  source             = "../modules/tgw-static-routes"
   tgw_route_table_id = module.tgw.tgw_route_table_ids.dev_spoke
   routes = {
-    "0.0.0.0/0"     = module.network_firewall.tgw_attachment_id
+    "0.0.0.0/0"    = module.network_firewall.tgw_attachment_id
     "10.20.0.0/16" = module.network_firewall.tgw_attachment_id # prod, via firewall
   }
 }

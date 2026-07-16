@@ -17,7 +17,7 @@ resource "aws_ec2_transit_gateway" "this" {
 # its real destination (a spoke VPC or the egress VPC).
 resource "aws_ec2_transit_gateway_route_table" "firewall_forwarding" {
   transit_gateway_id = aws_ec2_transit_gateway.this.id
-  tags                = merge(var.tags, { Name = "${var.name}-firewall-forwarding-rt" })
+  tags               = merge(var.tags, { Name = "${var.name}-firewall-forwarding-rt" })
 }
 
 # Associated with tgw-attach-prod-spoke. Everything (0.0.0.0/0 and all
@@ -25,13 +25,13 @@ resource "aws_ec2_transit_gateway_route_table" "firewall_forwarding" {
 # CIDR propagates in automatically.
 resource "aws_ec2_transit_gateway_route_table" "prod_spoke" {
   transit_gateway_id = aws_ec2_transit_gateway.this.id
-  tags                = merge(var.tags, { Name = "${var.name}-prod-spoke-rt" })
+  tags               = merge(var.tags, { Name = "${var.name}-prod-spoke-rt" })
 }
 
 # Same idea for dev.
 resource "aws_ec2_transit_gateway_route_table" "dev_spoke" {
   transit_gateway_id = aws_ec2_transit_gateway.this.id
-  tags                = merge(var.tags, { Name = "${var.name}-dev-spoke-rt" })
+  tags               = merge(var.tags, { Name = "${var.name}-dev-spoke-rt" })
 }
 
 # Share the TGW to the other accounts in your AWS Organization via RAM.
