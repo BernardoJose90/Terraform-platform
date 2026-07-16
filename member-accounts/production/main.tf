@@ -51,7 +51,7 @@ data "terraform_remote_state" "network" {
     region = "eu-west-2"
   }
 }
-/* */
+
 module "terraform_deploy_role" {
   source       = "../../modules/terraform-deploy-role"
   account_name = "production"
