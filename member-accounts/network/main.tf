@@ -25,7 +25,8 @@ provider "aws" {
   alias  = "management"
   region = var.aws_region
   assume_role {
-    role_arn = "arn:aws:iam::145678291484:role/SSMReadOnly"
+    role_arn = "arn:aws:iam::${var.management_account_id}:role/SSMReadOnly"
+
   }
 }
 
@@ -39,16 +40,17 @@ provider "aws" {
   allowed_account_ids = [data.aws_ssm_parameter.network_account_id.value]
 }
 
-module "terraform_deploy_role" {
-  source       = "../../modules/terraform-deploy-role"
+module "github-oidc-roles" {
+  source       = "../../modules/github-oidc-roles"
   account_name = "network"
 
   github_org  = "BernardoJose90"
   github_repo = "Terraform-platform"
 
-  management_account_id = "145678291484"
+  management_account_id = var.management_account_id
   state_bucket_name     = "james-terraform-state-2026"
   role_name             = "TerraformDeploy"
+
 }
 
 data "aws_ssm_parameter" "dev_account_id" {
@@ -142,7 +144,7 @@ resource "aws_ssm_parameter" "prod_spoke_route_table_id" {
 }
 
 resource "aws_ssm_parameter" "dev_spoke_route_table_id" {
-  name  = "/transit-gateway/production/dev-spoke-rt-id"
+  name  = "/transit-gateway/development/dev-spoke-rt-id"
   type  = "String"
   value = module.tgw.tgw_route_table_ids.dev_spoke
   tags  = { Environment = "network" }
