@@ -11,13 +11,13 @@ resource "aws_iam_openid_connect_provider" "github" {
   url             = "https://token.actions.githubusercontent.com"
   client_id_list  = ["sts.amazonaws.com"]
   thumbprint_list = ["6938fd4d98bab03faadb97b34396831e3780aea1"]
-  
+
   tags = {
     ManagedBy   = "Terraform"
     Repo        = "${var.github_org}/${var.github_repo}"
     AccountName = var.account_name
   }
-  
+
   lifecycle {
     prevent_destroy = true
   }
@@ -25,7 +25,7 @@ resource "aws_iam_openid_connect_provider" "github" {
 
 # Trust policy for GitHub Actions - This Generates trust policy.
 data "aws_iam_policy_document" "trust" {
-# Allows management account admins with MFA to assume this role (emergency access)
+  # Allows management account admins with MFA to assume this role (emergency access)
   statement {
     sid     = "ManagementAccountBreakGlass"
     effect  = "Allow"
@@ -41,7 +41,7 @@ data "aws_iam_policy_document" "trust" {
     }
   }
 
-# Allows GitHub Actions to assume this role via OIDC
+  # Allows GitHub Actions to assume this role via OIDC
   statement {
     sid     = "GitHubActionsCI"
     effect  = "Allow"
@@ -230,17 +230,17 @@ resource "aws_iam_role" "terraform_deploy" {
   name                 = var.role_name
   assume_role_policy   = data.aws_iam_policy_document.trust.json
   max_session_duration = 3600
-  
+
   tags = {
     ManagedBy   = "Terraform"
     Repo        = "${var.github_org}/${var.github_repo}"
     AccountName = var.account_name
   }
-  
+
   lifecycle {
     prevent_destroy = true
   }
-  
+
   depends_on = [aws_iam_openid_connect_provider.github]
 }
 
@@ -282,13 +282,13 @@ resource "aws_iam_role" "terraform_plan" {
   name                 = "TerraformPlan"
   assume_role_policy   = data.aws_iam_policy_document.github_oidc_trust_plan.json
   max_session_duration = 3600
-  
+
   tags = {
     ManagedBy   = "github-actions"
     Repo        = "${var.github_org}/${var.github_repo}"
     AccountName = var.account_name
   }
-  
+
   lifecycle {
     prevent_destroy = true
   }
