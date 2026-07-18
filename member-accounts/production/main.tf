@@ -64,6 +64,7 @@ module "github-oidc-roles" {
   role_name             = "TerraformDeploy"
 }
 
+/* 
 # ============================================================
 # PRODUCTION VPC
 # ============================================================
@@ -121,3 +122,4 @@ output "private_subnet_ids" {
   description = "Private subnet IDs in the production VPC"
   value       = module.prod_vpc.private_subnet_ids
 }
+*/

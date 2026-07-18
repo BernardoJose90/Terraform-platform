@@ -97,6 +97,7 @@ locals {
   dev_applied  = local.dev_attachment_id != null
 }
 
+/* 
 # --- The NAT/egress VPC — the only VPC with an IGW + NAT GW ---
 module "nat_vpc" {
   source = "../../modules/vpc"
@@ -250,4 +251,4 @@ output "routes_status" {
     message             = local.prod_applied && local.dev_applied ? "✅ All routes to prod/dev have been created." : "⚠️ Prod/dev routes not created. Apply production and development accounts first, then run 'terraform apply' again."
   }
 }
-
+*/
