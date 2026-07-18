@@ -97,7 +97,7 @@ locals {
   dev_applied  = local.dev_attachment_id != null
 }
 
-/* 
+
 # --- The NAT/egress VPC — the only VPC with an IGW + NAT GW ---
 module "nat_vpc" {
   source = "../../modules/vpc"
@@ -114,7 +114,7 @@ module "nat_vpc" {
 
   tags = { Environment = "network" }
 }
-
+/* 
 module "tgw" {
   source = "../../modules/tgw"
 
