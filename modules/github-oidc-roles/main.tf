@@ -154,8 +154,8 @@ data "aws_iam_policy_document" "permissions" {
       "arn:aws:ssm:eu-west-2:${var.management_account_id}:parameter/organizations/*",
       "arn:aws:ssm:eu-west-2:${var.management_account_id}:parameter/transit-gateway/*",
       # Current account paths
-      "arn:aws:ssm:eu-west-2:${data.aws_caller_identity.current.account_id}:parameter/organizations/*",
-      "arn:aws:ssm:eu-west-2:${data.aws_caller_identity.current.account_id}:parameter/transit-gateway/*"
+      "arn:aws:ssm:eu-west-2:${data.aws_caller_identity.read_current_account.account_id}:parameter/organizations/*",
+      "arn:aws:ssm:eu-west-2:${data.aws_caller_identity.read_current_account.account_id}:parameter/transit-gateway/*"
     ]
   }
 
@@ -341,8 +341,6 @@ resource "aws_iam_policy" "terraform_plan_s3_role" {
       Effect = "Allow"
       Action = [
         "s3:GetObject",
-        "s3:PutObject",
-        "s3:DeleteObject",
         "s3:ListBucket"
       ]
       Resource = [
