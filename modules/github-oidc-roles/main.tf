@@ -1,7 +1,12 @@
-# Get current account ID for dynamic permissions
-data "aws_caller_identity" "current" {}
+# T======================================================================================
+# Terraform code which creates IAM infrastructure for GitHub Actions CI/CD with two separate roles
+# ======================================================================================
 
-# OIDC Provider - THIS IS THE RESOURCE THAT CREATES THE OIDC PROVIDER
+# Get current account ID for dynamic permissions
+data "aws_caller_identity" "read_current_account" {}
+
+# Creates OIDC PROVIDER IN AWS which is a trust relationship between AWS & GitHub 
+# Allowing GitHub Actions to authenticate with AWS without using access keys
 resource "aws_iam_openid_connect_provider" "github" {
   url             = "https://token.actions.githubusercontent.com"
   client_id_list  = ["sts.amazonaws.com"]
@@ -18,8 +23,9 @@ resource "aws_iam_openid_connect_provider" "github" {
   }
 }
 
-# Trust policy for GitHub Actions - THIS IS THE DATA SOURCE FOR THE ROLE
+# Trust policy for GitHub Actions - This Generates trust policy.
 data "aws_iam_policy_document" "trust" {
+# Allows management account admins with MFA to assume this role (emergency access)
   statement {
     sid     = "ManagementAccountBreakGlass"
     effect  = "Allow"
@@ -35,6 +41,7 @@ data "aws_iam_policy_document" "trust" {
     }
   }
 
+# Allows GitHub Actions to assume this role via OIDC
   statement {
     sid     = "GitHubActionsCI"
     effect  = "Allow"
@@ -56,7 +63,7 @@ data "aws_iam_policy_document" "trust" {
   }
 }
 
-# ✅ COMPLETE: Permissions with ALL required IAM actions
+# ✅ COMPLETE: Generates Permissions with ALL required IAM actions
 data "aws_iam_policy_document" "permissions" {
   # VPC, Site-to-Site VPN, and EC2 instances
   statement {
@@ -124,7 +131,7 @@ data "aws_iam_policy_document" "permissions" {
     resources = ["*"]
   }
 
-  # ✅ FIXED: SSM Parameter Store - Access to BOTH management AND current account
+  #  SSM Parameter Store Access to BOTH management AND current account
   statement {
     sid    = "SSMParameterStore"
     effect = "Allow"
@@ -153,7 +160,7 @@ data "aws_iam_policy_document" "permissions" {
     resources = ["arn:aws:iam::${var.management_account_id}:role/SSMReadOnly"]
   }
 
-  # S3 state files
+  # S3 state files access
   statement {
     sid    = "StateFileAccess"
     effect = "Allow"
@@ -169,7 +176,7 @@ data "aws_iam_policy_document" "permissions" {
     ]
   }
 
-  # ✅ FIXED: RAM Permissions - Added ListResourceSharePermissions
+  # RAM Permissions
   statement {
     sid    = "RAMPermissions"
     effect = "Allow"
@@ -186,7 +193,7 @@ data "aws_iam_policy_document" "permissions" {
     resources = ["*"]
   }
 
-  # ✅ NEW: Network Firewall permissions
+  # Network Firewall permissions
   statement {
     sid    = "NetworkFirewall"
     effect = "Allow"
@@ -216,10 +223,9 @@ data "aws_iam_policy_document" "permissions" {
   }
 }
 
-# =============================================
-# RESOURCE: TERRAFORM DEPLOY ROLE
-# THIS IS THE ACTUAL RESOURCE THAT GETS CREATED
-# =============================================
+# ==============================================================================
+# RESOURCE: TERRAFORM DEPLOY ROLE THIS IS THE ACTUAL RESOURCE THAT GETS CREATED
+# ==============================================================================
 resource "aws_iam_role" "terraform_deploy" {
   name                 = var.role_name
   assume_role_policy   = data.aws_iam_policy_document.trust.json
@@ -238,16 +244,16 @@ resource "aws_iam_role" "terraform_deploy" {
   depends_on = [aws_iam_openid_connect_provider.github]
 }
 
-# ATTACH THE PERMISSIONS POLICY TO THE DEPLOY ROLE
-resource "aws_iam_role_policy" "terraform_deploy" {
+# ATTACH THE PERMISSIONS POLICY TO THE terraform_deploy ROLE 
+resource "aws_iam_role_policy" "terraform_deploy_policy" {
   name   = "TerraformDeployPermissions"
   role   = aws_iam_role.terraform_deploy.id
   policy = data.aws_iam_policy_document.permissions.json
 }
 
-# =============================================
-# RESOURCE: TERRAFORM PLAN ROLE
-# =============================================
+# =======================================================================================
+# Generating a trust policy that allows GitHub Actions to assume the Terraform Plan role
+# =======================================================================================
 data "aws_iam_policy_document" "github_oidc_trust_plan" {
   statement {
     sid     = "GitHubActionsPlan"
@@ -270,6 +276,8 @@ data "aws_iam_policy_document" "github_oidc_trust_plan" {
   }
 }
 
+# Creates a read-only role for Github Action to run terraform plan workflow. 
+# This role has limited permissions and can only read resources, not modify them.
 resource "aws_iam_role" "terraform_plan" {
   name                 = "TerraformPlan"
   assume_role_policy   = data.aws_iam_policy_document.github_oidc_trust_plan.json
@@ -286,6 +294,8 @@ resource "aws_iam_role" "terraform_plan" {
   }
 }
 
+# Attaches inline SSM policy  
+# creates an inline IAM policy that allows the Terraform Plan role to assume another role in the management account
 resource "aws_iam_role_policy" "terraform_plan_assume_ssm_readonly" {
   name = "AssumeManagementSSMReadOnly"
   role = aws_iam_role.terraform_plan.id
@@ -299,12 +309,14 @@ resource "aws_iam_role_policy" "terraform_plan_assume_ssm_readonly" {
   })
 }
 
+# attaches custom policy to the terraform_plan only role
 resource "aws_iam_role_policy_attachment" "terraform_plan_readonly" {
   role       = aws_iam_role.terraform_plan.name
   policy_arn = "arn:aws:iam::aws:policy/ReadOnlyAccess"
 }
 
-resource "aws_iam_policy" "terraform_plan_s3" {
+# Creates custom S3 policy for state file access
+resource "aws_iam_policy" "terraform_plan_s3_role" {
   name = "TerraformPlanS3Policy"
   policy = jsonencode({
     Version = "2012-10-17"
@@ -325,9 +337,10 @@ resource "aws_iam_policy" "terraform_plan_s3" {
   })
 }
 
-resource "aws_iam_role_policy_attachment" "terraform_plan_s3" {
+# attaches custom S3 policy to the terraform_plan_s3_role
+resource "aws_iam_role_policy_attachment" "terraform_plan_s3_policy_attachment" {
   role       = aws_iam_role.terraform_plan.name
-  policy_arn = aws_iam_policy.terraform_plan_s3.arn
+  policy_arn = aws_iam_policy.terraform_plan_s3_role.arn
 }
 
 # =============================================

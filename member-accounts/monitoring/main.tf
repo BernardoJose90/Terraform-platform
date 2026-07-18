@@ -46,8 +46,8 @@ provider "aws" {
 }
 
 
-module "terraform_deploy_role" {
-  source       = "../../modules/terraform-deploy-role"
+module "github-oidc-roles" {
+  source       = "../../modules/github-oidc-roles"
   account_name = "monitoring"
 
   # GitHub repository information (case-sensitive!)

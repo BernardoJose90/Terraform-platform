@@ -52,8 +52,8 @@ data "terraform_remote_state" "network" {
   }
 }
 
-module "terraform_deploy_role" {
-  source       = "../../modules/terraform-deploy-role"
+module "github-oidc-roles" {
+  source       = "../../modules/github-oidc-roles"
   account_name = "production"
 
   github_org  = "BernardoJose90"
