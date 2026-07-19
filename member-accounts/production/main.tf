@@ -71,7 +71,7 @@ module "prod_vpc" {
   source = "../../modules/vpc"
 
   name = "production-vpc"
-  cidr = "10.20.0.0/16"
+  cidr = "10.1.0.0/16"
 
   azs             = ["eu-west-2a", "eu-west-2b"]
   private_subnets = ["10.1.1.0/24", "10.1.2.0/24"] # TGW attachment subnets
