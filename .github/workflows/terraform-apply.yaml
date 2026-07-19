@@ -46,8 +46,7 @@ jobs:
       - name: Quick Format Check
         run: terraform fmt -check -recursive
 
-
-
+        
   # ⚠️ COMMENTED OUT - Checkov Security Scan
   # Will be enabled after fixing IAM and VPC policies
   # security-scan:
@@ -86,9 +85,7 @@ jobs:
     name: Discover Accounts
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs:
-      # ✅ FIXED - this was previously missing, so a failing format check
-      # never actually blocked deployment. Now it does.
+    needs:     
       - quick-validate
 
     outputs:
@@ -150,42 +147,63 @@ jobs:
         uses: actions/github-script@v7
         with:
           script: |
-            // Work out which merged PR (if any) this push corresponds to.
-            const { data: prs } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              commit_sha: context.sha,
-            });
+            try {
+              // Work out which merged PR (if any) this push corresponds to.
+              const { data: prs } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                commit_sha: context.sha,
+              });
 
-            const mergedPr = prs.find(pr => pr.merged_at);
-            if (!mergedPr) {
-              core.info('No merged PR found for this commit (e.g. workflow_dispatch or a direct push) — will fall back to a fresh plan.');
+              const mergedPr = prs.find(pr => pr.merged_at);
+              if (!mergedPr) {
+                core.info('No merged PR found for this commit (e.g. workflow_dispatch or a direct push) — will fall back to a fresh plan.');
+                core.setOutput('plan_run_id', '');
+                return;
+              }
+
+              // Try to get the workflow ID first to verify it exists
+              let workflowId = 'terraform-plan.yml';
+              try {
+                const { data: workflowData } = await github.rest.actions.getWorkflow({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  workflow_id: 'terraform-plan.yml'
+                });
+                workflowId = workflowData.id;
+                core.info(`Found workflow with ID: ${workflowId}`);
+              } catch (workflowError) {
+                core.info('Workflow terraform-plan.yml not found in this repository — will fall back to fresh plan.');
+                core.setOutput('plan_run_id', '');
+                return;
+              }
+
+              // Find the most recent successful Terraform Plan run for that PR.
+              const { data: runs } = await github.rest.actions.listWorkflowRuns({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                workflow_id: workflowId,
+                event: 'pull_request',
+                status: 'success',
+                per_page: 50,
+              });
+
+              const match = runs.workflow_runs.find(run =>
+                run.pull_requests.some(p => p.number === mergedPr.number)
+              );
+
+              if (!match) {
+                core.info(`No successful Plan run found for PR #${mergedPr.number} — will fall back to a fresh plan.`);
+                core.setOutput('plan_run_id', '');
+                return;
+              }
+
+              core.info(`Reusing plan artifacts from run ${match.id} (PR #${mergedPr.number})`);
+              core.setOutput('plan_run_id', String(match.id));
+            } catch (error) {
+              core.info(`Error finding plan run: ${error.message} — will fall back to fresh plan.`);
               core.setOutput('plan_run_id', '');
-              return;
             }
-
-            // Find the most recent successful Terraform Plan run for that PR.
-            const { data: runs } = await github.rest.actions.listWorkflowRuns({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              workflow_id: 'terraform-plan.yml',
-              event: 'pull_request',
-              status: 'success',
-              per_page: 50,
-            });
-
-            const match = runs.workflow_runs.find(run =>
-              run.pull_requests.some(p => p.number === mergedPr.number)
-            );
-
-            if (!match) {
-              core.info(`No successful Plan run found for PR #${mergedPr.number} — will fall back to a fresh plan.`);
-              core.setOutput('plan_run_id', '');
-              return;
-            }
-
-            core.info(`Reusing plan artifacts from run ${match.id} (PR #${mergedPr.number})`);
-            core.setOutput('plan_run_id', String(match.id));
 
   apply:
     name: Terraform Apply - ${{ matrix.account }}
@@ -297,13 +315,10 @@ jobs:
           echo ""
           
       - name: Upload apply artifact
-        # ✅ FIXED - only upload the log, not the whole working directory
-        # (which could include provider caches, .tfvars, or other files that
-        # shouldn't be sitting in a downloadable artifact).
+
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: apply-${{ matrix.account }}
           path: ${{ matrix.working_directory }}/apply_output.txt
           retention-days: 7
-
