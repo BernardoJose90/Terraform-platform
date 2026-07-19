@@ -21,7 +21,7 @@ on:
 permissions:
   id-token: write
   contents: read
-  actions: read  # needed to look up and download plan artifacts from the Plan workflow's run
+  actions: read
   # security-events: write   # re-add this if/when the Checkov job below is re-enabled
 
 env:
@@ -85,7 +85,7 @@ jobs:
     name: Discover Accounts
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    needs:     
+    needs:
       - quick-validate
 
     outputs:
@@ -134,76 +134,67 @@ jobs:
           echo "Discovered accounts: $(echo $MATRIX | jq '.include | length')"
 
   resolve-plan-run:
-    name: Locate reviewed plan
+    name: Locate and download reviewed plan
     runs-on: ubuntu-latest
     timeout-minutes: 5
     needs:
       - discover-accounts
     outputs:
-      plan_run_id: ${{ steps.find-run.outputs.plan_run_id }}
+      plan_exists: ${{ steps.check.outputs.plan_exists }}
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.discover-accounts.outputs.matrix) }}
     steps:
-      - name: Find the Plan workflow run that produced this commit's plans
-        id: find-run
-        uses: actions/github-script@v7
+      - uses: actions/checkout@v6
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
         with:
-          script: |
-            try {
-              // Work out which merged PR (if any) this push corresponds to.
-              const { data: prs } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                commit_sha: context.sha,
-              });
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
 
-              const mergedPr = prs.find(pr => pr.merged_at);
-              if (!mergedPr) {
-                core.info('No merged PR found for this commit (e.g. workflow_dispatch or a direct push) — will fall back to a fresh plan.');
-                core.setOutput('plan_run_id', '');
-                return;
-              }
+      - name: Configure AWS credentials (${{ matrix.account }})
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ matrix.role_arn }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gha-resolve-${{ matrix.account }}
+          retry-max-attempts: 3
 
-              // Try to get the workflow ID first to verify it exists
-              let workflowId = 'terraform-plan.yml';
-              try {
-                const { data: workflowData } = await github.rest.actions.getWorkflow({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  workflow_id: 'terraform-plan.yml'
-                });
-                workflowId = workflowData.id;
-                core.info(`Found workflow with ID: ${workflowId}`);
-              } catch (workflowError) {
-                core.info('Workflow terraform-plan.yml not found in this repository — will fall back to fresh plan.');
-                core.setOutput('plan_run_id', '');
-                return;
-              }
+      - name: Terraform Init
+        working-directory: ${{ matrix.working_directory }}
+        run: terraform init -input=false
 
-              // Find the most recent successful Terraform Plan run for that PR.
-              const { data: runs } = await github.rest.actions.listWorkflowRuns({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                workflow_id: workflowId,
-                event: 'pull_request',
-                status: 'success',
-                per_page: 50,
-              });
+      - name: Download plan artifact from previous workflow
+        id: download
+        uses: dawidd6/action-download-artifact@v2
+        continue-on-error: true
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          workflow: terraform-plan.yml
+          commit: ${{ github.sha }}
+          name: tfplan-${{ matrix.account }}
+          path: ${{ matrix.working_directory }}
+          if_no_artifact_found: warn
 
-              const match = runs.workflow_runs.find(run =>
-                run.pull_requests.some(p => p.number === mergedPr.number)
-              );
+      - name: Check if plan was found
+        id: check
+        run: |
+          if [ -f "${{ matrix.working_directory }}/tfplan-${{ matrix.account }}" ]; then
+            echo "plan_exists=true" >> $GITHUB_OUTPUT
+            echo "✅ Found reviewed plan for ${{ matrix.account }}"
+            ls -la "${{ matrix.working_directory }}/tfplan-${{ matrix.account }}"
+          else
+            echo "plan_exists=false" >> $GITHUB_OUTPUT
+            echo "ℹ️ No reviewed plan found for ${{ matrix.account }} — will use fresh plan"
+          fi
 
-              if (!match) {
-                core.info(`No successful Plan run found for PR #${mergedPr.number} — will fall back to a fresh plan.`);
-                core.setOutput('plan_run_id', '');
-                return;
-              }
-
-              core.info(`Reusing plan artifacts from run ${match.id} (PR #${mergedPr.number})`);
-              core.setOutput('plan_run_id', String(match.id));
-            } catch (error) {
-              core.info(`Error finding plan run: ${error.message} — will fall back to fresh plan.`);
-              core.setOutput('plan_run_id', '');
-            }
+      - name: Upload plan artifact (if found)
+        if: steps.check.outputs.plan_exists == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ matrix.account }}
+          path: ${{ matrix.working_directory }}/tfplan-${{ matrix.account }}
+          retention-days: 5
 
   apply:
     name: Terraform Apply - ${{ matrix.account }}
@@ -243,19 +234,15 @@ jobs:
         working-directory: ${{ matrix.working_directory }}
         run: terraform init -input=false
 
-      - name: Download reviewed plan (if available)
-        if: needs.resolve-plan-run.outputs.plan_run_id != ''
-        id: download-plan
-        continue-on-error: true
+      - name: Download reviewed plan from resolve job
+        if: needs.resolve-plan-run.outputs.plan_exists == 'true'
         uses: actions/download-artifact@v4
         with:
           name: tfplan-${{ matrix.account }}
           path: ${{ matrix.working_directory }}
-          run-id: ${{ needs.resolve-plan-run.outputs.plan_run_id }}
-          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Terraform Apply (reviewed plan)
-        if: steps.download-plan.outcome == 'success'
+        if: needs.resolve-plan-run.outputs.plan_exists == 'true'
         working-directory: ${{ matrix.working_directory }}
         run: |
           echo "🚀 Applying the exact plan reviewed on the merged PR for ${{ matrix.account }} (ID: ${{ matrix.account_id }})"
@@ -264,7 +251,7 @@ jobs:
           terraform apply -input=false -lock-timeout=120s tfplan.binary 2>&1 | tee apply_output.txt
 
       - name: Terraform Apply (fresh plan — fallback)
-        if: steps.download-plan.outcome != 'success'
+        if: needs.resolve-plan-run.outputs.plan_exists != 'true'
         working-directory: ${{ matrix.working_directory }}
         run: |
           echo "⚠️ No reviewed plan found for ${{ matrix.account }} (this run wasn't triggered by a merged PR)."
@@ -314,8 +301,7 @@ jobs:
           echo "════════════════════════════════════════════════════════════"
           echo ""
           
-      - name: Upload apply artifact
-
+      - name: Upload apply artifact      
         if: always()
         uses: actions/upload-artifact@v4
         with:
