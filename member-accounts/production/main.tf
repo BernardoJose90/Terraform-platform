@@ -74,36 +74,12 @@ module "prod_vpc" {
   cidr = "10.20.0.0/16"
 
   azs             = ["eu-west-2a", "eu-west-2b"]
-  private_subnets = ["10.20.1.0/24", "10.20.2.0/24"]
-  public_subnets  = ["10.20.101.0/24", "10.20.102.0/24"]
+  private_subnets = ["10.1.1.0/24", "10.1.2.0/24"]     # TGW attachment subnets
+  public_subnets  = ["10.1.2.0/24", "10.1.2.0/24"] # NAT GW + IGW live here
 
-  enable_nat_gateway     = true
-  one_nat_gateway_per_az = true
+  enable_nat_gateway     = false
 
-  tags = {
-    Environment = "production"
-    ManagedBy   = "Terraform"
-  }
-}
-
-/* 
-
-# ============================================================
-# TGW ATTACHMENT FOR PRODUCTION VPC
-# ============================================================
-# Read TGW info directly from network account's state
-module "prod_tgw_attachment" {
-  source = "../../modules/tgw-attachment"
-
-  name       = "production-vpc"
-  tgw_id     = data.terraform_remote_state.network.outputs.tgw_id
-  vpc_id     = module.prod_vpc.vpc_id
-  subnet_ids = module.prod_vpc.private_subnet_ids
-
-  tags = {
-    Environment = "production"
-    ManagedBy   = "Terraform"
-  }
+  tags = { Environment = "production" }
 }
 
 # ============================================================
@@ -123,4 +99,3 @@ output "private_subnet_ids" {
   description = "Private subnet IDs in the production VPC"
   value       = module.prod_vpc.private_subnet_ids
 }
-*/
