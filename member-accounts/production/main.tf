@@ -74,8 +74,8 @@ module "prod_vpc" {
   cidr = "10.1.0.0/16"
 
   azs             = ["eu-west-2a", "eu-west-2b"]
-  private_subnets = ["10.1.1.0/24", "10.1.2.0/24"] # TGW attachment subnets
-  public_subnets  = ["10.1.2.0/24", "10.1.2.0/24"] # NAT GW + IGW live here
+  private_subnets = ["10.1.10.0/24", "10.1.20.0/24"] # TGW attachment subnets
+  public_subnets  = ["10.1.30.0/24", "10.1.40.0/24"] # NAT GW + IGW live here
 
   enable_nat_gateway = false
 
