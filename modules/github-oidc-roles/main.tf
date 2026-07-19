@@ -137,7 +137,7 @@ data "aws_iam_policy_document" "permissions" {
     resources = ["*"]
   }
 
-  #  SSM Parameter Store Access to BOTH management AND current account
+  # SSM Parameter Store Access to BOTH management AND current account
   statement {
     sid    = "SSMParameterStore"
     effect = "Allow"
@@ -166,7 +166,7 @@ data "aws_iam_policy_document" "permissions" {
     resources = ["arn:aws:iam::${var.management_account_id}:role/SSMReadOnly"]
   }
 
-  # S3 state files access
+  # S3 state files access - FULL ACCESS for deploy role (including locking)
   statement {
     sid    = "StateFileAccess"
     effect = "Allow"
@@ -331,24 +331,28 @@ resource "aws_iam_role_policy_attachment" "terraform_plan_readonly" {
 }
 
 # ======================================================================================
-# Creates custom S3 policy for state file access
+# Creates custom S3 policy for state file access - UPDATED with write permissions for S3 locking
 # ======================================================================================
 resource "aws_iam_policy" "terraform_plan_s3_role" {
   name = "TerraformPlanS3Policy"
   policy = jsonencode({
     Version = "2012-10-17"
-    Statement = [{
-      Effect = "Allow"
-      Action = [
-        "s3:GetObject",
-        "s3:ListBucket"
-      ]
-      Resource = [
-        "arn:aws:s3:::${var.state_bucket_name}",
-        "arn:aws:s3:::${var.state_bucket_name}/*"
-      ]
-      Sid = "StateFileAccess"
-    }]
+    Statement = [
+      {
+        Sid = "StateFileAccess"
+        Effect = "Allow"
+        Action = [
+          "s3:GetObject",
+          "s3:PutObject",      # ← REQUIRED for S3 state locking (creates .tflock file)
+          "s3:DeleteObject",   # ← REQUIRED to clean up lock files
+          "s3:ListBucket"
+        ]
+        Resource = [
+          "arn:aws:s3:::${var.state_bucket_name}",
+          "arn:aws:s3:::${var.state_bucket_name}/*"
+        ]
+      }
+    ]
   })
 }
 
