@@ -3,6 +3,11 @@ name: Terraform Plan
 # Runs on every pull request(PR) touching main. Never applies anything — read-only.
 # The account list is discovered at runtime from SSM, not hardcoded here —
 # adding a new account never requires editing this file.
+#
+# The saved binary plan file (tfplan.binary) produced here is uploaded as an
+# artifact per account and reused verbatim by the Apply workflow after merge,
+# so what gets reviewed on the PR is exactly what gets applied — not a
+# freshly recomputed plan that could differ if state changed in between.
 
 on:
   pull_request:
@@ -11,9 +16,9 @@ on:
 
 permissions:
   id-token: write
-  contents: write  # ✅ Changed from 'read' to 'write' for auto-commit
+  contents: write
   pull-requests: write
-  security-events: write
+  # security-events: write   # re-add this if/when the Checkov job below is re-enabled
 
 concurrency:
   group: tf-plan-${{ github.event.pull_request.number }}
@@ -27,6 +32,7 @@ jobs:
   validate-format:
     name: Validate & Format
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
         with:
@@ -98,9 +104,10 @@ jobs:
   discover-accounts:
     name: Discover Accounts
     runs-on: ubuntu-latest
-    needs: 
+    timeout-minutes: 5
+    needs:
       - validate-format
-      # - security-scan  # ⚠️ COMMENTED OUT - remove dependency
+
     outputs:
       matrix: ${{ steps.build-matrix.outputs.matrix }}
     steps:
@@ -126,13 +133,13 @@ jobs:
             --recursive \
             --query "Parameters[*].{Name:Name,Value:Value}" \
             --output json)
-            
+
           # ✅ FIXED - Use jq -c for compact single-line JSON output
           MATRIX=$(jq -c -n --argjson accounts "$ACCOUNTS" --argjson tiers "$TIERS" '
             ($tiers | map({(.Name | split("/") | last): .Value}) | add) as $tier_map |
             {
               include: [
-                $accounts[] | 
+                $accounts[] |
                 select(.Name | split("/") | last != "management") |
                 {
                   account: (.Name | split("/") | last),
@@ -149,9 +156,10 @@ jobs:
 
   plan:
     name: Terraform Plan - ${{ matrix.account }}
-    needs: 
+    needs:
       - discover-accounts
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.discover-accounts.outputs.matrix) }}
@@ -180,34 +188,7 @@ jobs:
         working-directory: ${{ matrix.working_directory }}
         run: terraform validate
 
-      # ⚠️ COMMENTED OUT - Account-specific Checkov scan
-      # Will be enabled after fixing IAM and VPC policies
-      # - name: Checkov Security Scan (Account-specific)
-      #   id: checkov_account
-      #   uses: bridgecrewio/checkov-action@master
-      #   with:
-      #     directory: ${{ matrix.working_directory }}
-      #     framework: terraform
-      #     output_format: cli,sarif
-      #     download_external_modules: true
-      #     quiet: false
-      #     soft_fail: false
-      #
-      # - name: Upload Checkov SARIF (Account-specific)
-      #   if: always()
-      #   uses: actions/upload-artifact@v4
-      #   with:
-      #     name: checkov-report-${{ matrix.account }}
-      #     path: results.sarif
-      #     retention-days: 7
-      #
-      # - name: Upload SARIF to GitHub Security tab (Account-specific)
-      #   if: always()
-      #   uses: github/codeql-action/upload-sarif@v3
-      #   with:
-      #     sarif_file: results.sarif
-      #     category: checkov-${{ matrix.account }}
-
+        
       - name: Terraform Plan
         id: plan
         working-directory: ${{ matrix.working_directory }}
@@ -216,7 +197,9 @@ jobs:
           echo "📋 Planning for ${{ matrix.account }} (ID: ${{ matrix.account_id }})"
           echo "Working directory: ${{ matrix.working_directory }}"
           echo ""
-          terraform plan -no-color -input=false -lock-timeout=60s 2>&1 | tee plan_output.txt
+          # -out saves the exact plan as a binary file so the Apply workflow
+          # can apply this precise plan later instead of recomputing one.
+          terraform plan -no-color -input=false -lock-timeout=60s -out=tfplan.binary 2>&1 | tee plan_output.txt
           exit_code=${PIPESTATUS[0]}
           echo "plan_exit_code=$exit_code" >> "$GITHUB_OUTPUT"
           echo ""
@@ -231,11 +214,7 @@ jobs:
             tail -50 plan_output.txt
             echo "─────────────────────────────────────────────────────────────"
             echo ""
-            echo "💡 Troubleshooting:"
-            echo "  1. Check SSM parameter: /organizations/accounts/${{ matrix.account }}"
-            echo "  2. Verify provider configuration in: ${{ matrix.working_directory }}/main.tf"
-            echo "  3. Check if the TerraformPlan role exists in the target account"
-            echo "  4. Run 'terraform plan' locally in ${{ matrix.working_directory }}"
+
           else
             echo "✅ Terraform plan SUCCEEDED"
           fi
@@ -264,7 +243,7 @@ jobs:
             } catch (e) {}
 
             const fullLogLink = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
-            
+
             if (output.length > 60000) {
               output = output.slice(0, 60000) + `\n... (truncated, [view full logs](${fullLogLink}))`;
             }
@@ -272,18 +251,18 @@ jobs:
             // Check if plan had changes
             const hasChanges = !output.includes("No changes") && !output.includes("0 to add, 0 to change, 0 to destroy");
             const statusIcon = hasChanges ? '📝' : '✅';
-            
+
             const marker = `<!-- terraform-plan-account:${{ matrix.account }} -->`;
             const body = `${marker}\n### ${statusIcon} Terraform Plan — \`${{ matrix.account }}\` (ID: ${{ matrix.account_id }})\n\n<details><summary>Show plan output</summary>\n\n\`\`\`\n${output}\n\`\`\`\n</details>`;
-           
+
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
             });
-           
+
             const existing = comments.find(c => c.body.includes(marker));
-            
+
             if (existing) {
               await github.rest.issues.updateComment({
                 owner: context.repo.owner,
@@ -300,11 +279,22 @@ jobs:
               });
             }
 
-      - name: Upload plan artifact
+      - name: Upload plan log artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: plan-${{ matrix.account }}
           path: ${{ matrix.working_directory }}/plan_output.txt
           retention-days: 7
+
+      - name: Upload plan file for apply reuse
+        # Only upload a plan file when the plan actually succeeded — a failed
+        # plan has no valid file to reuse. The Apply workflow downloads this
+        # artifact by account name after the PR is merged.
+        if: steps.plan.outputs.plan_exit_code == '0'
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan-${{ matrix.account }}
+          path: ${{ matrix.working_directory }}/tfplan.binary
+          retention-days: 5
         

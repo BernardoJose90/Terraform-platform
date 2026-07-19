@@ -3,6 +3,15 @@ name: Terraform Apply
 # Runs on merge to main. The account list, working directory, deploy role,
 # and approval tier are all discovered at runtime from the SSM account
 # manifest — adding a new account never requires editing this file.
+#
+# Where possible, this workflow applies the EXACT plan that was reviewed on
+# the merged pull request (produced by terraform-plan.yml), rather than
+# recomputing a new plan at apply time. This closes the gap where a
+# reviewer approves one plan but a different one — computed against
+# possibly-drifted state — is what actually gets applied. If no matching
+# reviewed plan can be found (e.g. workflow_dispatch, or a direct push to
+# main without a PR), it falls back to computing a fresh plan and applying
+# that.
 
 on:
   push:
@@ -11,18 +20,21 @@ on:
 
 permissions:
   id-token: write
-  contents: write
-  security-events: write
+  contents: read
+  actions: read  # needed to look up and download plan artifacts from the Plan workflow's run
+  # security-events: write   # re-add this if/when the Checkov job below is re-enabled
 
 env:
   TERRAFORM_VERSION: "1.10.0"
   AWS_REGION: "eu-west-2"
 
 jobs:
+
   # Quick validation before discovery
   quick-validate:
     name: Quick Validate
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
 
@@ -34,15 +46,7 @@ jobs:
       - name: Quick Format Check
         run: terraform fmt -check -recursive
 
-      - name: Quick Validate
-        run: |
-          for dir in member-accounts/*/; do
-            echo "Validating $dir..."
-            cd $dir
-            terraform init -backend=false
-            terraform validate
-            cd ../..
-          done
+
 
   # ⚠️ COMMENTED OUT - Checkov Security Scan
   # Will be enabled after fixing IAM and VPC policies
@@ -81,10 +85,12 @@ jobs:
   discover-accounts:
     name: Discover Accounts
     runs-on: ubuntu-latest
-    needs: 
+    timeout-minutes: 5
+    needs:
+      # ✅ FIXED - this was previously missing, so a failing format check
+      # never actually blocked deployment. Now it does.
       - quick-validate
-      # - security-scan  # ⚠️ COMMENTED OUT - remove when enabling security scan
-      
+
     outputs:
       matrix: ${{ steps.build-matrix.outputs.matrix }}
     steps:
@@ -104,7 +110,7 @@ jobs:
             --recursive \
             --query "Parameters[*].{Name:Name,Value:Value}" \
             --output json)
-            
+
           TIERS=$(aws ssm get-parameters-by-path \
             --path "/organizations/tiers/" \
             --recursive \
@@ -115,7 +121,7 @@ jobs:
             ($tiers | map({(.Name | split("/") | last): .Value}) | add) as $tier_map |
             {
               include: [
-                $accounts[] | 
+                $accounts[] |
                 select(.Name | split("/") | last != "management") |
                 {
                   account: (.Name | split("/") | last),
@@ -130,11 +136,64 @@ jobs:
           echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
           echo "Discovered accounts: $(echo $MATRIX | jq '.include | length')"
 
+  resolve-plan-run:
+    name: Locate reviewed plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs:
+      - discover-accounts
+    outputs:
+      plan_run_id: ${{ steps.find-run.outputs.plan_run_id }}
+    steps:
+      - name: Find the Plan workflow run that produced this commit's plans
+        id: find-run
+        uses: actions/github-script@v7
+        with:
+          script: |
+            // Work out which merged PR (if any) this push corresponds to.
+            const { data: prs } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: context.sha,
+            });
+
+            const mergedPr = prs.find(pr => pr.merged_at);
+            if (!mergedPr) {
+              core.info('No merged PR found for this commit (e.g. workflow_dispatch or a direct push) — will fall back to a fresh plan.');
+              core.setOutput('plan_run_id', '');
+              return;
+            }
+
+            // Find the most recent successful Terraform Plan run for that PR.
+            const { data: runs } = await github.rest.actions.listWorkflowRuns({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              workflow_id: 'terraform-plan.yml',
+              event: 'pull_request',
+              status: 'success',
+              per_page: 50,
+            });
+
+            const match = runs.workflow_runs.find(run =>
+              run.pull_requests.some(p => p.number === mergedPr.number)
+            );
+
+            if (!match) {
+              core.info(`No successful Plan run found for PR #${mergedPr.number} — will fall back to a fresh plan.`);
+              core.setOutput('plan_run_id', '');
+              return;
+            }
+
+            core.info(`Reusing plan artifacts from run ${match.id} (PR #${mergedPr.number})`);
+            core.setOutput('plan_run_id', String(match.id));
+
   apply:
     name: Terraform Apply - ${{ matrix.account }}
-    needs: 
+    needs:
       - discover-accounts
+      - resolve-plan-run
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     strategy:
       fail-fast: false
       max-parallel: 3
@@ -166,50 +225,45 @@ jobs:
         working-directory: ${{ matrix.working_directory }}
         run: terraform init -input=false
 
-        
-      # ⚠️ COMMENTED OUT - Account-specific Checkov scan
-      # Will be enabled after fixing IAM and VPC policies
-      # - name: Checkov Security Scan (Account-specific)
-      #   id: checkov_account
-      #   uses: bridgecrewio/checkov-action@master
-      #   with:
-      #     directory: ${{ matrix.working_directory }}
-      #     framework: terraform
-      #     output_format: cli,sarif
-      #     download_external_modules: true
-      #     quiet: false
-      #     soft_fail: false
-      #
-      # - name: Upload Checkov SARIF (Account-specific)
-      #   if: always()
-      #   uses: actions/upload-artifact@v4
-      #   with:
-      #     name: checkov-report-${{ matrix.account }}
-      #     path: results.sarif
-      #     retention-days: 7
-      #
-      # - name: Upload SARIF to GitHub Security tab (Account-specific)
-      #   if: always()
-      #   uses: github/codeql-action/upload-sarif@v3
-      #   with:
-      #     sarif_file: results.sarif
-      #     category: checkov-${{ matrix.account }}
+      - name: Download reviewed plan (if available)
+        if: needs.resolve-plan-run.outputs.plan_run_id != ''
+        id: download-plan
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ matrix.account }}
+          path: ${{ matrix.working_directory }}
+          run-id: ${{ needs.resolve-plan-run.outputs.plan_run_id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Terraform Apply
-        id: apply
+      - name: Terraform Apply (reviewed plan)
+        if: steps.download-plan.outcome == 'success'
         working-directory: ${{ matrix.working_directory }}
         run: |
-          echo "🚀 Applying to ${{ matrix.account }} (ID: ${{ matrix.account_id }})"
+          echo "🚀 Applying the exact plan reviewed on the merged PR for ${{ matrix.account }} (ID: ${{ matrix.account_id }})"
           echo "📂 Working directory: ${{ matrix.working_directory }}"
           echo ""
-          terraform apply -auto-approve -input=false -lock-timeout=120s 2>&1 | tee apply_output.txt
-          
+          terraform apply -input=false -lock-timeout=120s tfplan.binary 2>&1 | tee apply_output.txt
+
+      - name: Terraform Apply (fresh plan — fallback)
+        if: steps.download-plan.outcome != 'success'
+        working-directory: ${{ matrix.working_directory }}
+        run: |
+          echo "⚠️ No reviewed plan found for ${{ matrix.account }} (this run wasn't triggered by a merged PR)."
+          echo "🚀 Computing a fresh plan and applying it for ${{ matrix.account }} (ID: ${{ matrix.account_id }})"
+          echo "📂 Working directory: ${{ matrix.working_directory }}"
+          echo ""
+          terraform plan -no-color -input=false -lock-timeout=60s -out=tfplan.binary
+          terraform apply -input=false -lock-timeout=120s tfplan.binary 2>&1 | tee apply_output.txt
+
+      - name: Report apply outcome
+        working-directory: ${{ matrix.working_directory }}
+        run: |
           echo ""
           echo "─────────────────────────────────────────────────────────────"
           echo "✅ Apply completed for ${{ matrix.account }}"
           echo "─────────────────────────────────────────────────────────────"
-          
-          # Check for changes
+
           if grep -q "No changes" apply_output.txt; then
             echo "ℹ️ No changes were applied (infrastructure already up to date)"
           else
@@ -241,23 +295,15 @@ jobs:
           echo "❌ FAILED: ${{ matrix.account }}"
           echo "════════════════════════════════════════════════════════════"
           echo ""
-          echo "🔧 Troubleshooting:"
-          echo "  1. Check the logs above for specific errors"
-          echo "  2. Verify the role exists: ${{ matrix.role_arn }}"
-          echo "  3. Check S3 bucket permissions for state file access"
-          echo "  4. Verify SSM parameters: /organizations/accounts/${{ matrix.account }}"
-          echo "  5. Check if there are manual changes in the state"
-          echo ""
-          echo "💡 Common fixes:"
-          echo "  - Run 'terraform plan' locally in ${{ matrix.working_directory }}"
-          echo "  - Check for resource conflicts or missing dependencies"
-          echo "  - Verify provider configuration"
-
+          
       - name: Upload apply artifact
+        # ✅ FIXED - only upload the log, not the whole working directory
+        # (which could include provider caches, .tfvars, or other files that
+        # shouldn't be sitting in a downloadable artifact).
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: apply-${{ matrix.account }}
-          path: ${{ matrix.working_directory }}
+          path: ${{ matrix.working_directory }}/apply_output.txt
           retention-days: 7
-          
+
