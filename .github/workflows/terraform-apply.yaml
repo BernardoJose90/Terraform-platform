@@ -46,7 +46,7 @@ jobs:
       - name: Quick Format Check
         run: terraform fmt -check -recursive
 
-        
+
   # ⚠️ COMMENTED OUT - Checkov Security Scan
   # Will be enabled after fixing IAM and VPC policies
   # security-scan:
@@ -179,7 +179,7 @@ jobs:
       - name: Check if plan was found
         id: check
         run: |
-          if [ -f "${{ matrix.working_directory }}/tfplan-${{ matrix.account }}" ]; then
+          if [ -f "${{ matrix.working_directory }}/tfplan.binary" ]; then
             echo "plan_exists=true" >> $GITHUB_OUTPUT
             echo "✅ Found reviewed plan for ${{ matrix.account }}"
             ls -la "${{ matrix.working_directory }}/tfplan-${{ matrix.account }}"
