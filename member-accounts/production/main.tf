@@ -85,10 +85,10 @@ module "prod_vpc" {
 # ============================================================
 # OUTPUTS (for network account to reference)
 # ============================================================
-output "attachment_id" {
-  description = "The TGW attachment ID for the production VPC"
-  value       = module.prod_tgw_attachment.attachment_id
-}
+# output "attachment_id" {
+#   description = "The TGW attachment ID for the production VPC"
+#   value       = module.prod_tgw_attachment.attachment_id
+# }
 
 output "vpc_id" {
   description = "The production VPC ID"
