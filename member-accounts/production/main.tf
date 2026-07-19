@@ -64,7 +64,6 @@ module "github-oidc-roles" {
   role_name             = "TerraformDeploy"
 }
 
-/* 
 # ============================================================
 # PRODUCTION VPC
 # ============================================================
@@ -86,6 +85,8 @@ module "prod_vpc" {
     ManagedBy   = "Terraform"
   }
 }
+
+/* 
 
 # ============================================================
 # TGW ATTACHMENT FOR PRODUCTION VPC
