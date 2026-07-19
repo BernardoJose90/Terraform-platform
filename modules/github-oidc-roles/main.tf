@@ -339,12 +339,12 @@ resource "aws_iam_policy" "terraform_plan_s3_role" {
     Version = "2012-10-17"
     Statement = [
       {
-        Sid = "StateFileAccess"
+        Sid    = "StateFileAccess"
         Effect = "Allow"
         Action = [
           "s3:GetObject",
-          "s3:PutObject",      # ← REQUIRED for S3 state locking (creates .tflock file)
-          "s3:DeleteObject",   # ← REQUIRED to clean up lock files
+          "s3:PutObject",    # ← REQUIRED for S3 state locking (creates .tflock file)
+          "s3:DeleteObject", # ← REQUIRED to clean up lock files
           "s3:ListBucket"
         ]
         Resource = [
