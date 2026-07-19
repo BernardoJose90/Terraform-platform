@@ -147,22 +147,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: ${{ env.TERRAFORM_VERSION }}
-
-      - name: Configure AWS credentials (${{ matrix.account }})
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ matrix.role_arn }}
-          aws-region: ${{ env.AWS_REGION }}
-          role-session-name: gha-resolve-${{ matrix.account }}
-          retry-max-attempts: 3
-
-      - name: Terraform Init
-        working-directory: ${{ matrix.working_directory }}
-        run: terraform init -input=false
+      # Note: no AWS credentials or `terraform init` here on purpose.
+      # This job only checks GitHub Actions artifacts for a reviewed plan
+      # file — it never touches AWS or Terraform state, so it doesn't
+      # need cloud credentials (least-privilege).
 
       - name: Download plan artifact from previous workflow
         id: download
