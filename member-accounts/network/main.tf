@@ -138,16 +138,9 @@ module "nat_vpc" {
 
   enable_nat_gateway     = true
   one_nat_gateway_per_az = true
-  
-   depends_on = [
-    aws_nat_gateway.this,
-    aws_internet_gateway.this,
-    aws_subnet.this,
-    aws_security_group.this
-  ]
-
 
   tags = { Environment = "network" }
+
 }
 
 /* 
