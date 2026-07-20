@@ -14,7 +14,7 @@ on:
     branches: [main]
     paths-ignore:
       - '.github/workflows/**'
-      - '.gitignore**'      
+      - '.gitignore**'
       - '**.md'
       - '**.txt'
       - 'docs/**'
@@ -24,7 +24,7 @@ permissions:
   id-token: write
   contents: write
   pull-requests: write
-  # security-events: write   # re-add this if/when the Checkov job below is re-enabled
+  security-events: write   # required for Checkov's SARIF upload to GitHub Security tab
 
 concurrency:
   group: tf-plan-${{ github.event.pull_request.number }}
@@ -73,39 +73,38 @@ jobs:
             cd ../..
           done
 
-  # ⚠️ COMMENTED OUT - Checkov Security Scan
-  # Will be enabled after fixing IAM and VPC policies
-  # security-scan:
-  #   name: Security Scan (Checkov)
-  #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v6
-  #
-  #     - name: Checkov Security Scan - All Accounts
-  #       id: checkov
-  #       uses: bridgecrewio/checkov-action@master
-  #       with:
-  #         directory: member-accounts/
-  #         framework: terraform
-  #         output_format: cli,sarif
-  #         download_external_modules: true
-  #         quiet: false
-  #         soft_fail: false
-  #
-  #     - name: Upload Checkov SARIF report
-  #       if: always()
-  #       uses: actions/upload-artifact@v4
-  #       with:
-  #         name: checkov-report
-  #         path: results.sarif
-  #         retention-days: 7
-  #
-  #     - name: Upload SARIF to GitHub Security tab
-  #       if: always()
-  #       uses: github/codeql-action/upload-sarif@v3
-  #       with:
-  #         sarif_file: results.sarif
-  #         category: checkov
+  security-scan:
+    name: Security Scan (Checkov)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Checkov Security Scan - All Accounts
+        id: checkov
+        uses: bridgecrewio/checkov-action@master
+        with:
+          directory: member-accounts/
+          framework: terraform
+          output_format: cli,sarif
+          download_external_modules: true
+          quiet: false
+          soft_fail: true
+
+      - name: Upload Checkov SARIF report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: checkov-report
+          path: results.sarif
+          retention-days: 7
+
+      - name: Upload SARIF to GitHub Security tab
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: results.sarif
+          category: checkov
 
   discover-accounts:
     name: Discover Accounts
@@ -303,4 +302,3 @@ jobs:
           name: tfplan-${{ matrix.account }}
           path: ${{ matrix.working_directory }}/tfplan.binary
           retention-days: 5
-        
