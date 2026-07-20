@@ -21,7 +21,7 @@ terraform {
   }
 }
 
-# ✅ Provider for reading SSM from management account (for account ID only)
+# Provider for reading SSM from management account (for account ID only)
 provider "aws" {
   alias  = "management"
   region = var.aws_region
@@ -30,19 +30,19 @@ provider "aws" {
   }
 }
 
-# ✅ Read the production account ID from SSM (management account)
+# Read the production account ID from SSM (management account)
 data "aws_ssm_parameter" "production_account_id" {
   provider = aws.management
   name     = "/organizations/accounts/production"
 }
 
-# ✅ Main provider for the production account itself
+# Main provider for the production account itself
 provider "aws" {
   region              = var.aws_region
   allowed_account_ids = [data.aws_ssm_parameter.production_account_id.value]
 }
 
-# ✅ Read network account's state directly (NO cross-account IAM needed)
+# Read network account's state directly (NO cross-account IAM needed)
 data "terraform_remote_state" "network" {
   backend = "s3"
   config = {
