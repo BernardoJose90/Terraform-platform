@@ -32,4 +32,9 @@ resource "aws_route" "private_to_tgw" {
   route_table_id         = each.value
   destination_cidr_block = "0.0.0.0/0"
   transit_gateway_id     = var.tgw_id
+  
+  # ✅ This is VALID - depends on the module itself
+  depends_on = [
+    module.vpc  # ✅ Correct - this references the module, not internal resources
+  ]
 }
