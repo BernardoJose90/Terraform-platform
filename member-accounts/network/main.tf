@@ -1,9 +1,12 @@
-###############################################################################
+###############################################################################################################################################
 # Account: Network
 # Email  : james.jose109099+aws-network@gmail.com
 # Purpose: Shared networking — Transit Gateway, VPCs, Route 53 Resolver
-###############################################################################
+#          This Terraform code sets up centralized networking that will be shared across multiple AWS accounts (development, production, etc.). 
+#          using a hub-and-spoke network architecture
+###############################################################################################################################################
 
+# Stores the Terraform state in an S3 bucket Uses a separate state file for the network account (network/terraform.tfstate)
 terraform {
   required_version = ">= 1.10.0"
   required_providers {
@@ -20,7 +23,10 @@ terraform {
     encrypt      = true
   }
 }
-
+# =================================================================================
+# Provides Management Account Access (SSM Read) to Assumes an SSMReadOnly role in the management account
+# Reads the network account ID from SSM Parameter Store iin the Management Account
+# =================================================================================
 provider "aws" {
   alias  = "management"
   region = var.aws_region
@@ -29,17 +35,23 @@ provider "aws" {
 
   }
 }
-
-data "aws_ssm_parameter" "network_account_id" {
-  provider = aws.management
-  name     = "/organizations/accounts/network"
-}
-
+# =================================================================================
+# Configures the primary AWS provider for the network account
+# =================================================================================
 provider "aws" {
   region              = var.aws_region
   allowed_account_ids = [data.aws_ssm_parameter.network_account_id.value]
 }
 
+data "aws_ssm_parameter" "network_account_id" {
+  provider = aws.management
+  name     = "/organizations/accounts/network"
+}
+# =================================================================================
+# Creates IAM roles that GitHub Actions can assume via OIDC
+# This is the authentication mechanism that allows the pipeline to deploy to this account
+# Creates a TerraformDeploy role specifically for the network account
+# =================================================================================
 module "github-oidc-roles" {
   source       = "../../modules/github-oidc-roles"
   account_name = "network"
@@ -52,7 +64,10 @@ module "github-oidc-roles" {
   role_name             = "TerraformDeploy"
 
 }
-
+# =================================================================================
+# Reads the account IDs for development and production from SSM
+# These are used later to share the Transit Gateway with those accounts
+# =================================================================================
 data "aws_ssm_parameter" "dev_account_id" {
   provider = aws.management
   name     = "/organizations/accounts/development"
@@ -63,8 +78,12 @@ data "aws_ssm_parameter" "prod_account_id" {
   name     = "/organizations/accounts/production"
 }
 
+# =================================================================================
 # --- Read Prod/Dev's own TGW attachment IDs from their state files ---
-
+# Reads the Terraform state files from production and development accounts
+# This allows the network account to read outputs from those accounts (like their VPC attachment IDs)
+# Creates a dependency: network account needs dev/prod to be deployed first
+# =================================================================================
 data "terraform_remote_state" "production" {
   backend = "s3"
   config = {
@@ -84,9 +103,12 @@ data "terraform_remote_state" "development" {
 }
 
 /* */
-# ============================================================
+# =================================================================================
 # LOCALS: Safely handle missing prod/dev outputs
-# ============================================================
+# Safely attempts to read the attachment_id output from dev/prod states
+# If the output doesn't exist (dev/prod not deployed yet), it defaults to null
+# Sets boolean flags indicating whether dev/prod have been applied
+# =================================================================================
 locals {
   # Try to get attachment IDs from remote state, default to null if not found
   prod_attachment_id = try(data.terraform_remote_state.production.outputs.attachment_id, null)
@@ -97,8 +119,13 @@ locals {
   dev_applied  = local.dev_attachment_id != null
 }
 
-
+# =================================================================================
 # --- The NAT/egress VPC — the only VPC with an IGW + NAT GW ---
+# Creates a VPC with public and private subnets across 2 availability zones
+# Enables NAT Gateways (one per AZ) for private subnets to access the internet
+# This VPC serves as the internet gateway for all other accounts
+# Traffic from dev/prod goes through this VPC's NAT Gateways to reach the internet
+# =================================================================================
 module "nat_vpc" {
   source = "../../modules/vpc"
 
@@ -114,7 +141,13 @@ module "nat_vpc" {
 
   tags = { Environment = "network" }
 }
+
 /* 
+# =================================================================================
+# Creates a Transit Gateway (central network hub)
+# Shares the TGW with dev and prod accounts via AWS RAM (Resource Access Manager)
+# nonsensitive() tells Terraform this isn't sensitive data
+# =================================================================================
 module "tgw" {
   source = "../../modules/tgw"
 
@@ -127,9 +160,12 @@ module "tgw" {
   tags = { Environment = "network" }
 }
 
-# ============================================================
+# =================================================================================
 # SSM PARAMETERS (for prod/dev to discover TGW)
-# ============================================================
+# =================================================================================
+# Stores the TGW ID and route table IDs in SSM
+# Dev and prod accounts can read these to attach to the TGW
+# This is how accounts discover the network infrastructure
 resource "aws_ssm_parameter" "tgw_id" {
   name  = "/transit-gateway/production/tgw-id"
   type  = "String"
@@ -150,9 +186,13 @@ resource "aws_ssm_parameter" "dev_spoke_route_table_id" {
   value = module.tgw.tgw_route_table_ids.dev_spoke
   tags  = { Environment = "network" }
 }
+# =================================================================================
 
+# =================================================================================
 # --- TGW Attachment for NAT VPC ---
-# Associate with firewall_forwarding route table (post-inspection)
+# Attaches the NAT VPC to the Transit Gateway
+# Uses private subnets so traffic flows through NAT Gateways
+# =================================================================================
 module "nat_vpc_tgw_attachment" {
   source = "../../modules/tgw-attachment"
 
@@ -164,10 +204,13 @@ module "nat_vpc_tgw_attachment" {
   tags = { Environment = "network" }
 }
 
-# ============================================================
+# =================================================================================
 # Network Firewall — TGW-attached mode
-# ============================================================
-# The firewall runs in an AWS-managed VPC, not in the NAT VPC
+# Deploys AWS Network Firewall
+# Inspects all traffic passing through the Transit Gateway
+# Provides centralized security policy (like a traditional firewall)
+# Can block malicious traffic, enforce compliance, etc.
+=================================================================================
 module "network_firewall" {
   source = "../../modules/network-firewall"
 
@@ -195,12 +238,11 @@ output "firewall_tgw_attachment_id" {
   value = module.network_firewall.tgw_attachment_id
 }
 
-# ============================================================
+# =================================================================================
 # ROUTES: Conditional modules that only create routes if prod/dev exist
-# ============================================================
-
 # --- Routes for firewall_forwarding route table ---
 # This is where traffic goes AFTER inspection
+# =================================================================================
 module "routes_firewall_forwarding" {
   source = "../../modules/tgw-static-routes"
 
@@ -214,8 +256,13 @@ module "routes_firewall_forwarding" {
   }
 }
 
-# --- Routes for prod_spoke route table ---
+# =====================================================================================================
 # Everything goes to firewall for inspection first
+# Only creates routes if prod/Dev account has been deployed (count = local.prod_applied ? 1 : 0)
+# Routes all traffic from prod (0.0.0.0/0) and traffic to dev (10.30.0.0/16) through the firewall
+# This ensures all traffic is inspected
+# Conditional logic prevents errors if prod/dev haven't been deployed yet
+# =====================================================================================================
 module "routes_prod_spoke" {
   source = "../../modules/tgw-static-routes"
 
