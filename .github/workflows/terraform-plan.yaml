@@ -12,6 +12,11 @@ name: Terraform Plan
 on:
   pull_request:
     branches: [main]
+    paths-ignore:
+      - '.github/workflows/**'
+      - '**.md'
+      - '**.txt'
+      - 'docs/**'
   workflow_dispatch:
 
 permissions:
