@@ -19,6 +19,12 @@ module "vpc" {
   # false + an empty public_subnets list gives you a fully private VPC.
 
   tags = var.tags
+  depends_on = [
+    # Only resources that exist at this level
+    data.aws_vpc.existing_vpc,      # ✅ Example: a data source
+    aws_ec2_transit_gateway.main,   # ✅ Example: a TGW resource
+    module.some_other_module        # ✅ Example: another module
+  ]
 }
 
 # Extra "spoke egress" route added to every private route table, pointing
