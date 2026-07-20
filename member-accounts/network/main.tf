@@ -129,7 +129,7 @@ locals {
 module "nat_vpc" {
   source = "../../modules/vpc"
 
-  name = "network-nat-vpc"
+  name = "Network-Nat-Vpc"
   cidr = "10.10.0.0/16"
 
   azs             = ["eu-west-2a", "eu-west-2b"]
