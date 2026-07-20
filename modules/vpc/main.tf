@@ -19,7 +19,12 @@ module "vpc" {
   # false + an empty public_subnets list gives you a fully private VPC.
 
   tags = var.tags
-
+  # ✅ This is VALID if you actually have these resources at this level
+  depends_on = [
+    aws_ec2_transit_gateway.main,  # Only if this resource actually exists
+    data.aws_vpc.existing_vpc,     # Only if this data source exists
+    module.some_other_module       # Only if this module exists
+  ]
 }
 
 # Extra "spoke egress" route added to every private route table, pointing
@@ -32,9 +37,5 @@ resource "aws_route" "private_to_tgw" {
   route_table_id         = each.value
   destination_cidr_block = "0.0.0.0/0"
   transit_gateway_id     = var.tgw_id
-  
-  # ✅ This is VALID - depends on the module itself
-  depends_on = [
-    module.vpc  # ✅ Correct - this references the module, not internal resources
-  ]
+
 }
