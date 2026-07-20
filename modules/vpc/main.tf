@@ -19,7 +19,7 @@ module "vpc" {
   # false + an empty public_subnets list gives you a fully private VPC.
 
   tags = var.tags
-  
+
 }
 
 # Extra "spoke egress" route added to every private route table, pointing
