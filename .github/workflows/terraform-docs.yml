@@ -39,7 +39,7 @@ jobs:
 
           working-dir: member-accounts
           recursive: true
-          recursive-path: "."              # ← Scan all subfolders of member-accounts
+          recursive-path: "."              # Scan all subfolders of member-accounts
           output-file: README.md
           output-method: inject
           git-push: "true"
