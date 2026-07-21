@@ -32,17 +32,19 @@ jobs:
           ref: ${{ github.head_ref || github.ref_name }}
           fetch-depth: 0
 
+      - name: Discover terraform directories
+        id: discover
+        run: |
+          DIRS=$(find member-accounts modules -type f -name '*.tf' \
+            -not -path '*/.terraform/*' \
+            -exec dirname {} \; | sort -u | paste -sd, -)
+          echo "dirs=$DIRS" >> "$GITHUB_OUTPUT"
+          echo "Found: $DIRS"
+
       - name: Render terraform docs and push changes back
         uses: terraform-docs/gh-actions@v1
         with:
-          # List each account folder explicitly
-          working-dir: >
-            member-accounts/development,
-            member-accounts/monitoring,
-            member-accounts/network,
-            member-accounts/production,
-            member-accounts/security,
-            member-accounts/security_analytics
+          working-dir: ${{ steps.discover.outputs.dirs }}
           output-file: README.md
           output-method: inject
           git-push: "true"
