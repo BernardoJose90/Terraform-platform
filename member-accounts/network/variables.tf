@@ -18,14 +18,14 @@ variable "cidr" {
 
 variable "azs" {
   description = "AZs"
-  type        = list()
+  type        = list(string)
 }
 variable "private_subnets" {
   description = "private subnets"
-  type        = list()
+  type        = list(string)
 }
 
 variable "public_subnets" {
   description = "public subnets"
-  type        = list()
+  type        = list(string)
 }
