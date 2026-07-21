@@ -140,7 +140,7 @@ module "nat_vpc" {
   one_nat_gateway_per_az = true
 
   tags = { Environment = "network" }
-  
+
 }
 
 /* 
@@ -298,5 +298,22 @@ output "routes_status" {
     dev_routes_created  = local.dev_applied
     message             = local.prod_applied && local.dev_applied ? "✅ All routes to prod/dev have been created." : "⚠️ Prod/dev routes not created. Apply production and development accounts first, then run 'terraform apply' again."
   }
+}
+
+module "nat_vpc2" {
+  source = "../../modules/vpc"
+
+  name = "Network-Nat-Vpc2"
+  cidr = "10.20.0.0/16"
+
+  azs             = ["eu-west-2a", "eu-west-2b"]
+  private_subnets = ["10.20.30.0/24", "10.20.40.0/24"]
+  public_subnets  = ["10.20.50.0/24", "10.20.60.0/24"]
+
+  enable_nat_gateway     = true
+  one_nat_gateway_per_az = true
+
+  tags = { Environment = "network" }
+
 }
 */
