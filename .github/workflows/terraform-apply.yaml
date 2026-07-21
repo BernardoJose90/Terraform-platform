@@ -2,7 +2,8 @@ name: Terraform Apply
 
 # Runs on merge to main. The account list, working directory, deploy role,
 # and approval tier are all discovered at runtime from the SSM account
-# manifest — adding a new account never requires editing this file.
+# manifest AND filtered by which account folders actually changed.
+# Adding a new account never requires editing this file.
 #
 # Where possible, this workflow applies the EXACT plan that was reviewed on
 # the merged pull request (produced by terraform-plan.yml), rather than
@@ -27,15 +28,15 @@ permissions:
   id-token: write
   contents: read
   actions: read
-  # security-events: write   # re-add this if/when the Checkov job below is re-enabled
 
 env:
   TERRAFORM_VERSION: "1.10.0"
   AWS_REGION: "eu-west-2"
 
 jobs:
-
-  # Quick validation before discovery
+  # ──────────────────────────────────────────────────────────────────────────────
+  # 1. Quick validation before discovery
+  # ──────────────────────────────────────────────────────────────────────────────
   quick-validate:
     name: Quick Validate
     runs-on: ubuntu-latest
@@ -51,50 +52,71 @@ jobs:
       - name: Quick Format Check
         run: terraform fmt -check -recursive
 
-
-  # ⚠️ COMMENTED OUT - Checkov Security Scan
-  # Will be enabled after fixing IAM and VPC policies
+  # ──────────────────────────────────────────────────────────────────────────────
+  # 2. Security Scan (Checkov) - Commented out
+  # ──────────────────────────────────────────────────────────────────────────────
   # security-scan:
   #   name: Security Scan (Checkov)
   #   runs-on: ubuntu-latest
-  #   steps:
-  #     - uses: actions/checkout@v6
-  #
-  #     - name: Checkov Security Scan - All Accounts
-  #       id: checkov
-  #       uses: bridgecrewio/checkov-action@master
-  #       with:
-  #         directory: member-accounts/
-  #         framework: terraform
-  #         output_format: cli,sarif
-  #         download_external_modules: true
-  #         quiet: false
-  #         soft_fail: false
-  #
-  #     - name: Upload Checkov SARIF report
-  #       if: always()
-  #       uses: actions/upload-artifact@v4
-  #       with:
-  #         name: checkov-report
-  #         path: results.sarif
-  #         retention-days: 7
-  #
-  #     - name: Upload SARIF to GitHub Security tab
-  #       if: always()
-  #       uses: github/codeql-action/upload-sarif@v3
-  #       with:
-  #         sarif_file: results.sarif
-  #         category: checkov
+  #   ...
 
-  discover-accounts:
-    name: Discover Accounts
+  # ──────────────────────────────────────────────────────────────────────────────
+  # 3. Detect which account folders changed
+  # ──────────────────────────────────────────────────────────────────────────────
+  detect-changes:
+    name: Detect Changed Accounts
     runs-on: ubuntu-latest
     timeout-minutes: 5
     needs:
       - quick-validate
+    outputs:
+      changed_accounts: ${{ steps.filter.outputs.changed_accounts }}
+      has_changes: ${{ steps.filter.outputs.has_changes }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
 
+      - name: Detect changed account folders
+        id: filter
+        run: |
+          # Get list of changed files in member-accounts/
+          CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD -- member-accounts/ || echo "")
+
+          if [ -z "$CHANGED_FILES" ]; then
+            echo "No changes detected in member-accounts/"
+            echo "changed_accounts=" >> "$GITHUB_OUTPUT"
+            echo "has_changes=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Extract unique account names from changed paths
+          CHANGED_ACCOUNTS=$(echo "$CHANGED_FILES" | \
+            grep -E 'member-accounts/[^/]+/' | \
+            sed 's|member-accounts/\([^/]*\)/.*|\1|' | \
+            sort -u | \
+            tr '\n' ',' | \
+            sed 's/,$//')
+
+          echo "Changed files: $CHANGED_FILES"
+          echo "Changed accounts: $CHANGED_ACCOUNTS"
+
+          echo "changed_accounts=$CHANGED_ACCOUNTS" >> "$GITHUB_OUTPUT"
+          echo "has_changes=true" >> "$GITHUB_OUTPUT"
+
+  # ──────────────────────────────────────────────────────────────────────────────
+  # 4. Discover accounts from SSM AND filter by changed accounts
+  # ──────────────────────────────────────────────────────────────────────────────
+  discover-accounts:
+    name: Discover & Filter Accounts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    needs:
+      - detect-changes
+    if: needs.detect-changes.outputs.has_changes == 'true'
     outputs:
       matrix: ${{ steps.build-matrix.outputs.matrix }}
+      account_count: ${{ steps.build-matrix.outputs.account_count }}
     steps:
       - name: Configure AWS credentials (discovery role — read-only)
         uses: aws-actions/configure-aws-credentials@v4
@@ -104,9 +126,12 @@ jobs:
           role-session-name: gha-discover-accounts
           retry-max-attempts: 3
 
-      - name: Build matrix from SSM account manifest
+      - name: Build matrix from SSM AND filter by changed accounts
         id: build-matrix
         run: |
+          CHANGED_ACCOUNTS="${{ needs.detect-changes.outputs.changed_accounts }}"
+          echo "Changed accounts: $CHANGED_ACCOUNTS"
+
           ACCOUNTS=$(aws ssm get-parameters-by-path \
             --path "/organizations/accounts/" \
             --recursive \
@@ -119,12 +144,14 @@ jobs:
             --query "Parameters[*].{Name:Name,Value:Value}" \
             --output json)
 
-          MATRIX=$(jq -c -n --argjson accounts "$ACCOUNTS" --argjson tiers "$TIERS" '
+          MATRIX=$(jq -c -n --argjson accounts "$ACCOUNTS" --argjson tiers "$TIERS" --arg changed "$CHANGED_ACCOUNTS" '
+            ($changed | split(",")) as $changed_list |
             ($tiers | map({(.Name | split("/") | last): .Value}) | add) as $tier_map |
             {
               include: [
                 $accounts[] |
                 select(.Name | split("/") | last != "management") |
+                select(.Name | split("/") | last | IN($changed_list[])) |
                 {
                   account: (.Name | split("/") | last),
                   working_directory: ("member-accounts/" + (.Name | split("/") | last)),
@@ -135,15 +162,27 @@ jobs:
               ]
             }')
 
-          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
-          echo "Discovered accounts: $(echo $MATRIX | jq '.include | length')"
+          ACCOUNT_COUNT=$(echo "$MATRIX" | jq '.include | length')
 
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+          echo "account_count=$ACCOUNT_COUNT" >> "$GITHUB_OUTPUT"
+          echo "Discovered and filtered accounts: $ACCOUNT_COUNT"
+
+      - name: No accounts to apply
+        if: steps.build-matrix.outputs.account_count == '0'
+        run: |
+          echo "⚠️ No accounts match the changed files. Skipping apply."
+
+  # ──────────────────────────────────────────────────────────────────────────────
+  # 5. Resolve Plan (download reviewed plan if available)
+  # ──────────────────────────────────────────────────────────────────────────────
   resolve-plan-run:
     name: Locate and download reviewed plan
     runs-on: ubuntu-latest
     timeout-minutes: 5
     needs:
       - discover-accounts
+    if: needs.discover-accounts.outputs.account_count != '0' && needs.discover-accounts.outputs.account_count != ''
     outputs:
       plan_exists: ${{ steps.check.outputs.plan_exists }}
     strategy:
@@ -152,11 +191,7 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      # Note: no AWS credentials or `terraform init` here on purpose.
-      # This job only checks GitHub Actions artifacts for a reviewed plan
-      # file — it never touches AWS or Terraform state, so it doesn't
-      # need cloud credentials (least-privilege).
-
+      
       - name: Download plan artifact from previous workflow
         id: download
         uses: dawidd6/action-download-artifact@v2
@@ -189,6 +224,9 @@ jobs:
           path: ${{ matrix.working_directory }}/tfplan.binary
           retention-days: 5
 
+  # ──────────────────────────────────────────────────────────────────────────────
+  # 6. Apply ONLY for changed and discovered accounts
+  # ──────────────────────────────────────────────────────────────────────────────
   apply:
     name: Terraform Apply - ${{ matrix.account }}
     needs:
@@ -196,6 +234,7 @@ jobs:
       - resolve-plan-run
     runs-on: ubuntu-latest
     timeout-minutes: 30
+    if: needs.discover-accounts.outputs.account_count != '0' && needs.discover-accounts.outputs.account_count != ''
     strategy:
       fail-fast: false
       max-parallel: 3
@@ -240,6 +279,7 @@ jobs:
         run: |
           echo "🚀 Applying the exact plan reviewed on the merged PR for ${{ matrix.account }} (ID: ${{ matrix.account_id }})"
           echo "📂 Working directory: ${{ matrix.working_directory }}"
+          echo "🏷️ Environment: ${{ matrix.environment }}"
           echo ""
           terraform apply -input=false -lock-timeout=120s tfplan.binary 2>&1 | tee apply_output.txt
 
@@ -250,6 +290,7 @@ jobs:
           echo "⚠️ No reviewed plan found for ${{ matrix.account }} (this run wasn't triggered by a merged PR)."
           echo "🚀 Computing a fresh plan and applying it for ${{ matrix.account }} (ID: ${{ matrix.account_id }})"
           echo "📂 Working directory: ${{ matrix.working_directory }}"
+          echo "🏷️ Environment: ${{ matrix.environment }}"
           echo ""
           terraform plan -no-color -input=false -lock-timeout=60s -out=tfplan.binary
           terraform apply -input=false -lock-timeout=120s tfplan.binary 2>&1 | tee apply_output.txt
@@ -281,10 +322,7 @@ jobs:
           echo "  Account ID: ${{ matrix.account_id }}"
           echo "  Environment: ${{ matrix.environment }}"
           echo "  Region: ${{ env.AWS_REGION }}"
-          echo ""
-          echo "🔍 Verify resources:"
-          echo "  aws iam get-role --role-name TerraformDeploy --profile ${{ matrix.account }}"
-          echo "  aws ec2 describe-vpcs --filters Name=tag:Name,Values=${{ matrix.account }}-vpc --region ${{ env.AWS_REGION }}"
+
 
       - name: Apply Failure Notification
         if: failure()
@@ -292,12 +330,33 @@ jobs:
           echo "════════════════════════════════════════════════════════════"
           echo "❌ FAILED: ${{ matrix.account }}"
           echo "════════════════════════════════════════════════════════════"
-          echo ""
-          
-      - name: Upload apply artifact      
+
+      - name: Upload apply artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: apply-${{ matrix.account }}
           path: ${{ matrix.working_directory }}/apply_output.txt
           retention-days: 7
+
+  # ──────────────────────────────────────────────────────────────────────────────
+  # 7. Summary
+  # ──────────────────────────────────────────────────────────────────────────────
+  summary:
+    name: Apply Summary
+    needs:
+      - discover-accounts
+      - apply
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Print Summary
+        run: |
+          echo "════════════════════════════════════════════════════════════"
+          echo "🚀 APPLY SUMMARY"
+          echo "════════════════════════════════════════════════════════════"
+          echo ""
+          echo "Accounts applied: ${{ needs.discover-accounts.outputs.account_count }}"
+          echo ""
+          echo "Matrix:"
+          echo '${{ needs.discover-accounts.outputs.matrix }}' | jq '.include[] | {account: .account, environment: .environment}'
