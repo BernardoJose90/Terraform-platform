@@ -1,6 +1,5 @@
 name: Generate Terraform Docs
 
-
 on:
   pull_request:
     branches: [main]
@@ -25,7 +24,7 @@ jobs:
     name: Generate and Update README
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -36,10 +35,15 @@ jobs:
       - name: Render terraform docs and push changes back
         uses: terraform-docs/gh-actions@v1
         with:
-
-          working-dir: member-accounts
-          recursive: true
-          recursive-path: "."              # ← CHANGE THIS to "."
+          # List each account folder explicitly
+          working-dir: >
+            member-accounts/development,
+            member-accounts/monitoring,
+            member-accounts/network,
+            member-accounts/production,
+            member-accounts/security,
+            member-accounts/security_analytics
           output-file: README.md
           output-method: inject
           git-push: "true"
+          git-commit-message: "docs: auto-generate Terraform documentation [skip ci]"
