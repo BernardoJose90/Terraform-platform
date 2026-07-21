@@ -127,7 +127,7 @@ locals {
 # Traffic from dev/prod goes through this VPC's NAT Gateways to reach the internet
 # =================================================================================
 
- 
+
 module "nat_vpc2" {
   source = "../../modules/vpc"
 

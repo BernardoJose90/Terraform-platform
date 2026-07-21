@@ -13,19 +13,19 @@ variable "management_account_id" {
 
 variable "cidr" {
   description = "value"
-  type = string
+  type        = string
 }
 
 variable "azs" {
   description = "AZs"
-  type = list()
+  type        = list()
 }
 variable "private_subnets" {
   description = "private subnets"
-  type = list()
+  type        = list()
 }
 
 variable "public_subnets" {
   description = "public subnets"
-  type = list()
+  type        = list()
 }
