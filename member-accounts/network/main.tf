@@ -129,34 +129,18 @@ locals {
 module "nat_vpc" {
   source = "../../modules/vpc"
 
-  name = "Network-Nat-Vpc"
-  cidr = "10.10.0.0/16"
+  name = "network-nat-vpc"
+  cidr = "10.99.0.0/16"
 
   azs             = ["eu-west-2a", "eu-west-2b"]
-  private_subnets = ["10.10.30.0/24", "10.10.40.0/24"]
-  public_subnets  = ["10.10.50.0/24", "10.10.60.0/24"]
+  private_subnets = ["10.99.1.0/24", "10.99.2.0/24"]
+  public_subnets  = ["10.99.101.0/24", "10.99.102.0/24"]
 
   enable_nat_gateway     = true
   one_nat_gateway_per_az = true
 
   tags = { Environment = "network" }
-
-}
-module "nat_vpc2" {
-  source = "../../modules/vpc"
-
-  name = "Network-Nat-Vpc2"
-  cidr = "10.20.0.0/16"
-
-  azs             = ["eu-west-2a", "eu-west-2b"]
-  private_subnets = ["10.20.30.0/24", "10.20.40.0/24"]
-  public_subnets  = ["10.20.50.0/24", "10.20.60.0/24"]
-
-  enable_nat_gateway     = true
-  one_nat_gateway_per_az = true
-
-  tags = { Environment = "network" }
-
+  
 }
 
 /* 
@@ -275,7 +259,7 @@ module "routes_firewall_forwarding" {
 
 # =====================================================================================================
 # Everything goes to firewall for inspection first
-# Only creates routes if prod/Dev account has been deployed (count = local.prod_applied ? 1 : 0)
+# Only creates routes if prod/Devaccount has been deployed (count = local.prod_applied ? 1 : 0)
 # Routes all traffic from prod (0.0.0.0/0) and traffic to dev (10.30.0.0/16) through the firewall
 # This ensures all traffic is inspected
 # Conditional logic prevents errors if prod/dev haven't been deployed yet
