@@ -1,0 +1,39 @@
+name: Generate Terraform Docs
+
+# Runs on PRs when Terraform files change, or manually via workflow_dispatch
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - 'member-accounts/**/*.tf'
+      - 'member-accounts/**/*.tfvars'
+      - 'modules/**/*.tf'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  generate-docs:
+    name: Generate and Update README
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+
+      - name: Render terraform docs and push changes back to PR
+        uses: terraform-docs/gh-actions@v1
+        with:
+          # Scan the member-accounts folder where all your account configs live
+          working-dir: member-accounts
+          output-file: README.md
+          output-method: inject
+          git-push: "true"
+          # Optional: Add custom template if needed
+          # template: "<!-- BEGIN_TF_DOCS -->\n{{ .Content }}\n<!-- END_TF_DOCS -->"
