@@ -10,3 +10,22 @@ variable "management_account_id" {
   default     = "145678291484"
 
 }
+
+variable "cidr" {
+  description = "value"
+  type = string
+}
+
+variable "azs" {
+  description = "AZs"
+  type = list()
+}
+variable "private_subnets" {
+  description = "private subnets"
+  type = list()
+}
+
+variable "public_subnets" {
+  description = "public subnets"
+  type = list()
+}

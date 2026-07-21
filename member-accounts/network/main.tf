@@ -127,16 +127,16 @@ locals {
 # Traffic from dev/prod goes through this VPC's NAT Gateways to reach the internet
 # =================================================================================
 
-/* 
+ 
 module "nat_vpc2" {
   source = "../../modules/vpc"
 
   name = "Network-Nat-Vpc2"
-  cidr = "10.20.0.0/16"
+  cidr = var.cidr
 
-  azs             = ["eu-west-2a", "eu-west-2b"]
-  private_subnets = ["10.20.30.0/24", "10.20.40.0/24"]
-  public_subnets  = ["10.20.50.0/24", "10.20.60.0/24"]
+  azs             = var.azs
+  private_subnets = var.private_subnets
+  public_subnets  = var.public_subnets
 
   enable_nat_gateway     = true
   one_nat_gateway_per_az = true
@@ -145,7 +145,7 @@ module "nat_vpc2" {
 
 }
 
-
+/*
 # =================================================================================
 # Creates a Transit Gateway (central network hub)
 # Shares the TGW with dev and prod accounts via AWS RAM (Resource Access Manager)
