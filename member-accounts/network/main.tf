@@ -127,7 +127,7 @@ locals {
 # Traffic from dev/prod goes through this VPC's NAT Gateways to reach the internet
 # =================================================================================
 
-
+/*
 module "nat_vpc2" {
   source = "../../modules/vpc"
 
@@ -145,7 +145,7 @@ module "nat_vpc2" {
 
 }
 
-/*
+
 # =================================================================================
 # Creates a Transit Gateway (central network hub)
 # Shares the TGW with dev and prod accounts via AWS RAM (Resource Access Manager)
