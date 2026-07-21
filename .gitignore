@@ -35,7 +35,7 @@ apply_output.txt
 # Variable files that typically hold secrets/environment-specific values.
 # If you keep example/template files, name them *.tfvars.example and they
 # will NOT be ignored by the pattern below.
-*.tfvars
+# *.tfvars
 *.tfvars.json
 !*.tfvars.example
 !*.tfvars.json.example

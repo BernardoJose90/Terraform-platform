@@ -67,6 +67,7 @@ module "github-oidc-roles" {
 # ============================================================
 # PRODUCTION VPC
 # ============================================================
+/*
 module "prod_vpc" {
   source = "../../modules/vpc"
 
@@ -99,3 +100,4 @@ output "private_subnet_ids" {
   description = "Private subnet IDs in the production VPC"
   value       = module.prod_vpc.private_subnet_ids
 }
+*/
