@@ -10,7 +10,7 @@ module "vpc" {
   public_subnets  = var.public_subnets
 
   # Only the network account VPC should set these to true.
-  # Spoke VPCs stay private-only and route egress via the TGW instead.
+  # Spoke VPCs stay private-only and route egress(outbound traffic) via the TGW instead.
   enable_nat_gateway     = var.enable_nat_gateway
   single_nat_gateway     = var.single_nat_gateway
   one_nat_gateway_per_az = var.one_nat_gateway_per_az
@@ -22,10 +22,9 @@ module "vpc" {
 
 }
 
-# Extra "spoke egress" route added to every private route table, pointing
-# 0.0.0.0/0 at the Transit Gateway. Only used when var.tgw_id is set —
-# leave null for the network account's NAT VPC, which doesn't need this
-# since it *is* the egress point.
+# Extra "spoke egress(outbound )" route added to every private route table, pointing 0.0.0.0/0 at the Transit Gateway. 
+# Only used when var.tgw_id is set — leave null for the network account's NAT VPC, which doesn't need this since it *is* the egress point.
+# This ensures all outbound traffic from private subnets in spoke VPCs goes through the TGW to reach network account's VPC for internet egress
 resource "aws_route" "private_to_tgw" {
   for_each = var.tgw_id != null ? toset(module.vpc.private_route_table_ids) : []
 
