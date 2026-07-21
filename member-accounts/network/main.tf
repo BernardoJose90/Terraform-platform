@@ -128,11 +128,11 @@ locals {
 # =================================================================================
 
 
-
-module "nat_vpc2" {
+/*
+module "nat_vpc" {
   source = "../../modules/vpc"
 
-  name = "Network-Nat-Vpc2"
+  name = "Network-Nat-Vpc"
   cidr = var.cidr
 
   azs             = var.azs
@@ -145,7 +145,7 @@ module "nat_vpc2" {
   tags = { Environment = "network" }
 
 }
-/*
+
 # =================================================================================
 # Creates a Transit Gateway (central network hub)
 # Shares the TGW with dev and prod accounts via AWS RAM (Resource Access Manager)

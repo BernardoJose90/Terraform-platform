@@ -32,6 +32,7 @@ jobs:
         with:
           # Scan the member-accounts folder where all your account configs live
           working-dir: member-accounts
+          recursive: true
           output-file: README.md
           output-method: inject
           git-push: "true"
