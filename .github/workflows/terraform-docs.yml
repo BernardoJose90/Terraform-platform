@@ -1,8 +1,14 @@
 name: Generate Terraform Docs
 
-# Runs on PRs when Terraform files change, or manually via workflow_dispatch
+
 on:
   pull_request:
+    branches: [main]
+    paths:
+      - 'member-accounts/**/*.tf'
+      - 'member-accounts/**/*.tfvars'
+      - 'modules/**/*.tf'
+  push:
     branches: [main]
     paths:
       - 'member-accounts/**/*.tf'
@@ -24,17 +30,16 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.head_ref }}
+          ref: ${{ github.head_ref || github.ref_name }}
           fetch-depth: 0
 
-      - name: Render terraform docs and push changes back to PR
+      - name: Render terraform docs and push changes back
         uses: terraform-docs/gh-actions@v1
         with:
-          # Scan the member-accounts folder where all your account configs live
+
           working-dir: member-accounts
           recursive: true
+          recursive-path: "."              # ← Scan all subfolders of member-accounts
           output-file: README.md
           output-method: inject
           git-push: "true"
-          # Optional: Add custom template if needed
-          # template: "<!-- BEGIN_TF_DOCS -->\n{{ .Content }}\n<!-- END_TF_DOCS -->"
