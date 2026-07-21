@@ -126,22 +126,6 @@ locals {
 # This VPC serves as the internet gateway for all other accounts
 # Traffic from dev/prod goes through this VPC's NAT Gateways to reach the internet
 # =================================================================================
-module "nat_vpc" {
-  source = "../../modules/vpc"
-
-  name = "network-nat-vpc"
-  cidr = "10.99.0.0/16"
-
-  azs             = ["eu-west-2a", "eu-west-2b"]
-  private_subnets = ["10.99.1.0/24", "10.99.2.0/24"]
-  public_subnets  = ["10.99.101.0/24", "10.99.102.0/24"]
-
-  enable_nat_gateway     = true
-  one_nat_gateway_per_az = true
-
-  tags = { Environment = "network" }
-
-}
 
 module "nat_vpc2" {
   source = "../../modules/vpc"
