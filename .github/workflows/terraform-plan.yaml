@@ -380,7 +380,7 @@ jobs:
           retention-days: 5
 
   # ──────────────────────────────────────────────────────────────────────────────
-  # 6. Cost Estimation (Infracost - Free Tier, No API Key)
+  # 6. Cost Estimation (Infracost)
   # ──────────────────────────────────────────────────────────────────────────────
   infracost:
     name: Cost Estimation - ${{ matrix.account }}
@@ -397,6 +397,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.discover-accounts.outputs.matrix) }}
+    env:
+      # Set globally rather than via the setup action's api-key input — some users
+      # hit "Invalid API key" errors with the input param, the global env var is
+      # the more reliable path recommended by Infracost.
+      INFRACOST_API_KEY: ${{ secrets.INFRACOST_API_KEY }}
 
     steps:
       - uses: actions/checkout@v6
@@ -424,12 +429,17 @@ jobs:
         working-directory: ${{ matrix.working_directory }}
         run: terraform init -input=false
 
+      # Infracost no longer accepts a raw tfplan.binary — it needs the plan
+      # converted to JSON first. This is the actual root cause of the previous
+      # "no cost estimate generated" failures, not a pricing/region gap.
+      - name: Convert plan to JSON
+        working-directory: ${{ matrix.working_directory }}
+        run: terraform show -no-color -json tfplan.binary > plan.json
+
       - name: Setup Infracost
         uses: infracost/actions/setup@v3
         with:
-          # Free tier works without an API key, but the action requires this parameter
-          # Pass an empty string for free tier usage
-          api-key: ''
+          api-key: ${{ secrets.INFRACOST_API_KEY }}
           version: latest
 
       - name: Verify Infracost installation
@@ -437,75 +447,66 @@ jobs:
           echo "✅ Infracost installed successfully"
           infracost --version
 
-      - name: Verify plan file exists
+      - name: Verify plan JSON exists
         working-directory: ${{ matrix.working_directory }}
         run: |
-          echo "Checking for plan file..."
-          ls -la tfplan.binary || echo "⚠️ Plan file not found!"
-          if [ -f tfplan.binary ]; then
-            echo "✅ Plan file exists"
-            echo "File size: $(du -h tfplan.binary | cut -f1)"
+          echo "Checking for plan.json..."
+          if [ -s plan.json ]; then
+            echo "✅ plan.json exists"
+            echo "File size: $(du -h plan.json | cut -f1)"
           else
-            echo "❌ Plan file not found!"
+            echo "❌ plan.json not found or empty!"
             exit 1
           fi
 
-      - name: Run Infracost using plan file
+      - name: Run Infracost
         id: infracost
         working-directory: ${{ matrix.working_directory }}
         continue-on-error: true
         run: |
-          echo "💰 Generating cost estimate for ${{ matrix.account }} (Free Tier)..."
+          echo "💰 Generating cost estimate for ${{ matrix.account }}..."
           echo ""
-          
-          # Use the plan binary file directly
-          infracost breakdown --path tfplan.binary \
-            --format table \
-            --output cost_output.txt 2>&1
 
-          # Check if output was generated
-          if [ -f cost_output.txt ] && [ -s cost_output.txt ]; then
+          infracost breakdown --path plan.json \
+            --format table \
+            --out-file cost_output.txt 2>&1
+
+          if [ -s cost_output.txt ]; then
             echo "✅ Cost estimate generated successfully"
-            echo "cost_generated=true" >> $GITHUB_OUTPUT
+            echo "cost_generated=true" >> "$GITHUB_OUTPUT"
             cat cost_output.txt
-            
-            # Convert table to markdown for PR comment
-            echo "## 💰 Cost Estimate — \`${{ matrix.account }}\` (Free Tier)" > infracost_output.md
+
+            echo "## 💰 Cost Estimate — \`${{ matrix.account }}\`" > infracost_output.md
             echo "" >> infracost_output.md
             echo "\`\`\`" >> infracost_output.md
             cat cost_output.txt >> infracost_output.md
             echo "\`\`\`" >> infracost_output.md
-            echo "" >> infracost_output.md
-            echo "> ℹ️ *Free tier estimate — no API key required. For detailed HTML reports and historical tracking, sign up at [infracost.io](https://www.infracost.io).*" >> infracost_output.md
           else
-            echo "⚠️ No cost estimate generated" 
-            echo "cost_generated=false" >> $GITHUB_OUTPUT
-            
-            # Check if plan file has resources that Infracost can process
-            echo "🔍 Checking plan file contents..."
-            infracost breakdown --path tfplan.binary --format json --output cost_debug.json 2>&1 || true
-            
+            echo "⚠️ No cost estimate generated"
+            echo "cost_generated=false" >> "$GITHUB_OUTPUT"
+
+            echo "🔍 Checking plan.json contents for debugging..."
+            infracost breakdown --path plan.json --format json --out-file cost_debug.json 2>&1 || true
+
             if [ -f cost_debug.json ]; then
-              RESOURCE_COUNT=$(jq '.resources | length' cost_debug.json 2>/dev/null || echo "0")
-              echo "Resources found in plan: $RESOURCE_COUNT"
+              RESOURCE_COUNT=$(jq '.projects[0].breakdown.resources | length' cost_debug.json 2>/dev/null || echo "0")
+              echo "Resources found: $RESOURCE_COUNT"
             fi
-            
+
             cat > infracost_output.md << EOF
-            ## ⚠️ Cost Estimate — \`${{ matrix.account }}\` (Free Tier)
-            
-            No cost estimate could be generated for this account.
-            
-            **Possible reasons:**
-            - No billable resources were found in the Terraform plan
-            - The plan file may be corrupted or invalid
-            - Infracost may not support the resources being used
-            
-            **Debug information:**
-            - Plan file exists: \`$(test -f tfplan.binary && echo "Yes" || echo "No")\`
-            - Plan file size: \`$(du -h tfplan.binary 2>/dev/null | cut -f1 || echo "N/A")\`
-            
-            > 💡 For more detailed cost estimation, consider signing up for Infracost Cloud at [infracost.io](https://www.infracost.io)
-            EOF
+          ## ⚠️ Cost Estimate — \`${{ matrix.account }}\`
+
+          No cost estimate could be generated for this account.
+
+          **Possible reasons:**
+          - INFRACOST_API_KEY secret is missing or invalid — check repo Settings → Secrets and variables → Actions
+          - No billable resources were found in the Terraform plan
+          - plan.json failed to generate correctly
+
+          **Debug information:**
+          - plan.json exists: \`$(test -s plan.json && echo "Yes" || echo "No")\`
+          - plan.json size: \`$(du -h plan.json 2>/dev/null | cut -f1 || echo "N/A")\`
+          EOF
           fi
 
       - name: Post Infracost comment to PR
@@ -599,7 +600,7 @@ jobs:
           echo ""
           echo "════════════════════════════════════════════════════════════"
           echo "📊 Infracost Status:"
-          echo "  - Free tier (no API key required)"
+          echo "  - Authenticated via INFRACOST_API_KEY secret"
           echo "  - Cost estimates posted as PR comments"
           echo "  - Reports saved as artifacts"
           echo "════════════════════════════════════════════════════════════"
