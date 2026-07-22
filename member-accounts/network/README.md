@@ -18,6 +18,7 @@
 | Name | Source | Version |
 |------|--------|---------|
 | <a name="module_github-oidc-roles"></a> [github-oidc-roles](#module\_github-oidc-roles) | ../../modules/github-oidc-roles | n/a |
+| <a name="module_nat_vpc"></a> [nat\_vpc](#module\_nat\_vpc) | ../../modules/vpc | n/a |
 
 ## Resources
 
