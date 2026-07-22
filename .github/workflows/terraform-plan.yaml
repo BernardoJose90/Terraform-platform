@@ -401,6 +401,12 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - name: Download Terraform plan artifact from plan job
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ matrix.account }}
+          path: ${{ matrix.working_directory }}
+
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
@@ -418,19 +424,20 @@ jobs:
         working-directory: ${{ matrix.working_directory }}
         run: terraform init -input=false
 
-      - name: Terraform Plan (for Infracost)
-        id: plan
-        working-directory: ${{ matrix.working_directory }}
-        continue-on-error: true
-        run: |
-          terraform plan -no-color -input=false -out=tfplan.binary
-
+        
       - name: Install Infracost (Free Tier)
         run: |
           curl -fsSL https://infracost.io/install.sh | sh
           echo "$HOME/.infracost/bin" >> $GITHUB_PATH
 
-      - name: Run Infracost (Free - No API Key)
+      - name: Verify plan file exists
+        working-directory: ${{ matrix.working_directory }}
+        run: |
+          echo "Checking for plan file..."
+          ls -la tfplan.binary || echo "⚠️ Plan file not found!"
+          file tfplan.binary || echo "⚠️ Not a valid file"
+
+      - name: Run Infracost using plan file
         id: infracost
         working-directory: ${{ matrix.working_directory }}
         continue-on-error: true
@@ -438,14 +445,15 @@ jobs:
           echo "💰 Generating cost estimate for ${{ matrix.account }} (Free Tier)..."
           echo ""
           
-          # Run Infracost in table format (no API key required)
-          infracost breakdown --path . \
+          # Use the plan binary file directly
+          infracost breakdown --path tfplan.binary \
             --format table \
-            --output cost_output.txt 2>&1 || true
+            --output cost_output.txt 2>&1
 
           # Check if output was generated
-          if [ -f cost_output.txt ]; then
+          if [ -f cost_output.txt ] && [ -s cost_output.txt ]; then
             echo "✅ Cost estimate generated successfully"
+            echo "cost_generated=true" >> $GITHUB_OUTPUT
             cat cost_output.txt
             
             # Convert table to markdown for PR comment
@@ -455,13 +463,35 @@ jobs:
             cat cost_output.txt >> infracost_output.md
             echo "\`\`\`" >> infracost_output.md
             echo "" >> infracost_output.md
-            echo "> ⚠️ *Free tier estimate — for detailed breakdown sign up at infracost.io*" >> infracost_output.md
+            echo "> ℹ️ *Free tier estimate — no API key required. For detailed HTML reports and historical tracking, sign up at [infracost.io](https://www.infracost.io).*" >> infracost_output.md
           else
-            echo "⚠️ No cost estimate generated" > infracost_output.md
-            echo "This could mean no resources were found or Infracost couldn't process the plan." >> infracost_output.md
+            echo "⚠️ No cost estimate generated" 
+            echo "cost_generated=false" >> $GITHUB_OUTPUT
+            
+            # Try with debug logging to see what's happening
+            echo "🔍 Debugging with verbose output..."
+            infracost breakdown --path tfplan.binary --format table --log-level debug 2>&1 | head -50
+            
+            cat > infracost_output.md << EOF
+            ## ⚠️ Cost Estimate — \`${{ matrix.account }}\` (Free Tier)
+            
+            No cost estimate could be generated for this account.
+            
+            **Possible reasons:**
+            - No billable resources were found in the Terraform plan
+            - The plan file may be corrupted or invalid
+            - Infracost may not support the resources being used
+            
+            **Debug information:**
+            - Plan file exists: \`$(test -f tfplan.binary && echo "Yes" || echo "No")\`
+            - Plan file size: \`$(du -h tfplan.binary 2>/dev/null | cut -f1 || echo "N/A")\`
+            
+            > 💡 For more detailed cost estimation, consider signing up for Infracost Cloud at [infracost.io](https://www.infracost.io)
+            EOF
           fi
 
       - name: Post Infracost comment to PR
+        if: always()
         uses: actions/github-script@v7
         with:
           script: |
@@ -516,6 +546,14 @@ jobs:
           path: ${{ matrix.working_directory }}/infracost_output.md
           retention-days: 7
 
+      - name: Upload Infracost debug log
+        if: failure() || steps.infracost.outputs.cost_generated == 'false'
+        uses: actions/upload-artifact@v4
+        with:
+          name: infracost-debug-${{ matrix.account }}
+          path: ${{ matrix.working_directory }}/.infracost/
+          retention-days: 3
+
   # ──────────────────────────────────────────────────────────────────────────────
   # 7. Summary
   # ──────────────────────────────────────────────────────────────────────────────
@@ -538,3 +576,10 @@ jobs:
           echo ""
           echo "Matrix:"
           echo '${{ needs.discover-accounts.outputs.matrix }}' | jq '.include[] | {account: .account, environment: .environment}'
+          echo ""
+          echo "════════════════════════════════════════════════════════════"
+          echo "📊 Infracost Status:"
+          echo "  - Free tier (no API key required)"
+          echo "  - Cost estimates posted as PR comments"
+          echo "  - Reports saved as artifacts"
+          echo "════════════════════════════════════════════════════════════"
