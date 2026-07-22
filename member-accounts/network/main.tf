@@ -142,8 +142,8 @@ module "nat_vpc" {
   enable_nat_gateway     = true
   one_nat_gateway_per_az = true
 
-  tags = { 
-    Environment = "network" 
+  tags = {
+    Environment = "network"
     Service     = "networking"
   }
 
