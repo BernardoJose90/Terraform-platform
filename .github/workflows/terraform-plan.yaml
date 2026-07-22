@@ -424,29 +424,47 @@ jobs:
         working-directory: ${{ matrix.working_directory }}
         run: terraform init -input=false
 
-        
-      - name: Install Infracost (Free Tier)
+      - name: Install Infracost
         run: |
-          curl -fsSL https://infracost.io/install.sh | sh
-          echo "$HOME/.infracost/bin" >> $GITHUB_PATH
+          # Download and install Infracost
+          curl -fsSL https://raw.githubusercontent.com/infracost/infracost/master/scripts/install.sh | sh
+          # Add to PATH for this session
+          echo "$HOME/.local/bin" >> $GITHUB_PATH
+          # Verify installation
+          $HOME/.local/bin/infracost --version || echo "⚠️ Infracost installation failed"
+
+      - name: Verify Infracost installation
+        run: |
+          # Check if infracost is available
+          which infracost || echo "Not in PATH"
+          ls -la $HOME/.local/bin/infracost || echo "File not found"
+          $HOME/.local/bin/infracost --version || echo "Version check failed"
 
       - name: Verify plan file exists
         working-directory: ${{ matrix.working_directory }}
         run: |
           echo "Checking for plan file..."
           ls -la tfplan.binary || echo "⚠️ Plan file not found!"
-          file tfplan.binary || echo "⚠️ Not a valid file"
+          if [ -f tfplan.binary ]; then
+            echo "✅ Plan file exists"
+            echo "File size: $(du -h tfplan.binary | cut -f1)"
+          else
+            echo "❌ Plan file not found!"
+            exit 1
+          fi
 
       - name: Run Infracost using plan file
         id: infracost
         working-directory: ${{ matrix.working_directory }}
         continue-on-error: true
         run: |
+          export PATH="$HOME/.local/bin:$PATH"
+          
           echo "💰 Generating cost estimate for ${{ matrix.account }} (Free Tier)..."
           echo ""
           
           # Use the plan binary file directly
-          infracost breakdown --path tfplan.binary \
+          $HOME/.local/bin/infracost breakdown --path tfplan.binary \
             --format table \
             --output cost_output.txt 2>&1
 
@@ -470,7 +488,7 @@ jobs:
             
             # Try with debug logging to see what's happening
             echo "🔍 Debugging with verbose output..."
-            infracost breakdown --path tfplan.binary --format table --log-level debug 2>&1 | head -50
+            $HOME/.local/bin/infracost breakdown --path tfplan.binary --format table --log-level debug 2>&1 | head -50
             
             cat > infracost_output.md << EOF
             ## ⚠️ Cost Estimate — \`${{ matrix.account }}\` (Free Tier)
@@ -545,14 +563,7 @@ jobs:
           name: cost-report-${{ matrix.account }}
           path: ${{ matrix.working_directory }}/infracost_output.md
           retention-days: 7
-
-      - name: Upload Infracost debug log
-        if: failure() || steps.infracost.outputs.cost_generated == 'false'
-        uses: actions/upload-artifact@v4
-        with:
-          name: infracost-debug-${{ matrix.account }}
-          path: ${{ matrix.working_directory }}/.infracost/
-          retention-days: 3
+          if-no-files-found: warn
 
   # ──────────────────────────────────────────────────────────────────────────────
   # 7. Summary
