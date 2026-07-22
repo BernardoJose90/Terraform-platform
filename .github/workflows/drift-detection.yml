@@ -1,0 +1,132 @@
+name: Drift Detection
+
+on:
+  schedule:
+    # Runs at 2:00 AM UTC daily
+    - cron: '0 2 * * *'
+  workflow_dispatch:  # Allow manual trigger
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  TERRAFORM_VERSION: "1.10.0"
+  AWS_REGION: "eu-west-2"
+
+jobs:
+  # 1. Detect which accounts exist (reuse your existing SSM discovery)
+  discover-accounts:
+    name: Discover Accounts
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      matrix: ${{ steps.build-matrix.outputs.matrix }}
+      account_count: ${{ steps.build-matrix.outputs.account_count }}
+    steps:
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.DISCOVERY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gha-drift-discovery
+
+      - name: Build matrix from SSM
+        id: build-matrix
+        run: |
+          ACCOUNTS=$(aws ssm get-parameters-by-path \
+            --path "/organizations/accounts/" \
+            --recursive \
+            --query "Parameters[*].{Name:Name,Value:Value}" \
+            --output json)
+
+          MATRIX=$(jq -c -n --argjson accounts "$ACCOUNTS" '
+            {
+              include: [
+                $accounts[] |
+                select(.Name | split("/") | last != "management") |
+                {
+                  account: (.Name | split("/") | last),
+                  working_directory: ("member-accounts/" + (.Name | split("/") | last)),
+                  role_arn: ("arn:aws:iam::" + .Value + ":role/TerraformPlan"),
+                  account_id: .Value
+                }
+              ]
+            }')
+
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+          echo "account_count=$(echo $MATRIX | jq '.include | length')" >> "$GITHUB_OUTPUT"
+
+  # 2. Check for drift in each account
+  drift-check:
+    name: Check Drift - ${{ matrix.account }}
+    needs: discover-accounts
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    if: needs.discover-accounts.outputs.account_count != '0' && needs.discover-accounts.outputs.account_count != ''
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.discover-accounts.outputs.matrix) }}
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ matrix.role_arn }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gha-drift-${{ matrix.account }}
+
+      - name: Terraform Init
+        working-directory: ${{ matrix.working_directory }}
+        run: terraform init -input=false
+
+      - name: Terraform Plan (Check for Drift)
+        id: plan
+        working-directory: ${{ matrix.working_directory }}
+        continue-on-error: true
+        run: |
+          # -refresh-only checks for drift without modifying state
+          terraform plan -no-color -input=false -lock-timeout=60s -refresh-only 2>&1 | tee drift_output.txt
+          exit_code=${PIPESTATUS[0]}
+          echo "drift_exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+
+          echo ""
+          echo "─────────────────────────────────────────────────────────────"
+          echo "📋 Drift Check exit code: $exit_code"
+          echo "─────────────────────────────────────────────────────────────"
+          echo ""
+
+      - name: Check for Drift
+        if: steps.plan.outputs.drift_exit_code != '0'
+        run: |
+          echo "⚠️ DRIFT DETECTED in ${{ matrix.account }} (ID: ${{ matrix.account_id }})"
+          echo ""
+          echo "🔧 Manual intervention required:"
+          echo "   1. Review the drift output above"
+          echo "   2. Determine if the change is intentional"
+          echo "   3. If NOT intentional, re-run 'terraform apply' to fix"
+          echo "   4. If intentional, update your Terraform code to match"
+          echo ""
+          echo "⚠️ This is a WARNING only — no changes were applied."
+
+      - name: Upload drift report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: drift-report-${{ matrix.account }}
+          path: ${{ matrix.working_directory }}/drift_output.txt
+          retention-days: 7
+
+      - name: Notify on Drift Detection (Slack/Teams)
+        if: steps.plan.outputs.drift_exit_code != '0'
+        run: |
+          # Optional: Add Slack/Teams notification
+          echo "🔔 Would send notification: Drift detected in ${{ matrix.account }}"
+          

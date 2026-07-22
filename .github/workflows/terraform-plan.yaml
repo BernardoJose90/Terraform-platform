@@ -276,7 +276,6 @@ jobs:
         working-directory: ${{ matrix.working_directory }}
         run: terraform validate
 
-
       - name: Terraform Plan
         id: plan
         working-directory: ${{ matrix.working_directory }}
@@ -301,7 +300,6 @@ jobs:
             echo "─────────────────────────────────────────────────────────────"
             tail -50 plan_output.txt
             echo "─────────────────────────────────────────────────────────────"
-            
           else
             echo "✅ Terraform plan SUCCEEDED"
           fi
@@ -334,7 +332,6 @@ jobs:
             if (output.length > 60000) {
               output = output.slice(0, 60000) + `\n... (truncated, [view full logs](${fullLogLink}))`;
             }
-
 
             const hasChanges = !output.includes("No changes") && !output.includes("0 to add, 0 to change, 0 to destroy");
             const statusIcon = hasChanges ? '📝' : '✅';
@@ -375,7 +372,6 @@ jobs:
           retention-days: 7
 
       - name: Upload plan file for apply reuse
-
         if: steps.plan.outputs.plan_exit_code == '0'
         uses: actions/upload-artifact@v4
         with:
@@ -384,13 +380,151 @@ jobs:
           retention-days: 5
 
   # ──────────────────────────────────────────────────────────────────────────────
-  # 6. Summary
+  # 6. Cost Estimation (Infracost - Free Tier, No API Key)
+  # ──────────────────────────────────────────────────────────────────────────────
+  infracost:
+    name: Cost Estimation - ${{ matrix.account }}
+    needs:
+      - discover-accounts
+      - plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    # Only run on PRs when we have accounts to estimate
+    if: |
+      github.event_name == 'pull_request' &&
+      needs.discover-accounts.outputs.account_count != '0' &&
+      needs.discover-accounts.outputs.account_count != ''
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.discover-accounts.outputs.matrix) }}
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Configure AWS credentials (${{ matrix.account }})
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ matrix.role_arn }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gha-infracost-${{ matrix.account }}
+          retry-max-attempts: 3
+
+      - name: Terraform Init
+        working-directory: ${{ matrix.working_directory }}
+        run: terraform init -input=false
+
+      - name: Terraform Plan (for Infracost)
+        id: plan
+        working-directory: ${{ matrix.working_directory }}
+        continue-on-error: true
+        run: |
+          terraform plan -no-color -input=false -out=tfplan.binary
+
+      - name: Install Infracost (Free Tier)
+        run: |
+          curl -fsSL https://infracost.io/install.sh | sh
+          echo "$HOME/.infracost/bin" >> $GITHUB_PATH
+
+      - name: Run Infracost (Free - No API Key)
+        id: infracost
+        working-directory: ${{ matrix.working_directory }}
+        continue-on-error: true
+        run: |
+          echo "💰 Generating cost estimate for ${{ matrix.account }} (Free Tier)..."
+          echo ""
+          
+          # Run Infracost in table format (no API key required)
+          infracost breakdown --path . \
+            --format table \
+            --output cost_output.txt 2>&1 || true
+
+          # Check if output was generated
+          if [ -f cost_output.txt ]; then
+            echo "✅ Cost estimate generated successfully"
+            cat cost_output.txt
+            
+            # Convert table to markdown for PR comment
+            echo "## 💰 Cost Estimate — \`${{ matrix.account }}\` (Free Tier)" > infracost_output.md
+            echo "" >> infracost_output.md
+            echo "\`\`\`" >> infracost_output.md
+            cat cost_output.txt >> infracost_output.md
+            echo "\`\`\`" >> infracost_output.md
+            echo "" >> infracost_output.md
+            echo "> ⚠️ *Free tier estimate — for detailed breakdown sign up at infracost.io*" >> infracost_output.md
+          else
+            echo "⚠️ No cost estimate generated" > infracost_output.md
+            echo "This could mean no resources were found or Infracost couldn't process the plan." >> infracost_output.md
+          fi
+
+      - name: Post Infracost comment to PR
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const fs = require('fs');
+            const path = `${{ matrix.working_directory }}/infracost_output.md`;
+            let output = '⚠️ No cost estimate available.';
+            try {
+              if (fs.existsSync(path)) {
+                output = fs.readFileSync(path, 'utf8');
+              }
+            } catch (e) {
+              output = `⚠️ Error reading cost estimate: ${e.message}`;
+            }
+
+            // Truncate if too long
+            if (output.length > 60000) {
+              output = output.slice(0, 60000) + '\n... (truncated)';
+            }
+
+            const marker = `<!-- infracost-account:${{ matrix.account }} -->`;
+            const body = `${marker}\n${output}`;
+
+            const { data: comments } = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const existing = comments.find(c => c.body.includes(marker));
+
+            if (existing) {
+              await github.rest.issues.updateComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                comment_id: existing.id,
+                body,
+              });
+            } else {
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: context.issue.number,
+                body,
+              });
+            }
+
+      - name: Upload cost report artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cost-report-${{ matrix.account }}
+          path: ${{ matrix.working_directory }}/infracost_output.md
+          retention-days: 7
+
+  # ──────────────────────────────────────────────────────────────────────────────
+  # 7. Summary
   # ──────────────────────────────────────────────────────────────────────────────
   summary:
     name: Plan Summary
     needs:
       - discover-accounts
       - plan
+      - infracost
     runs-on: ubuntu-latest
     if: always()
     steps:
