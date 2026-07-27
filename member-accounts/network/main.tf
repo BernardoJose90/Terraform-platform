@@ -97,7 +97,7 @@ module "github-oidc-roles" {
 
   management_account_id = var.management_account_id
   state_bucket_name     = "james-terraform-state-2026"
-  role_name              = "TerraformDeploy"
+  role_name             = "TerraformDeploy"
 }
 
 # -----------------------------------------------------------------------
