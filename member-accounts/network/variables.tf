@@ -53,7 +53,7 @@ variable "dev_cidr" {
 }
 
 variable "tags" {
-  description = "Tags applied to all resources in this account"
+  description = "Tags applied to all resources in this accounts"
   type        = map(string)
   default = {
     ManagedBy   = "Terraform"
