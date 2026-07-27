@@ -58,6 +58,6 @@ variable "tags" {
   default = {
     ManagedBy   = "Terraform"
     Environment = "network"
-    service = "network"
+    Service = "network"
   }
 }
