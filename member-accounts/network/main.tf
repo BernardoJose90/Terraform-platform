@@ -139,9 +139,11 @@ module "tgw" {
   name            = "core-tgw"
   amazon_side_asn = var.amazon_side_asn
 
+  # Account IDs, not secrets — the SSM parameter data source marks
+  # .value sensitive unconditionally, which for_each disallows.
   share_with_principals = [
-    data.aws_ssm_parameter.production_account_id.value,
-    data.aws_ssm_parameter.development_account_id.value,
+    nonsensitive(data.aws_ssm_parameter.production_account_id.value),
+    nonsensitive(data.aws_ssm_parameter.development_account_id.value),
   ]
 
   tags = var.tags
