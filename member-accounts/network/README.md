@@ -55,7 +55,7 @@
 | <a name="input_private_subnets"></a> [private\_subnets](#input\_private\_subnets) | TGW-attachment subnets, one per AZ (sub-tgw-egress-a/b) | `list(string)` | <pre>[<br/>  "10.10.30.0/24",<br/>  "10.10.40.0/24"<br/>]</pre> | no |
 | <a name="input_prod_cidr"></a> [prod\_cidr](#input\_prod\_cidr) | Production VPC CIDR — used by the firewall's cross-env DROP rule | `string` | `"10.20.0.0/16"` | no |
 | <a name="input_public_subnets"></a> [public\_subnets](#input\_public\_subnets) | NAT gateway subnets, one per AZ (sub-nat-egress-a/b) | `list(string)` | <pre>[<br/>  "10.10.50.0/24",<br/>  "10.10.60.0/24"<br/>]</pre> | no |
-| <a name="input_tags"></a> [tags](#input\_tags) | Tags applied to all resources in this account | `map(string)` | <pre>{<br/>  "Environment": "network",<br/>  "ManagedBy": "Terraform",<br/>  "service": "network"<br/>}</pre> | no |
+| <a name="input_tags"></a> [tags](#input\_tags) | Tags applied to all resources in this accounts | `map(string)` | <pre>{<br/>  "Environment": "network",<br/>  "ManagedBy": "Terraform",<br/>  "Service": "network"<br/>}</pre> | no |
 
 ## Outputs
 
