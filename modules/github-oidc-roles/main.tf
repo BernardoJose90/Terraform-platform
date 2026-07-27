@@ -194,7 +194,12 @@ data "aws_iam_policy_document" "permissions" {
       "ram:GetResourceShares",
       "ram:GetResourceShareAssociations",
       "ram:ListResourceSharePermissions",
-      "ram:EnableSharingWithAwsOrganization"
+      "ram:EnableSharingWithAwsOrganization",
+      # Tag-on-create. RAM evaluates ram:TagResource against resource-share/* BEFORE
+      # the share ARN exists, so this statement must stay at resources = ["*"].
+      "ram:TagResource",
+      "ram:UntagResource",
+      "ram:ListTagsForResource"
     ]
     resources = ["*"]
   }
@@ -223,7 +228,11 @@ data "aws_iam_policy_document" "permissions" {
       "network-firewall:UpdateRuleGroup",
       "network-firewall:DeleteRuleGroup",
       "network-firewall:AssociateFirewallPolicy",
-      "network-firewall:DisassociateFirewallPolicy"
+      "network-firewall:DisassociateFirewallPolicy",
+      # Tag-on-create. Applies to the rule group, the policy and the firewall — all
+      # three carry the provider's default_tags.
+      "network-firewall:TagResource",
+      "network-firewall:UntagResource"
     ]
     resources = ["*"]
   }
