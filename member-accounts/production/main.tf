@@ -100,5 +100,5 @@ module "tgw_attachment" {
   subnet_ids = module.vpc.private_subnet_ids
 
   tags = var.tags
-  
+
 }
