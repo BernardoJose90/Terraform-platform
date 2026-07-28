@@ -102,3 +102,26 @@ module "tgw_attachment" {
   tags = var.tags
 
 }
+# ============================================================
+# Default route out of the private subnets, via the TGW.
+# Lives here rather than in modules/vpc because a route targeting a TGW is only
+# valid once the VPC is attached, and the attachment depends on modules/vpc —
+# so the module cannot depend on the attachment. depends_on below is the point.
+# ============================================================
+resource "aws_route" "private_to_tgw" {
+  for_each = { for idx, az in var.azs : az => idx }
+
+  route_table_id         = module.vpc.private_route_table_ids[each.value]
+  destination_cidr_block = "0.0.0.0/0"
+  transit_gateway_id     = data.terraform_remote_state.network.outputs.tgw_id
+
+  depends_on = [module.tgw_attachment]
+
+  lifecycle {
+    precondition {
+      condition     = length(module.vpc.private_route_table_ids) == length(var.azs)
+      error_message = "Expected one private route table per AZ, got ${length(module.vpc.private_route_table_ids)} tables for ${length(var.azs)} AZs."
+    }
+  }
+}
+
