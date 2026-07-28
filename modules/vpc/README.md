@@ -8,9 +8,7 @@
 
 ## Providers
 
-| Name | Version |
-|------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | >= 5.0 |
+No providers.
 
 ## Modules
 
@@ -20,9 +18,7 @@
 
 ## Resources
 
-| Name | Type |
-|------|------|
-| [aws_route.private_to_tgw](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/route) | resource |
+No resources.
 
 ## Inputs
 
