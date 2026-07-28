@@ -24,6 +24,7 @@
 | <a name="module_network_firewall"></a> [network\_firewall](#module\_network\_firewall) | ../../modules/network-firewall | n/a |
 | <a name="module_routes_dev_spoke"></a> [routes\_dev\_spoke](#module\_routes\_dev\_spoke) | ../../modules/tgw-static-routes | n/a |
 | <a name="module_routes_firewall_forwarding"></a> [routes\_firewall\_forwarding](#module\_routes\_firewall\_forwarding) | ../../modules/tgw-static-routes | n/a |
+| <a name="module_routes_main"></a> [routes\_main](#module\_routes\_main) | ../../modules/tgw-static-routes | n/a |
 | <a name="module_routes_prod_spoke"></a> [routes\_prod\_spoke](#module\_routes\_prod\_spoke) | ../../modules/tgw-static-routes | n/a |
 | <a name="module_tgw"></a> [tgw](#module\_tgw) | ../../modules/tgw | n/a |
 
@@ -36,6 +37,7 @@
 | [aws_ec2_transit_gateway_route_table_association.prod_spoke](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ec2_transit_gateway_route_table_association) | resource |
 | [aws_ec2_transit_gateway_route_table_propagation.dev_spoke](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ec2_transit_gateway_route_table_propagation) | resource |
 | [aws_ec2_transit_gateway_route_table_propagation.prod_spoke](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ec2_transit_gateway_route_table_propagation) | resource |
+| [aws_route.public_to_spokes](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/route) | resource |
 | [aws_ssm_parameter.development_account_id](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/ssm_parameter) | data source |
 | [aws_ssm_parameter.network_account_id](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/ssm_parameter) | data source |
 | [aws_ssm_parameter.production_account_id](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/ssm_parameter) | data source |
