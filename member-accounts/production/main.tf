@@ -65,39 +65,40 @@ module "github-oidc-roles" {
 }
 
 # ============================================================
-# PRODUCTION VPC
+# PRODUCTION VPC — spoke, private-only. Egress is centralized in the
+# network account, so this VPC has no NAT/IGW of its own; the vpc
+# module instead adds a 0.0.0.0/0 route to the TGW on every private
+# route table (see modules/vpc/main.tf's tgw_id handling).
 # ============================================================
-/*
-module "prod_vpc" {
+module "vpc" {
   source = "../../modules/vpc"
 
   name = "production-vpc"
-  cidr = "10.1.0.0/16"
+  cidr = var.cidr
 
-  azs             = ["eu-west-2a", "eu-west-2b"]
-  private_subnets = ["10.1.10.0/24", "10.1.20.0/24"] # TGW attachment subnets
-  public_subnets  = ["10.1.30.0/24", "10.1.40.0/24"] # NAT GW + IGW live here
+  azs             = var.azs
+  private_subnets = var.private_subnets
 
   enable_nat_gateway = false
+  tgw_id             = data.terraform_remote_state.network.outputs.tgw_id
 
-  tags = { Environment = "production" }
+  tags = var.tags
 }
+
+
 
 # ============================================================
-# OUTPUTS (for network account to reference)
+# TGW attachment — associated by the network account with the
+# prod_spoke route table once this account's state is applied.
 # ============================================================
-# output "attachment_id" {
-#   description = "The TGW attachment ID for the production VPC"
-#   value       = module.prod_tgw_attachment.attachment_id
-# }
+module "tgw_attachment" {
+  source = "../../modules/tgw-attachment"
 
-output "vpc_id" {
-  description = "The production VPC ID"
-  value       = module.prod_vpc.vpc_id
-}
+  name       = "prod-spoke"
+  tgw_id     = data.terraform_remote_state.network.outputs.tgw_id
+  vpc_id     = module.vpc.vpc_id
+  subnet_ids = module.vpc.private_subnet_ids
 
-output "private_subnet_ids" {
-  description = "Private subnet IDs in the production VPC"
-  value       = module.prod_vpc.private_subnet_ids
+  tags = var.tags
+
 }
-*/
