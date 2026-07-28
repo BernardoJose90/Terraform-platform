@@ -125,7 +125,3 @@ resource "aws_route" "private_to_tgw" {
   }
 }
 
-moved {
-  from = module.vpc.aws_route.private_to_tgw
-  to   = aws_route.private_to_tgw
-}
