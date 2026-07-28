@@ -43,7 +43,7 @@ data "aws_ssm_parameter" "development_account_id" {
 provider "aws" {
   region              = var.aws_region
   allowed_account_ids = [data.aws_ssm_parameter.development_account_id.value]
-  
+
 }
 
 # Read network account's state directly (NO cross-account IAM needed)
