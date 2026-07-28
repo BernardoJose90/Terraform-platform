@@ -46,7 +46,7 @@ module "vpc" {
   # false + an empty public_subnets list gives you a fully private VPC.
 
   tags = var.tags
-  
+
 }
 
 # ======================================================================================
