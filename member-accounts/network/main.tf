@@ -1,9 +1,15 @@
 ###############################################################################
 # Account: Network
-# Purpose: Centralised egress VPC + Transit Gateway-attached Network Firewall
-#          for inspected East-West (prod<->dev) and North-South (internet)
-#          traffic. See DEPLOYMENT_NOTES.md for the apply order — this
-#          config has a real cross-account dependency and needs 3 applies.
+# Purpose: Centralised egress VPC + Transit Gateway hub for East-West
+#          (prod<->dev) and North-South (internet) traffic.
+#
+# This account never reads spoke state. It publishes tgw_id,
+# ram_resource_share_arn, and its route table IDs to SSM, and grants each
+# spoke account a narrowly-scoped role (modules/tgw-spoke-wiring-role) to
+# wire its own TGW association/propagation/return-route directly. Apply
+# order is: this account once, then any spoke account, in any order, one
+# apply each — see member-accounts/production|development/main.tf for the
+# other half.
 ###############################################################################
 
 terraform {
@@ -54,36 +60,7 @@ provider "aws" {
   allowed_account_ids = [data.aws_ssm_parameter.network_account_id.value]
 }
 
-# -----------------------------------------------------------------------
-# Remote state — read spoke VPC attachment IDs once they exist in the
-# production / development accounts. On the very first apply of this
-# account these outputs won't exist yet, so every reference below is
-# wrapped in try()/count so the rest of the network account can still
-# stand up. Re-apply this account after production + development have
-# been applied to wire up the spoke associations & routes.
-# -----------------------------------------------------------------------
-data "terraform_remote_state" "production" {
-  backend = "s3"
-  config = {
-    bucket = "james-terraform-state-2026"
-    key    = "production/terraform.tfstate"
-    region = var.aws_region
-  }
-}
-
-data "terraform_remote_state" "development" {
-  backend = "s3"
-  config = {
-    bucket = "james-terraform-state-2026"
-    key    = "development/terraform.tfstate"
-    region = var.aws_region
-  }
-}
-
 locals {
-  prod_attachment_id = try(data.terraform_remote_state.production.outputs.tgw_attachment_id, null)
-  dev_attachment_id  = try(data.terraform_remote_state.development.outputs.tgw_attachment_id, null)
-
   # ← ADDED. Spoke CIDRs that need a return path through the egress VPC.
   spoke_cidrs = [var.prod_cidr, var.dev_cidr]
 
@@ -159,8 +136,9 @@ module "egress_vpc" {
 # Outbound therefore works and return traffic silently disappears — the failure
 # looks like "curl hangs", not like a routing error.
 #
-# These routes send spoke-destined traffic back into the TGW, where the "main"
-# route table (see module.routes_main below) forwards it to the firewall.
+# These routes send spoke-destined traffic back into the TGW, where the
+# "main" route table (see module.tgw below) already has a route to each
+# spoke via propagation.
 # -----------------------------------------------------------------------
 resource "aws_route" "public_to_spokes" {
   for_each = local.public_spoke_routes
@@ -174,9 +152,10 @@ resource "aws_route" "public_to_spokes" {
 }
 
 # -----------------------------------------------------------------------
-# Transit Gateway (hub) — creates the 4 route tables (main,
-# firewall_forwarding, prod_spoke, dev_spoke) and shares the TGW to
-# prod/dev via RAM.
+# Transit Gateway (hub) — creates "main" (egress's table, and the one
+# narrow surface both spokes share write access to for their return
+# route) plus prod_spoke/dev_spoke (each isolated to its own spoke's
+# automation only), and shares the TGW to prod/dev via RAM.
 # -----------------------------------------------------------------------
 module "tgw" {
   source = "../../modules/tgw"
@@ -197,9 +176,12 @@ module "tgw" {
 # -----------------------------------------------------------------------
 # TGW attachment for the egress VPC itself (this account owns the TGW,
 # so no RAM acceptance step is needed for this attachment).
-# Associated with the "main" route table — which is NOT unused: it is the
-# table consulted for everything entering the TGW from the egress VPC,
-# i.e. all return traffic. See module.routes_main below.
+# Associated with the "main" route table — consulted for everything
+# entering the TGW from the egress VPC, i.e. all NAT return traffic.
+# Both spokes propagate their own attachment into "main" (see
+# member-accounts/production|development/main.tf), so that return
+# traffic already has a route to whichever spoke it's headed back to —
+# without prod_spoke or dev_spoke ever being shared between them.
 # -----------------------------------------------------------------------
 module "egress_tgw_attachment" {
   source = "../../modules/tgw-attachment"
@@ -218,59 +200,11 @@ resource "aws_ec2_transit_gateway_route_table_association" "egress" {
 }
 
 # -----------------------------------------------------------------------
-# Network Firewall — native TGW network function attachment. The module
-# also associates the firewall's own attachment with the
-# firewall_forwarding route table.
-# -----------------------------------------------------------------------
-module "network_firewall" {
-  source = "../../modules/network-firewall"
-
-  name               = "cross-env-inspection"
-  tgw_id             = module.tgw.tgw_id
-  availability_zones = var.azs
-
-  tgw_firewall_forwarding_route_table_id = module.tgw.tgw_route_table_ids["firewall_forwarding"]
-
-  prod_cidr = var.prod_cidr
-  dev_cidr  = var.dev_cidr
-
-  tags = var.tags
-}
-
-# -----------------------------------------------------------------------
-# Spoke associations + local-CIDR propagation.
-# Each spoke's own VPC route is *propagated* automatically; everything
-# else in that spoke's route table is a static route to the firewall
-# (below), forcing pre-inspection routing for all other traffic.
-# -----------------------------------------------------------------------
-resource "aws_ec2_transit_gateway_route_table_association" "prod_spoke" {
-  count                          = local.prod_attachment_id != null ? 1 : 0
-  transit_gateway_attachment_id  = local.prod_attachment_id
-  transit_gateway_route_table_id = module.tgw.tgw_route_table_ids["prod_spoke"]
-}
-
-resource "aws_ec2_transit_gateway_route_table_propagation" "prod_spoke" {
-  count                          = local.prod_attachment_id != null ? 1 : 0
-  transit_gateway_attachment_id  = local.prod_attachment_id
-  transit_gateway_route_table_id = module.tgw.tgw_route_table_ids["prod_spoke"]
-}
-
-resource "aws_ec2_transit_gateway_route_table_association" "dev_spoke" {
-  count                          = local.dev_attachment_id != null ? 1 : 0
-  transit_gateway_attachment_id  = local.dev_attachment_id
-  transit_gateway_route_table_id = module.tgw.tgw_route_table_ids["dev_spoke"]
-}
-
-resource "aws_ec2_transit_gateway_route_table_propagation" "dev_spoke" {
-  count                          = local.dev_attachment_id != null ? 1 : 0
-  transit_gateway_attachment_id  = local.dev_attachment_id
-  transit_gateway_route_table_id = module.tgw.tgw_route_table_ids["dev_spoke"]
-}
-
-# -----------------------------------------------------------------------
-# Static routes — pre-inspection (prod/dev -> firewall) and
-# post-inspection (firewall -> final destination), exactly as laid
-# out in the design doc's TGW Routes tables.
+# Default route out of each spoke's own isolated table, straight to the
+# egress attachment. This is the only entry either table needs: with no
+# shared spoke table and no propagation between prod_spoke and dev_spoke,
+# there is no east-west path between the two environments at all — a
+# spoke can reach the internet (via egress) and nothing else.
 # -----------------------------------------------------------------------
 module "routes_prod_spoke" {
   source = "../../modules/tgw-static-routes"
@@ -278,9 +212,7 @@ module "routes_prod_spoke" {
   tgw_route_table_id = module.tgw.tgw_route_table_ids["prod_spoke"]
 
   routes = {
-    "0.0.0.0/0"    = module.network_firewall.tgw_attachment_id
-    "10.10.0.0/16" = module.network_firewall.tgw_attachment_id
-    "10.30.0.0/16" = module.network_firewall.tgw_attachment_id
+    "0.0.0.0/0" = module.egress_tgw_attachment.attachment_id
   }
 }
 
@@ -290,48 +222,114 @@ module "routes_dev_spoke" {
   tgw_route_table_id = module.tgw.tgw_route_table_ids["dev_spoke"]
 
   routes = {
-    "0.0.0.0/0"    = module.network_firewall.tgw_attachment_id
-    "10.10.0.0/16" = module.network_firewall.tgw_attachment_id
-    "10.20.0.0/16" = module.network_firewall.tgw_attachment_id
+    "0.0.0.0/0" = module.egress_tgw_attachment.attachment_id
   }
 }
 
-module "routes_firewall_forwarding" {
-  source = "../../modules/tgw-static-routes"
-
-  tgw_route_table_id = module.tgw.tgw_route_table_ids["firewall_forwarding"]
-
-  routes = merge(
-    local.prod_attachment_id != null ? { "10.20.0.0/16" = local.prod_attachment_id } : {},
-    local.dev_attachment_id != null ? { "10.30.0.0/16" = local.dev_attachment_id } : {},
-    { "0.0.0.0/0" = module.egress_tgw_attachment.attachment_id }
-  )
+# -----------------------------------------------------------------------
+# Spoke-owned TGW wiring — publishes what a spoke needs to wire itself in,
+# and grants each spoke account a narrowly-scoped role to do that wiring
+# directly against this account's TGW route tables.
+#
+# Why this exists: associations/propagations/return-routes for prod_spoke
+# and dev_spoke used to live here, gated on the spoke's attachment ID read
+# back via terraform_remote_state. That made this account's plan depend on
+# spoke state that in turn depends on this account's own outputs — a cycle
+# Terraform can't resolve in one graph, "solved" by wrapping everything in
+# try()/count and re-applying this account a third time after both spokes.
+# The try() didn't fail loudly when a spoke hadn't been applied yet — it
+# silently produced zero resources, which reads as a clean apply.
+#
+# Now: each spoke assumes its own role below (aws.network provider alias,
+# see member-accounts/production|development/main.tf) and creates its own
+# association (own spoke table) and propagation (own spoke table + main,
+# for the return path). This account never references spoke state again.
+#
+# Each spoke's role is scoped to its own spoke table plus "main" only —
+# never the other spoke's table. "main" is the one table both roles can
+# touch, and only to propagate their own attachment's return route; a
+# spoke's automation still can't associate, disassociate, or otherwise
+# manage the other spoke's presence there beyond that.
+# -----------------------------------------------------------------------
+resource "aws_ssm_parameter" "tgw_id" {
+  name  = "/transit-gateway/id"
+  type  = "String"
+  value = module.tgw.tgw_id
+  tags  = var.tags
 }
 
-# -----------------------------------------------------------------------
-# ← ADDED: return path, TGW side.
-#
-# The "main" route table is associated with the egress VPC attachment, so it is
-# consulted for every packet the TGW receives from the egress VPC — which is all
-# return traffic coming back through the NAT gateways. It currently has no routes
-# at all, so that traffic is dropped at the TGW.
-#
-# These point at the FIREWALL attachment rather than straight at the spokes.
-# That is deliberate: sending returns via the firewall keeps inspection
-# symmetric, so the stateful engine sees both directions of every flow. The rule
-# group uses direction = ANY, and asymmetric routing produces flows a stateful
-# engine cannot track correctly.
-#
-# Guarded on the same locals as the spoke associations above, so the first apply
-# of this account (before prod/dev exist) still succeeds.
-# -----------------------------------------------------------------------
-module "routes_main" {
-  source = "../../modules/tgw-static-routes"
+resource "aws_ssm_parameter" "ram_resource_share_arn" {
+  name  = "/transit-gateway/ram_resource_share_arn"
+  type  = "String"
+  value = module.tgw.ram_resource_share_arn
+  tags  = var.tags
+}
 
-  tgw_route_table_id = module.tgw.tgw_route_table_ids["main"]
+resource "aws_ssm_parameter" "tgw_route_table_id_main" {
+  name  = "/transit-gateway/route_table_ids/main"
+  type  = "String"
+  value = module.tgw.tgw_route_table_ids["main"]
+  tags  = var.tags
+}
 
-  routes = merge(
-    local.prod_attachment_id != null ? { "10.20.0.0/16" = module.network_firewall.tgw_attachment_id } : {},
-    local.dev_attachment_id != null ? { "10.30.0.0/16" = module.network_firewall.tgw_attachment_id } : {},
-  )
+resource "aws_ssm_parameter" "tgw_route_table_id_prod_spoke" {
+  name  = "/transit-gateway/route_table_ids/prod_spoke"
+  type  = "String"
+  value = module.tgw.tgw_route_table_ids["prod_spoke"]
+  tags  = var.tags
+}
+
+resource "aws_ssm_parameter" "tgw_route_table_id_dev_spoke" {
+  name  = "/transit-gateway/route_table_ids/dev_spoke"
+  type  = "String"
+  value = module.tgw.tgw_route_table_ids["dev_spoke"]
+  tags  = var.tags
+}
+
+locals {
+  tgw_ssm_parameter_arns = [
+    aws_ssm_parameter.tgw_id.arn,
+    aws_ssm_parameter.ram_resource_share_arn.arn,
+    aws_ssm_parameter.tgw_route_table_id_main.arn,
+  ]
+
+  network_account_id = nonsensitive(data.aws_ssm_parameter.network_account_id.value)
+
+  main_route_table_arn = "arn:aws:ec2:${var.aws_region}:${local.network_account_id}:transit-gateway-route-table/${module.tgw.tgw_route_table_ids["main"]}"
+}
+
+module "tgw_spoke_wiring_production" {
+  source = "../../modules/tgw-spoke-wiring-role"
+
+  name             = "TgwSpokeWiringProduction"
+  spoke_account_id = nonsensitive(data.aws_ssm_parameter.production_account_id.value)
+
+  route_table_arns = [
+    "arn:aws:ec2:${var.aws_region}:${local.network_account_id}:transit-gateway-route-table/${module.tgw.tgw_route_table_ids["prod_spoke"]}",
+    local.main_route_table_arn,
+  ]
+
+  ssm_parameter_arns = concat(local.tgw_ssm_parameter_arns, [
+    aws_ssm_parameter.tgw_route_table_id_prod_spoke.arn,
+  ])
+
+  tags = var.tags
+}
+
+module "tgw_spoke_wiring_development" {
+  source = "../../modules/tgw-spoke-wiring-role"
+
+  name             = "TgwSpokeWiringDevelopment"
+  spoke_account_id = nonsensitive(data.aws_ssm_parameter.development_account_id.value)
+
+  route_table_arns = [
+    "arn:aws:ec2:${var.aws_region}:${local.network_account_id}:transit-gateway-route-table/${module.tgw.tgw_route_table_ids["dev_spoke"]}",
+    local.main_route_table_arn,
+  ]
+
+  ssm_parameter_arns = concat(local.tgw_ssm_parameter_arns, [
+    aws_ssm_parameter.tgw_route_table_id_dev_spoke.arn,
+  ])
+
+  tags = var.tags
 }

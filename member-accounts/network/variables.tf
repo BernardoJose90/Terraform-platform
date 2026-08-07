@@ -23,7 +23,7 @@ variable "cidr" {
 }
 
 variable "azs" {
-  description = "AZs to deploy the egress VPC, TGW attachments and Network Firewall into"
+  description = "AZs to deploy the egress VPC and TGW attachments into"
   type        = list(string)
   default     = ["eu-west-2a", "eu-west-2b"]
 }
@@ -41,13 +41,13 @@ variable "public_subnets" {
 }
 
 variable "prod_cidr" {
-  description = "Production VPC CIDR — used by the firewall's cross-env DROP rule"
+  description = "Production VPC CIDR — used to build the NAT return-path routes in the egress VPC's public route tables"
   type        = string
   default     = "10.20.0.0/16"
 }
 
 variable "dev_cidr" {
-  description = "Development VPC CIDR — used by the firewall's cross-env DROP rule"
+  description = "Development VPC CIDR — used to build the NAT return-path routes in the egress VPC's public route tables"
   type        = string
   default     = "10.30.0.0/16"
 }

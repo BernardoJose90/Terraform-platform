@@ -1,15 +1,15 @@
 output "tgw_id" {
-  description = "Transit Gateway ID — consumed by production/development via terraform_remote_state"
+  description = "Transit Gateway ID — also published to SSM at /transit-gateway/id for spoke accounts"
   value       = module.tgw.tgw_id
 }
 
 output "tgw_route_table_ids" {
-  description = "Map of TGW route table IDs (main, firewall_forwarding, prod_spoke, dev_spoke)"
+  description = "Map of TGW route table IDs (main, prod_spoke, dev_spoke) — the main/prod_spoke/dev_spoke IDs are also published to SSM for spoke accounts"
   value       = module.tgw.tgw_route_table_ids
 }
 
 output "ram_resource_share_arn" {
-  description = "RAM resource share ARN — consumed by production/development to auto-accept the TGW share"
+  description = "RAM resource share ARN — also published to SSM at /transit-gateway/ram_resource_share_arn"
   value       = module.tgw.ram_resource_share_arn
 }
 
@@ -19,8 +19,4 @@ output "egress_vpc_id" {
 
 output "egress_vpc_cidr" {
   value = module.egress_vpc.vpc_cidr
-}
-
-output "network_firewall_arn" {
-  value = module.network_firewall.firewall_arn
 }
