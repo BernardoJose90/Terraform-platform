@@ -1,5 +1,5 @@
 ###############################################################################
-# Account: Development 
+# Account: Development
 # Email  : james.jose109099+aws-dev@gmail.com
 # Purpose: Dev workload hosting
 ###############################################################################
@@ -39,6 +39,13 @@ data "aws_ssm_parameter" "development_account_id" {
   name     = "/organizations/accounts/development"
 }
 
+# Read the network account ID from SSM (management account) — needed to
+# construct the TGW spoke-wiring role ARN below.
+data "aws_ssm_parameter" "network_account_id" {
+  provider = aws.management
+  name     = "/organizations/accounts/network"
+}
+
 # ✅ Main provider for the development account itself — no profile needed
 provider "aws" {
   region              = var.aws_region
@@ -46,14 +53,40 @@ provider "aws" {
 
 }
 
-# Read network account's state directly (NO cross-account IAM needed)
-data "terraform_remote_state" "network" {
-  backend = "s3"
-  config = {
-    bucket = "james-terraform-state-2026"
-    key    = "network/terraform.tfstate"
-    region = "eu-west-2"
+# Assumes a role in the network account that's scoped to ONLY dev_spoke +
+# main (modules/tgw-spoke-wiring-role) — this account can never touch
+# tgw-prod-spoke-rt. Replaces terraform_remote_state, which read the
+# network account's entire state file and, worse, made network's own
+# plan depend on this account's output — a cycle neither account could
+# apply cleanly on its own. See member-accounts/network/main.tf for the
+# other half.
+provider "aws" {
+  alias  = "network"
+  region = var.aws_region
+  assume_role {
+    role_arn = "arn:aws:iam::${nonsensitive(data.aws_ssm_parameter.network_account_id.value)}:role/TgwSpokeWiringDevelopment"
   }
+}
+
+# Published by the network account. Read via the aws.network role instead
+# of terraform_remote_state, so this account's plan role never needs S3
+# read access to the network account's full state file.
+data "aws_ssm_parameter" "tgw_id" {
+  provider = aws.network
+  name     = "/transit-gateway/id"
+}
+
+data "aws_ssm_parameter" "dev_spoke_route_table_id" {
+  provider = aws.network
+  name     = "/transit-gateway/route_table_ids/dev_spoke"
+}
+
+# The "main" table is the one narrow surface this account shares write
+# access to with production — used only to propagate this VPC's own
+# return route, never to touch prod_spoke.
+data "aws_ssm_parameter" "main_route_table_id" {
+  provider = aws.network
+  name     = "/transit-gateway/route_table_ids/main"
 }
 
 module "github-oidc-roles" {
@@ -68,6 +101,10 @@ module "github-oidc-roles" {
   management_account_id = "145678291484"
   state_bucket_name     = "james-terraform-state-2026"
   role_name             = "TerraformDeploy"
+
+  extra_assumable_role_arns = [
+    "arn:aws:iam::${nonsensitive(data.aws_ssm_parameter.network_account_id.value)}:role/TgwSpokeWiringDevelopment",
+  ]
 }
 
 # ============================================================
@@ -85,7 +122,7 @@ module "vpc" {
   private_subnets = var.private_subnets
 
   enable_nat_gateway = false
-  tgw_id             = data.terraform_remote_state.network.outputs.tgw_id
+  tgw_id             = nonsensitive(data.aws_ssm_parameter.tgw_id.value)
 
   tags = var.tags
 }
@@ -109,20 +146,52 @@ module "vpc" {
 # ============================================================
 
 # ============================================================
-# TGW attachment — associated by the network account with the
-# dev_spoke route table once this account's state is applied.
-# Comes up "available" on its own because the TGW has
+# TGW attachment. Comes up "available" on its own because the TGW has
 # AutoAcceptSharedAttachments = enable.
 # ============================================================
 module "tgw_attachment" {
   source = "../../modules/tgw-attachment"
 
   name       = "dev-spoke"
-  tgw_id     = data.terraform_remote_state.network.outputs.tgw_id
+  tgw_id     = nonsensitive(data.aws_ssm_parameter.tgw_id.value)
   vpc_id     = module.vpc.vpc_id
   subnet_ids = module.vpc.private_subnet_ids
 
   tags = var.tags
+}
+
+# ============================================================
+# TGW route table wiring — spoke-owned. Runs against the network account
+# via the aws.network provider (assumes TgwSpokeWiringDevelopment, scoped
+# to only dev_spoke + main).
+#
+# Associated with dev_spoke only — that's the table production's traffic
+# never reaches, so there's no east-west path between the two environments.
+# Propagated into BOTH dev_spoke (so this VPC's own table knows about its
+# own attachment — required for propagation to work at all) and main (so
+# NAT return traffic from the egress VPC has a route back to this VPC).
+# This replaces the old inspected_return static route: propagation into
+# main achieves the same thing without needing a firewall attachment.
+# ============================================================
+resource "aws_ec2_transit_gateway_route_table_association" "this" {
+  provider = aws.network
+
+  transit_gateway_attachment_id  = module.tgw_attachment.attachment_id
+  transit_gateway_route_table_id = nonsensitive(data.aws_ssm_parameter.dev_spoke_route_table_id.value)
+}
+
+resource "aws_ec2_transit_gateway_route_table_propagation" "spoke" {
+  provider = aws.network
+
+  transit_gateway_attachment_id  = module.tgw_attachment.attachment_id
+  transit_gateway_route_table_id = nonsensitive(data.aws_ssm_parameter.dev_spoke_route_table_id.value)
+}
+
+resource "aws_ec2_transit_gateway_route_table_propagation" "main" {
+  provider = aws.network
+
+  transit_gateway_attachment_id  = module.tgw_attachment.attachment_id
+  transit_gateway_route_table_id = nonsensitive(data.aws_ssm_parameter.main_route_table_id.value)
 }
 
 # ============================================================
@@ -144,7 +213,7 @@ resource "aws_route" "private_to_tgw" {
 
   route_table_id         = module.vpc.private_route_table_ids[each.value]
   destination_cidr_block = "0.0.0.0/0"
-  transit_gateway_id     = data.terraform_remote_state.network.outputs.tgw_id
+  transit_gateway_id     = nonsensitive(data.aws_ssm_parameter.tgw_id.value)
 
   depends_on = [module.tgw_attachment]
 
@@ -155,4 +224,3 @@ resource "aws_route" "private_to_tgw" {
     }
   }
 }
-
