@@ -10,15 +10,23 @@ resource "aws_ec2_transit_gateway" "this" {
 
 # ============================================================
 # ROUTE TABLES
+#
+# Each spoke gets its own isolated table — prod's automation can only ever
+# touch prod_spoke, dev's only dev_spoke (see modules/tgw-spoke-wiring-role).
+# Neither propagates into the other's table, so there is no east-west path
+# between prod and dev at all; each spoke's table carries only a static
+# default route out to the egress attachment for internet access.
+#
+# "main" is the one table both spokes DO share write access to, but only
+# for propagating their own attachment's return route into it — it's
+# associated with the egress VPC attachment, so it's consulted for NAT
+# return traffic coming back through the egress VPC. This is the same
+# shape the original (pre-firewall) design used: a single narrow shared
+# surface for the return path, full isolation everywhere else.
 # ============================================================
 resource "aws_ec2_transit_gateway_route_table" "main" {
   transit_gateway_id = aws_ec2_transit_gateway.this.id
   tags               = merge(var.tags, { Name = "${var.name}-rt-main" })
-}
-
-resource "aws_ec2_transit_gateway_route_table" "firewall_forwarding" {
-  transit_gateway_id = aws_ec2_transit_gateway.this.id
-  tags               = merge(var.tags, { Name = "${var.name}-rt-firewall-forwarding" })
 }
 
 resource "aws_ec2_transit_gateway_route_table" "prod_spoke" {
