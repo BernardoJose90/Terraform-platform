@@ -7,7 +7,7 @@ No requirements.
 
 | Name | Version |
 |------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | n/a |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.58.0 |
 
 ## Modules
 
@@ -22,19 +22,21 @@ No modules.
 | [aws_iam_role.terraform_deploy](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
 | [aws_iam_role.terraform_plan](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
 | [aws_iam_role_policy.terraform_deploy_policy](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
+| [aws_iam_role_policy.terraform_plan_assume_extra_roles](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
 | [aws_iam_role_policy.terraform_plan_assume_ssm_readonly](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
 | [aws_iam_role_policy_attachment.terraform_plan_readonly](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy_attachment) | resource |
 | [aws_iam_role_policy_attachment.terraform_plan_s3_policy_attachment](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy_attachment) | resource |
 | [aws_caller_identity.read_current_account](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/caller_identity) | data source |
+| [aws_iam_policy_document.github_actions_trust_policy](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_iam_policy_document.github_oidc_trust_plan](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 | [aws_iam_policy_document.permissions](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
-| [aws_iam_policy_document.trust](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/iam_policy_document) | data source |
 
 ## Inputs
 
 | Name | Description | Type | Default | Required |
 |------|-------------|------|---------|:--------:|
 | <a name="input_account_name"></a> [account\_name](#input\_account\_name) | Short name for this account, e.g. "security", "production" — used only for tagging. | `string` | n/a | yes |
+| <a name="input_extra_assumable_role_arns"></a> [extra\_assumable\_role\_arns](#input\_extra\_assumable\_role\_arns) | Additional IAM role ARNs (typically in other accounts) that this account's TerraformDeploy and TerraformPlan roles may assume — e.g. a spoke account's TGW wiring role in the network account. Empty by default; most accounts don't need this. | `list(string)` | `[]` | no |
 | <a name="input_github_org"></a> [github\_org](#input\_github\_org) | GitHub org or username that owns the repo, e.g. "your-org" | `string` | `"BernardoJose90"` | no |
 | <a name="input_github_repo"></a> [github\_repo](#input\_github\_repo) | Repository name only, no org prefix, e.g. "Terraform-platform" | `string` | `"Terraform-platform"` | no |
 | <a name="input_management_account_id"></a> [management\_account\_id](#input\_management\_account\_id) | Account ID allowed to assume this role. | `string` | `"145678291484"` | no |
