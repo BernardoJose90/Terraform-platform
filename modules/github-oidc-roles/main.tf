@@ -25,10 +25,10 @@ resource "aws_iam_openid_connect_provider" "github" {
   }
 }
 
-# ======================================================================================
-# Trust policy for GitHub Actions - This Generates trust policy.
-# ======================================================================================
-data "aws_iam_policy_document" "trust" {
+# =====================================================================================================================
+# This creates trust policy for GitHub Actions basically allowing GitHub Actions to assume the terraform_deploy role
+# =====================================================================================================================
+data "aws_iam_policy_document" "github_actions_trust_policy" {
   # Allows management account admins with MFA to assume this role (emergency access)
   statement {
     sid     = "ManagementAccountBreakGlass"
@@ -68,7 +68,7 @@ data "aws_iam_policy_document" "trust" {
 }
 
 # ======================================================================================
-# Generates Permissions with ALL required IAM actions
+# Creates Permissions with all required IAM actions
 # ======================================================================================
 data "aws_iam_policy_document" "permissions" {
   # VPC, Site-to-Site VPN, and EC2 instances
@@ -79,7 +79,7 @@ data "aws_iam_policy_document" "permissions" {
     resources = ["*"]
   }
 
-  # ✅ COMPLETE IAM permissions
+  #IAM permissions
   statement {
     sid    = "ManageInstanceRoles"
     effect = "Allow"
@@ -166,6 +166,16 @@ data "aws_iam_policy_document" "permissions" {
     resources = ["arn:aws:iam::${var.management_account_id}:role/SSMReadOnly"]
   }
 
+  dynamic "statement" {
+    for_each = length(var.extra_assumable_role_arns) > 0 ? [1] : []
+    content {
+      sid       = "AssumeExtraRoles"
+      effect    = "Allow"
+      actions   = ["sts:AssumeRole"]
+      resources = var.extra_assumable_role_arns
+    }
+  }
+
   # S3 state files access - FULL ACCESS for deploy role (including locking)
   statement {
     sid    = "StateFileAccess"
@@ -204,38 +214,6 @@ data "aws_iam_policy_document" "permissions" {
     resources = ["*"]
   }
 
-  # Network Firewall permissions
-  statement {
-    sid    = "NetworkFirewall"
-    effect = "Allow"
-    actions = [
-      # Read operations
-      "network-firewall:DescribeFirewall",
-      "network-firewall:DescribeFirewallPolicy",
-      "network-firewall:DescribeRuleGroup",
-      "network-firewall:ListFirewalls",
-      "network-firewall:ListFirewallPolicies",
-      "network-firewall:ListRuleGroups",
-      "network-firewall:ListTagsForResource",
-      # Write operations
-      "network-firewall:CreateFirewall",
-      "network-firewall:UpdateFirewall",
-      "network-firewall:DeleteFirewall",
-      "network-firewall:CreateFirewallPolicy",
-      "network-firewall:UpdateFirewallPolicy",
-      "network-firewall:DeleteFirewallPolicy",
-      "network-firewall:CreateRuleGroup",
-      "network-firewall:UpdateRuleGroup",
-      "network-firewall:DeleteRuleGroup",
-      "network-firewall:AssociateFirewallPolicy",
-      "network-firewall:DisassociateFirewallPolicy",
-      # Tag-on-create. Applies to the rule group, the policy and the firewall — all
-      # three carry the provider's default_tags.
-      "network-firewall:TagResource",
-      "network-firewall:UntagResource"
-    ]
-    resources = ["*"]
-  }
 }
 
 # ==============================================================================
@@ -243,7 +221,7 @@ data "aws_iam_policy_document" "permissions" {
 # ==============================================================================
 resource "aws_iam_role" "terraform_deploy" {
   name                 = var.role_name
-  assume_role_policy   = data.aws_iam_policy_document.trust.json
+  assume_role_policy   = data.aws_iam_policy_document.github_actions_trust_policy.json
   max_session_duration = 3600
 
   tags = {
@@ -269,7 +247,7 @@ resource "aws_iam_role_policy" "terraform_deploy_policy" {
 }
 
 # =======================================================================================
-# Generating a trust policy that allows GitHub Actions to assume the Terraform Plan role
+# creates a trust policy that allows GitHub Actions to assume the Terraform Plan role
 # =======================================================================================
 data "aws_iam_policy_document" "github_oidc_trust_plan" {
   statement {
@@ -327,6 +305,21 @@ resource "aws_iam_role_policy" "terraform_plan_assume_ssm_readonly" {
       Effect   = "Allow"
       Action   = "sts:AssumeRole"
       Resource = "arn:aws:iam::${var.management_account_id}:role/SSMReadOnly"
+    }]
+  })
+}
+
+resource "aws_iam_role_policy" "terraform_plan_assume_extra_roles" {
+  count = length(var.extra_assumable_role_arns) > 0 ? 1 : 0
+
+  name = "AssumeExtraRoles"
+  role = aws_iam_role.terraform_plan.id
+  policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Effect   = "Allow"
+      Action   = "sts:AssumeRole"
+      Resource = var.extra_assumable_role_arns
     }]
   })
 }

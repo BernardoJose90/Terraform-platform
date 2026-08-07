@@ -33,6 +33,12 @@ variable "account_name" {
   type        = string
 }
 
+variable "extra_assumable_role_arns" {
+  description = "Additional IAM role ARNs (typically in other accounts) that this account's TerraformDeploy and TerraformPlan roles may assume — e.g. a spoke account's TGW wiring role in the network account. Empty by default; most accounts don't need this."
+  type        = list(string)
+  default     = []
+}
+
 
 
          
