@@ -147,7 +147,15 @@ data "aws_iam_policy_document" "permissions" {
       "ssm:GetParametersByPath",
       "ssm:DescribeParameters",
       "ssm:PutParameter",
-      "ssm:DeleteParameter"
+      "ssm:DeleteParameter",
+      # aws_ssm_parameter resources created with tags (every one of them in this
+      # repo — they all pass tags = var.tags) need this as a SEPARATE action from
+      # ssm:PutParameter. AWS tags a new SSM parameter via its own API call under
+      # the hood, so PutParameter alone creates the parameter but then fails to
+      # tag it. RemoveTagsFromResource is here too, for the same reason on the
+      # update/delete side (e.g. a tag being removed from var.tags later).
+      "ssm:AddTagsToResource",
+      "ssm:RemoveTagsFromResource"
     ]
     resources = [
       # Management account paths
