@@ -1,7 +1,7 @@
 ###############################################################################
 # Account: Network
-# Purpose: Centralised egress VPC + Transit Gateway hub for East-West
-#          (prod<->dev) and North-South (internet) traffic.
+# Purpose: Centralised egress VPC + Transit Gateway+ NAT for all spoke accounts,  
+# plus the shared "main" TGW route table that both spokes can propagate into for return traffic.
 #
 # This account never reads spoke state. It publishes tgw_id,
 # ram_resource_share_arn, and its route table IDs to SSM, and grants each
