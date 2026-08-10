@@ -8,7 +8,9 @@ resource "aws_ec2_transit_gateway_vpc_attachment" "this" {
   vpc_id             = var.vpc_id
   subnet_ids         = var.subnet_ids
 
-  tags = merge(var.tags, { Name = "${var.name}-tgw-attachment" })
+  # var.name is the FULL, exact Name tag (e.g. "tgw-attach-Egress-vpc") — no
+  # suffix appended, so callers control the exact name end to end.
+  tags = merge(var.tags, { Name = var.name })
 
   lifecycle {
     # If AWS marks it as failed, recreate it

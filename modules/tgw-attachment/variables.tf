@@ -1,5 +1,6 @@
 variable "name" {
-  type = string
+  description = "Full, exact value for the attachment's Name tag (e.g. \"tgw-attach-Egress-vpc\") — used as-is, no suffix appended."
+  type        = string
 }
 
 variable "tgw_id" {
