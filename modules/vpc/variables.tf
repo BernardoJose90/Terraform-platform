@@ -109,3 +109,31 @@ variable "tags" {
   type        = map(string)
   default     = {}
 }
+
+# ======================================================================================
+# Naming overrides. All optional — if left empty, the upstream module falls back to its
+# own generated names (var.name + a suffix). Only private_subnet_names/public_subnet_names/
+# igw_tags are exposed here because they're the only ones the upstream module supports as
+# a per-index list — NAT gateways and per-AZ route tables only take a single flat tags map
+# (nat_gateway_tags, private_route_table_tags), which can't assign a DIFFERENT name to each
+# one. Callers that need exact, differentiated names for those (e.g. "nat-egress-a" vs
+# "nat-egress-b") do it themselves with aws_ec2_tag against the natgw_ids/
+# private_route_table_ids outputs below — see member-accounts/network/main.tf.
+# ======================================================================================
+variable "private_subnet_names" {
+  description = "Explicit Name tag per private subnet, same order as var.azs. Leave empty to use the upstream module's generated names."
+  type        = list(string)
+  default     = []
+}
+
+variable "public_subnet_names" {
+  description = "Explicit Name tag per public subnet, same order as var.azs. Leave empty to use the upstream module's generated names."
+  type        = list(string)
+  default     = []
+}
+
+variable "igw_tags" {
+  description = "Additional tags for the Internet Gateway (e.g. { Name = \"igw-egress\" })."
+  type        = map(string)
+  default     = {}
+}

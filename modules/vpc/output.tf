@@ -41,3 +41,12 @@ output "public_route_table_ids" {
   description = "Public route table IDs. Usually a single shared table. Empty for spoke VPCs, which have no public subnets."
   value       = module.vpc.public_route_table_ids
 }
+
+# ← ADDED. NAT Gateways can only get ONE flat tags map from this module
+# (nat_gateway_tags), so a different Name per AZ isn't possible through a
+# variable. Exposed so a caller that needs that (e.g. "nat-egress-a" vs
+# "nat-egress-b") can rename each one individually with aws_ec2_tag.
+output "natgw_ids" {
+  description = "NAT Gateway IDs, one per AZ, same order as var.azs. Empty for spoke VPCs (enable_nat_gateway = false)."
+  value       = module.vpc.natgw_ids
+}
