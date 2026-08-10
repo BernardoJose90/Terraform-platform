@@ -42,6 +42,7 @@ No modules.
 | <a name="input_management_account_id"></a> [management\_account\_id](#input\_management\_account\_id) | Account ID allowed to assume this role. | `string` | `"145678291484"` | no |
 | <a name="input_role_name"></a> [role\_name](#input\_role\_name) | Name to give the Terraform deploy IAM role. | `string` | `"TerraformDeploy"` | no |
 | <a name="input_state_bucket_name"></a> [state\_bucket\_name](#input\_state\_bucket\_name) | Name of the S3 bucket holding Terraform state, which this role needs read/write access to. | `string` | `"james-terraform-state-2026"` | no |
+| <a name="input_state_key_prefix"></a> [state\_key\_prefix](#input\_state\_key\_prefix) | Folder in the state bucket this account owns. Must match the backend key. | `string` | n/a | yes |
 
 ## Outputs
 
