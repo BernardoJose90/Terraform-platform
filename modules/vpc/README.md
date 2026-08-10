@@ -27,9 +27,12 @@ No resources.
 | <a name="input_azs"></a> [azs](#input\_azs) | Availability zones to spread subnets across, e.g. ["eu-west-2a", "eu-west-2b"]. | `list(string)` | n/a | yes |
 | <a name="input_cidr"></a> [cidr](#input\_cidr) | CIDR block for the VPC, e.g. 10.30.0.0/16. Must not overlap any other account's VPC — TGW routing breaks on overlapping ranges. | `string` | n/a | yes |
 | <a name="input_enable_nat_gateway"></a> [enable\_nat\_gateway](#input\_enable\_nat\_gateway) | Set true only for the network account's NAT/egress VPC | `bool` | `false` | no |
+| <a name="input_igw_tags"></a> [igw\_tags](#input\_igw\_tags) | Additional tags for the Internet Gateway (e.g. { Name = "igw-egress" }). | `map(string)` | `{}` | no |
 | <a name="input_name"></a> [name](#input\_name) | Name prefix for the VPC and its subnets, route tables, etc. | `string` | n/a | yes |
 | <a name="input_one_nat_gateway_per_az"></a> [one\_nat\_gateway\_per\_az](#input\_one\_nat\_gateway\_per\_az) | Place one NAT gateway in each AZ. Higher availability, higher cost. | `bool` | `false` | no |
+| <a name="input_private_subnet_names"></a> [private\_subnet\_names](#input\_private\_subnet\_names) | Explicit Name tag per private subnet, same order as var.azs. Leave empty to use the upstream module's generated names. | `list(string)` | `[]` | no |
 | <a name="input_private_subnets"></a> [private\_subnets](#input\_private\_subnets) | Private subnet CIDRs, one per AZ, in the same order as var.azs. | `list(string)` | n/a | yes |
+| <a name="input_public_subnet_names"></a> [public\_subnet\_names](#input\_public\_subnet\_names) | Explicit Name tag per public subnet, same order as var.azs. Leave empty to use the upstream module's generated names. | `list(string)` | `[]` | no |
 | <a name="input_public_subnets"></a> [public\_subnets](#input\_public\_subnets) | Public subnet CIDRs. Empty for spoke VPCs, which are fully private. | `list(string)` | `[]` | no |
 | <a name="input_single_nat_gateway"></a> [single\_nat\_gateway](#input\_single\_nat\_gateway) | Place a single NAT gateway for the whole VPC. Cheaper, but a single point of failure, and it collapses the private route tables to one. | `bool` | `false` | no |
 | <a name="input_tags"></a> [tags](#input\_tags) | Tags applied to all resources created by this module. | `map(string)` | `{}` | no |
@@ -39,6 +42,7 @@ No resources.
 
 | Name | Description |
 |------|-------------|
+| <a name="output_natgw_ids"></a> [natgw\_ids](#output\_natgw\_ids) | NAT Gateway IDs, one per AZ, same order as var.azs. Empty for spoke VPCs (enable\_nat\_gateway = false). |
 | <a name="output_private_route_table_ids"></a> [private\_route\_table\_ids](#output\_private\_route\_table\_ids) | Private route table IDs, one per AZ. Exposed so root modules can add their own routes. |
 | <a name="output_private_subnet_ids"></a> [private\_subnet\_ids](#output\_private\_subnet\_ids) | Private subnet IDs, one per AZ, in the same order as var.azs. Passed to the TGW attachment module. |
 | <a name="output_public_route_table_ids"></a> [public\_route\_table\_ids](#output\_public\_route\_table\_ids) | Public route table IDs. Usually a single shared table. Empty for spoke VPCs, which have no public subnets. |

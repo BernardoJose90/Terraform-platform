@@ -45,6 +45,10 @@ module "vpc" {
   # Spokes generally have no public subnets / IGW at all — enable_nat_gateway
   # false + an empty public_subnets list gives you a fully private VPC.
 
+  private_subnet_names = var.private_subnet_names
+  public_subnet_names  = var.public_subnet_names
+  igw_tags             = var.igw_tags
+
   tags = var.tags
 
 }
