@@ -176,20 +176,40 @@ data "aws_iam_policy_document" "permissions" {
     }
   }
 
-  # S3 state files access - FULL ACCESS for deploy role (including locking)
+  # S3 state file access, scoped to this account's own prefix only — not
+  # the whole bucket. Every other account's TerraformDeploy role has this
+  # same statement, each scoped to its own prefix, so no account's deploy
+  # pipeline can touch another account's state file (accidentally or via
+  # a compromised/misconfigured workflow). state_key_prefix must match the
+  # backend "s3" { key = "..." } this account's own main.tf uses.
   statement {
     sid    = "StateFileAccess"
     effect = "Allow"
     actions = [
       "s3:GetObject",
       "s3:PutObject",
-      "s3:DeleteObject",
-      "s3:ListBucket"
+      "s3:DeleteObject", # includes the .tflock file use_lockfile writes/deletes
     ]
     resources = [
-      "arn:aws:s3:::${var.state_bucket_name}",
-      "arn:aws:s3:::${var.state_bucket_name}/*"
+      "arn:aws:s3:::${var.state_bucket_name}/${var.state_key_prefix}/*"
     ]
+  }
+
+  # ListBucket is a bucket-level action — its resource is the bucket ARN
+  # itself, never an object path, so it can't be scoped by appending a
+  # prefix to the resource ARN the way the statement above is. The only
+  # way to restrict *which* prefix a ListBucket call can see is the
+  # s3:prefix condition key.
+  statement {
+    sid       = "ListOwnPrefixOnly"
+    effect    = "Allow"
+    actions   = ["s3:ListBucket"]
+    resources = ["arn:aws:s3:::${var.state_bucket_name}"]
+    condition {
+      test     = "StringLike"
+      variable = "s3:prefix"
+      values   = ["${var.state_key_prefix}/*"]
+    }
   }
 
   # RAM Permissions
@@ -333,7 +353,15 @@ resource "aws_iam_role_policy_attachment" "terraform_plan_readonly" {
 }
 
 # ======================================================================================
-# Creates custom S3 policy for state file access - UPDATED with write permissions for S3 locking
+# Creates custom S3 policy for state file access - scoped to this account's own
+# prefix only, same as TerraformDeploy's StateFileAccess statement above.
+#
+# NOTE: the ReadOnlyAccess managed policy attached below (terraform_plan_readonly)
+# already grants s3:GetObject/s3:ListBucket on every bucket in the account,
+# unscoped — so this policy's read actions are redundant with that. What actually
+# matters here is PutObject/DeleteObject (state locking), which ReadOnlyAccess does
+# NOT grant, and which is the one thing a PR-triggered plan should never have
+# outside its own prefix.
 # ======================================================================================
 resource "aws_iam_policy" "terraform_plan_s3_role" {
   name = "TerraformPlanS3Policy"
@@ -347,12 +375,23 @@ resource "aws_iam_policy" "terraform_plan_s3_role" {
           "s3:GetObject",
           "s3:PutObject",    # ← REQUIRED for S3 state locking (creates .tflock file)
           "s3:DeleteObject", # ← REQUIRED to clean up lock files
-          "s3:ListBucket"
         ]
-        Resource = [
-          "arn:aws:s3:::${var.state_bucket_name}",
-          "arn:aws:s3:::${var.state_bucket_name}/*"
-        ]
+        Resource = ["arn:aws:s3:::${var.state_bucket_name}/${var.state_key_prefix}/*"]
+      },
+      {
+        # Bucket-level action — must target the bucket ARN, not an object path
+        # (see the ListOwnPrefixOnly statement above for the same reasoning).
+        # Listed here mainly for parity with Deploy; ReadOnlyAccess already
+        # covers this in practice.
+        Sid      = "ListOwnPrefixOnly"
+        Effect   = "Allow"
+        Action   = ["s3:ListBucket"]
+        Resource = ["arn:aws:s3:::${var.state_bucket_name}"]
+        Condition = {
+          StringLike = {
+            "s3:prefix" = ["${var.state_key_prefix}/*"]
+          }
+        }
       }
     ]
   })

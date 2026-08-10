@@ -100,6 +100,7 @@ module "github-oidc-roles" {
   # AWS account configuration
   management_account_id = "145678291484"
   state_bucket_name     = "james-terraform-state-2026"
+  state_key_prefix      = "development" # must match the backend "s3" key above
   role_name             = "TerraformDeploy"
 
   extra_assumable_role_arns = [

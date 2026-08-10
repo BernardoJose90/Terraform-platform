@@ -16,6 +16,11 @@ variable "state_bucket_name" {
   default     = "james-terraform-state-2026"
 }
 
+variable "state_key_prefix" {
+  description = "Folder in the state bucket this account owns. Must match the backend key."
+  type        = string
+}
+
 variable "github_org" {
   description = "GitHub org or username that owns the repo, e.g. \"your-org\""
   type        = string

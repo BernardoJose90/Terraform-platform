@@ -94,6 +94,7 @@ module "github-oidc-roles" {
 
   management_account_id = var.management_account_id
   state_bucket_name     = "james-terraform-state-2026"
+  state_key_prefix      = "network" # must match the backend "s3" key above
   role_name             = "TerraformDeploy"
 }
 
