@@ -1,3 +1,9 @@
+# Used to build this account's own transit-gateway-attachment ARN prefix
+# for the WireOwnSpokeAttachment statement below.
+data "aws_partition" "current" {}
+data "aws_region" "current" {}
+data "aws_caller_identity" "current" {}
+
 # Trusts both the spoke's deploy role (apply) and plan role (read-only plan),
 # so `terraform plan` can resolve the TGW wiring resources too, not just apply.
 data "aws_iam_policy_document" "trust" {
@@ -45,6 +51,37 @@ data "aws_iam_policy_document" "permissions" {
       "ec2:SearchTransitGatewayRoutes",
     ]
     resources = var.route_table_arns
+  }
+
+  # Associate/Disassociate/Enable/DisablePropagation (and Create/Replace
+  # Route, which target an attachment as the route's destination) are
+  # checked by AWS against BOTH the route table ARN above AND the
+  # transit-gateway-attachment ARN passed in the call — granting only the
+  # route table above denies with UnauthorizedOperation on the attachment.
+  #
+  # Can't scope this to "own attachment only" the way route_table_arns
+  # scopes the table: a cross-account TGW VPC attachment has a SEPARATE
+  # ARN/tag namespace per account. Tags the spoke account sets (e.g.
+  # Environment=production) land on the spoke's own copy of the
+  # attachment; this statement is evaluated in the network (TGW-owner)
+  # account against ITS copy, which carries none of the spoke's tags — a
+  # tag condition here can never match. So this is a same-account
+  # wildcard with no further restriction. The actual "can't touch another
+  # spoke's table" boundary is enforced above, by the explicit
+  # route_table_arns allow-list — this statement alone grants nothing
+  # without a permitted route table to pair it with.
+  statement {
+    sid    = "WireOwnSpokeAttachment"
+    effect = "Allow"
+    actions = [
+      "ec2:AssociateTransitGatewayRouteTable",
+      "ec2:DisassociateTransitGatewayRouteTable",
+      "ec2:EnableTransitGatewayRouteTablePropagation",
+      "ec2:DisableTransitGatewayRouteTablePropagation",
+      "ec2:CreateTransitGatewayRoute",
+      "ec2:ReplaceTransitGatewayRoute",
+    ]
+    resources = ["arn:${data.aws_partition.current.partition}:ec2:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:transit-gateway-attachment/*"]
   }
 
   statement {
