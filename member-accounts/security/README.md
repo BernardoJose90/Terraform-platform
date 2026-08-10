@@ -10,6 +10,7 @@
 
 | Name | Version |
 |------|---------|
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 5.100.0 |
 | <a name="provider_aws.management"></a> [aws.management](#provider\_aws.management) | 5.100.0 |
 
 ## Modules
@@ -22,6 +23,7 @@
 
 | Name | Type |
 |------|------|
+| [aws_iam_role_policy.terraform_deploy_sso_identity_center_access](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
 | [aws_ssm_parameter.security_account_id](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/ssm_parameter) | data source |
 
 ## Inputs
