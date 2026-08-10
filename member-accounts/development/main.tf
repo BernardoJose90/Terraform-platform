@@ -225,3 +225,4 @@ resource "aws_route" "private_to_tgw" {
     }
   }
 }
+# re-verify 2026-08-10T17:17:32Z — safe to delete
