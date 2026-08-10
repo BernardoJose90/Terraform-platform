@@ -30,6 +30,9 @@
 
 | Name | Type |
 |------|------|
+| [aws_ec2_tag.nat_gateway_name](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ec2_tag) | resource |
+| [aws_ec2_tag.private_tgw_route_table_name](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ec2_tag) | resource |
+| [aws_ec2_tag.public_nat_route_table_name](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ec2_tag) | resource |
 | [aws_ec2_transit_gateway_route_table_association.egress](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ec2_transit_gateway_route_table_association) | resource |
 | [aws_route.public_to_spokes](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/route) | resource |
 | [aws_ssm_parameter.ram_resource_share_arn](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ssm_parameter) | resource |
@@ -51,7 +54,7 @@
 | <a name="input_cidr"></a> [cidr](#input\_cidr) | CIDR block for the egress VPC | `string` | `"10.10.0.0/16"` | no |
 | <a name="input_dev_cidr"></a> [dev\_cidr](#input\_dev\_cidr) | Development VPC CIDR — used to build the NAT return-path routes in the egress VPC's public route tables | `string` | `"10.30.0.0/16"` | no |
 | <a name="input_management_account_id"></a> [management\_account\_id](#input\_management\_account\_id) | The AWS account ID of the management account. | `string` | `"145678291484"` | no |
-| <a name="input_private_subnets"></a> [private\_subnets](#input\_private\_subnets) | TGW-attachment subnets, one per AZ (sub-tgw-egress-a/b) | `list(string)` | <pre>[<br/>  "10.10.30.0/24",<br/>  "10.10.40.0/24"<br/>]</pre> | no |
+| <a name="input_private_subnets"></a> [private\_subnets](#input\_private\_subnets) | TGW-attachment subnets, one per AZ (private-sub-tgw-a/b). /28 is deliberate — these subnets only ever hold the TGW attachment's own ENI, one per AZ, so a /24 was never needed. | `list(string)` | <pre>[<br/>  "10.10.30.0/28",<br/>  "10.10.40.0/28"<br/>]</pre> | no |
 | <a name="input_prod_cidr"></a> [prod\_cidr](#input\_prod\_cidr) | Production VPC CIDR — used to build the NAT return-path routes in the egress VPC's public route tables | `string` | `"10.20.0.0/16"` | no |
 | <a name="input_public_subnets"></a> [public\_subnets](#input\_public\_subnets) | NAT gateway subnets, one per AZ (sub-nat-egress-a/b) | `list(string)` | <pre>[<br/>  "10.10.50.0/24",<br/>  "10.10.60.0/24"<br/>]</pre> | no |
 | <a name="input_tags"></a> [tags](#input\_tags) | Tags applied to all resources in this accounts | `map(string)` | <pre>{<br/>  "Environment": "network",<br/>  "ManagedBy": "Terraform",<br/>  "Service": "network"<br/>}</pre> | no |

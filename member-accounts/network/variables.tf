@@ -29,9 +29,9 @@ variable "azs" {
 }
 
 variable "private_subnets" {
-  description = "TGW-attachment subnets, one per AZ (sub-tgw-egress-a/b)"
+  description = "TGW-attachment subnets, one per AZ (private-sub-tgw-a/b). /28 is deliberate — these subnets only ever hold the TGW attachment's own ENI, one per AZ, so a /24 was never needed."
   type        = list(string)
-  default     = ["10.10.30.0/24", "10.10.40.0/24"]
+  default     = ["10.10.30.0/28", "10.10.40.0/28"]
 }
 
 variable "public_subnets" {
