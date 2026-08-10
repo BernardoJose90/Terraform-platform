@@ -132,7 +132,7 @@ module "vpc" {
 module "tgw_attachment" {
   source = "../../modules/tgw-attachment"
 
-  name       = "prod-spoke"
+  name       = "tgw-attach-prod-spoke"
   tgw_id     = nonsensitive(data.aws_ssm_parameter.tgw_id.value)
   vpc_id     = module.vpc.vpc_id
   subnet_ids = module.vpc.private_subnet_ids
