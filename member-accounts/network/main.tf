@@ -123,7 +123,63 @@ module "egress_vpc" {
   one_nat_gateway_per_az = true
   single_nat_gateway     = false
 
+  # Subnet/IGW names match var.azs order — see the design doc's subnet table.
+  private_subnet_names = ["private-sub-tgw-a", "private-sub-tgw-b"]
+  public_subnet_names  = ["public-sub-nat-egress-a", "public-sub-nat-egress-b"]
+  igw_tags             = { Name = "igw-egress" }
+
   tags = var.tags
+}
+
+# -----------------------------------------------------------------------
+# ← ADDED: exact per-AZ naming for NAT gateways and private (TGW) route
+# tables. modules/vpc can't do this through a variable — the upstream
+# module only takes one flat tags map for these (nat_gateway_tags,
+# private_route_table_tags), which would apply the SAME name to both
+# instead of "nat-egress-a" vs "nat-egress-b". aws_ec2_tag just overwrites
+# the Name tag on the existing resource after the fact, one per AZ.
+#
+# The public route table doesn't need this — there's only one of it
+# (single shared table for both NAT subnets), so a flat tag would already
+# be unambiguous — but it's done the same way here for consistency.
+# -----------------------------------------------------------------------
+locals {
+  # "eu-west-2a" -> "a", "eu-west-2b" -> "b" — matches the design doc's
+  # naming convention. var.azs order must match private_subnets/
+  # public_subnets order, which modules/vpc already requires.
+  az_suffixes = [for az in var.azs : substr(az, -1, 1)]
+
+  nat_gateway_names = {
+    for idx, suffix in local.az_suffixes : idx => "nat-egress-${suffix}"
+  }
+
+  private_tgw_route_table_names = {
+    for idx, suffix in local.az_suffixes : idx => "private-tgw-egress-rtb-${suffix}"
+  }
+}
+
+resource "aws_ec2_tag" "nat_gateway_name" {
+  for_each = local.nat_gateway_names
+
+  resource_id = module.egress_vpc.natgw_ids[each.key]
+  key         = "Name"
+  value       = each.value
+}
+
+resource "aws_ec2_tag" "private_tgw_route_table_name" {
+  for_each = local.private_tgw_route_table_names
+
+  resource_id = module.egress_vpc.private_route_table_ids[each.key]
+  key         = "Name"
+  value       = each.value
+}
+
+resource "aws_ec2_tag" "public_nat_route_table_name" {
+  # Single shared table — index [0] is safe (module.vpc guarantees at
+  # least one whenever public_subnets is non-empty, which it is here).
+  resource_id = module.egress_vpc.public_route_table_ids[0]
+  key         = "Name"
+  value       = "public-nat-egress-rtb"
 }
 
 # -----------------------------------------------------------------------
@@ -187,7 +243,7 @@ module "tgw" {
 module "egress_tgw_attachment" {
   source = "../../modules/tgw-attachment"
 
-  name       = "egress"
+  name       = "tgw-attach-Egress-vpc"
   tgw_id     = module.tgw.tgw_id
   vpc_id     = module.egress_vpc.vpc_id
   subnet_ids = module.egress_vpc.private_subnet_ids
@@ -202,10 +258,15 @@ resource "aws_ec2_transit_gateway_route_table_association" "egress" {
 
 # -----------------------------------------------------------------------
 # Default route out of each spoke's own isolated table, straight to the
-# egress attachment. This is the only entry either table needs: with no
-# shared spoke table and no propagation between prod_spoke and dev_spoke,
-# there is no east-west path between the two environments at all — a
-# spoke can reach the internet (via egress) and nothing else.
+# egress attachment — plus an explicit blackhole for the OTHER spoke's
+# CIDR. The blackhole is what actually enforces isolation: without it,
+# 10.30.0.0/16-bound traffic from prod has no specific route, falls
+# through to the 0.0.0.0/0 default, reaches the egress VPC, gets NAT'd,
+# and the return-path route (aws_route.public_to_spokes) delivers it
+# straight to dev — prod and dev reaching each other despite neither
+# table ever containing a route to the other. Longest-prefix-match means
+# the blackhole (an exact /16 match) always wins over the broader default
+# route, so that traffic is dropped at the TGW instead.
 # -----------------------------------------------------------------------
 module "routes_prod_spoke" {
   source = "../../modules/tgw-static-routes"
@@ -215,6 +276,8 @@ module "routes_prod_spoke" {
   routes = {
     "0.0.0.0/0" = module.egress_tgw_attachment.attachment_id
   }
+
+  blackhole_cidrs = [var.dev_cidr]
 }
 
 module "routes_dev_spoke" {
@@ -225,6 +288,8 @@ module "routes_dev_spoke" {
   routes = {
     "0.0.0.0/0" = module.egress_tgw_attachment.attachment_id
   }
+
+  blackhole_cidrs = [var.prod_cidr]
 }
 
 # -----------------------------------------------------------------------
