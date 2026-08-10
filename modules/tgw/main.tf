@@ -26,17 +26,17 @@ resource "aws_ec2_transit_gateway" "this" {
 # ============================================================
 resource "aws_ec2_transit_gateway_route_table" "main" {
   transit_gateway_id = aws_ec2_transit_gateway.this.id
-  tags               = merge(var.tags, { Name = "${var.name}-rt-main" })
+  tags               = merge(var.tags, { Name = "tgw-Egress-vpc-rt" })
 }
 
 resource "aws_ec2_transit_gateway_route_table" "prod_spoke" {
   transit_gateway_id = aws_ec2_transit_gateway.this.id
-  tags               = merge(var.tags, { Name = "${var.name}-rt-prod-spoke" })
+  tags               = merge(var.tags, { Name = "tgw-prod-spoke-rt" })
 }
 
 resource "aws_ec2_transit_gateway_route_table" "dev_spoke" {
   transit_gateway_id = aws_ec2_transit_gateway.this.id
-  tags               = merge(var.tags, { Name = "${var.name}-rt-dev-spoke" })
+  tags               = merge(var.tags, { Name = "tgw-dev-spoke-rt" })
 }
 
 # ============================================================
