@@ -56,8 +56,6 @@ data "aws_iam_policy_document" "permissions" {
       "ec2:CreateTransitGatewayRoute",
       "ec2:DeleteTransitGatewayRoute",
       "ec2:ReplaceTransitGatewayRoute",
-      "ec2:GetTransitGatewayRouteTableAssociations",
-      "ec2:GetTransitGatewayRouteTablePropagations",
       "ec2:SearchTransitGatewayRoutes",
     ]
     resources = var.route_table_arns
@@ -100,9 +98,18 @@ data "aws_iam_policy_document" "permissions" {
     actions = [
       # These describe/list actions don't support resource-level
       # restriction, unlike the route-table-scoped actions above.
+      # GetTransitGatewayRouteTable{Associations,Propagations} are here
+      # for the same reason — the waiter aws_ec2_transit_gateway_route_
+      # table_association/propagation poll after Associate/Enable calls
+      # to confirm "associated"/"enabled" state, and AWS only ever
+      # evaluates them against the account-wide "*" resource, never the
+      # specific route table ARN (confirmed by AccessDenied when scoped
+      # to var.route_table_arns despite the mutating calls succeeding).
       "ec2:DescribeTransitGateways",
       "ec2:DescribeTransitGatewayRouteTables",
       "ec2:DescribeTransitGatewayAttachments",
+      "ec2:GetTransitGatewayRouteTableAssociations",
+      "ec2:GetTransitGatewayRouteTablePropagations",
     ]
     resources = ["*"]
   }
