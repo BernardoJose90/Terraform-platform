@@ -26,6 +26,16 @@ resource "aws_iam_role" "this" {
   max_session_duration = 3600
 
   tags = var.tags
+
+  # Matches the protection already on modules/github-oidc-roles' roles —
+  # this is the cross-account trust anchor production/development's own
+  # CI roles assume to wire TGW routing. Losing it isn't just "recreate a
+  # role"; it breaks spoke plans/applies until re-applied by hand from an
+  # admin session, since the very automation that would normally recreate
+  # it depends on it existing.
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 # Scoped to this spoke's own route table + "main" only — the production
