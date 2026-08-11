@@ -154,7 +154,13 @@ data "aws_iam_policy_document" "permissions" {
       # tag it. RemoveTagsFromResource is here too, for the same reason on the
       # update/delete side (e.g. a tag being removed from var.tags later).
       "ssm:AddTagsToResource",
-      "ssm:RemoveTagsFromResource"
+      "ssm:RemoveTagsFromResource",
+      # Reads back a parameter's current tags on every plan/apply to diff
+      # against var.tags (the AWS provider's generic tagging interceptor).
+      # Unlike ssm:DescribeParameters, this one DOES support resource-level
+      # scoping to a specific parameter ARN, so it belongs in this statement
+      # rather than alongside SSMDescribeParameters below.
+      "ssm:ListTagsForResource"
     ]
     resources = [
       # Management account paths

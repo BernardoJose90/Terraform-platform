@@ -3,7 +3,8 @@
 # Purpose: Centralised egress VPC + Transit Gateway + NAT for all spoke accounts,
 # plus the shared "main" TGW route table that both spokes can propagate into for return traffic.
 #
-# This account never reads spoke state. It publishes tgw_id, ram_resource_share_arn, and its route table IDs to SSM, and grants each
+# This account never reads spoke state. It publishes tgw_id,
+# ram_resource_share_arn, and its route table IDs to SSM, and grants each
 # spoke account a narrowly-scoped role (modules/tgw-spoke-wiring-role) to
 # wire its own TGW association/propagation/return-route directly. Apply
 # order is: this account once, then any spoke account, in any order one
