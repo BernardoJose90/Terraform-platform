@@ -145,7 +145,6 @@ data "aws_iam_policy_document" "permissions" {
       "ssm:GetParameter",
       "ssm:GetParameters",
       "ssm:GetParametersByPath",
-      "ssm:DescribeParameters",
       "ssm:PutParameter",
       "ssm:DeleteParameter",
       # aws_ssm_parameter resources created with tags (every one of them in this
@@ -165,6 +164,22 @@ data "aws_iam_policy_document" "permissions" {
       "arn:aws:ssm:eu-west-2:${data.aws_caller_identity.read_current_account.account_id}:parameter/organizations/*",
       "arn:aws:ssm:eu-west-2:${data.aws_caller_identity.read_current_account.account_id}:parameter/transit-gateway/*"
     ]
+  }
+
+  # ssm:DescribeParameters doesn't support resource-level permissions at all —
+  # AWS always evaluates it against the account-wide "arn:...:ssm:region:account:*"
+  # resource, never a specific parameter ARN, because it's a filter/search API
+  # over the whole parameter store rather than a per-parameter read. Putting it
+  # in SSMParameterStore above (scoped to transit-gateway/* etc.) looks correct
+  # but never actually grants it — AWS silently ignores that scoping for this
+  # one action and denies, since no statement covers the "*" resource it's
+  # really evaluated against. The aws_ssm_parameter resource calls this during
+  # its tag-reconciliation on every apply, so it has to be its own statement.
+  statement {
+    sid       = "SSMDescribeParameters"
+    effect    = "Allow"
+    actions   = ["ssm:DescribeParameters"]
+    resources = ["*"]
   }
 
   statement {
