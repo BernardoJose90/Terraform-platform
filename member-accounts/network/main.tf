@@ -3,8 +3,7 @@
 # Purpose: Centralised egress VPC + Transit Gateway+ NAT for all spoke accounts,  
 # plus the shared "main" TGW route table that both spokes can propagate into for return traffic.
 #
-# This account never reads spoke state. It publishes tgw_id,
-# ram_resource_share_arn, and its route table IDs to SSM, and grants each
+# This account never reads spoke state. It publishes tgw_id, ram_resource_share_arn, and its route table IDs to SSM, and grants each
 # spoke account a narrowly-scoped role (modules/tgw-spoke-wiring-role) to
 # wire its own TGW association/propagation/return-route directly. Apply
 # order is: this account once, then any spoke account, in any order, one
@@ -132,7 +131,7 @@ module "egress_vpc" {
   private_subnets = var.private_subnets
   public_subnets  = var.public_subnets
 
-  # This is the network account's NAT/egress VPC — the one case where
+  # This is the network account's NAT/egress VPC  the one case where
   # enable_nat_gateway = true and tgw_id is left null (it *is* the
   # egress point, so it doesn't need the module's own route-to-TGW).
   enable_nat_gateway     = true
