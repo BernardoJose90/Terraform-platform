@@ -192,7 +192,7 @@ resource "aws_ec2_transit_gateway_route_table_propagation" "main" {
 # ============================================================
 # Default route out of the private subnets, via the TGW.
 # Lives here rather than in modules/vpc because a route targeting a TGW is only
-# valid once the VPC is attached, and the attachment depends on modules/vpc —
+# valid once the VPC is attached, and the attachment depends on modules/vpc 
 # so the module cannot depend on the attachment. depends_on below is the point.
 # ============================================================
 resource "aws_route" "private_to_tgw" {
