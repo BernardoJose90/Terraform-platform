@@ -13,6 +13,14 @@ name: Terraform Plan
 on:
   pull_request:
     branches: [main]
+    # This is paths-IGNORE (an exclusion list), not an inclusion allow-list —
+    # any changed file NOT matching one of the patterns below already
+    # triggers this workflow. *.tfvars (e.g. teardown.auto.tfvars) is not
+    # excluded here, so a tfvars-only change already triggers a plan;
+    # adding '**.tfvars' to this list would do the opposite of what's
+    # wanted (exclude it). Verified against detect-changes' CHANGED_ACCOUNTS
+    # derivation below too — it greps on `member-accounts/[^/]+/`, which
+    # matches a tfvars file's path exactly the same as a .tf file's.
     paths-ignore:
       - '.github/workflows/**'
       - '.gitignore**'
@@ -32,7 +40,7 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  TERRAFORM_VERSION: "1.10.0"
+  TERRAFORM_VERSION: "1.11.4"
   AWS_REGION: "eu-west-2"
 
 jobs:
