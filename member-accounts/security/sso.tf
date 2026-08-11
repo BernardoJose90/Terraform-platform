@@ -46,18 +46,37 @@ locals {
 }
 
 # Permission Sets
+#
+# prevent_destroy on this whole block (permission sets, their managed
+# policy attachments, the groups, and the user below): these are the
+# foundational "what does AdministratorAccess/NetworkAdministrator/
+# ReadOnly even mean, and who is james.admin" definitions. A prior
+# incident deleted the user, the network_team group, and (had an AWS SCP
+# not happened to block it) would have taken the administrator permission
+# set's policy attachment and every account's admin assignment with it —
+# recovery required a manual break-glass session to restore access. None
+# of these should ever be destroyed as a side effect of an unrelated
+# change; removing this protection should be a deliberate, reviewed step.
 resource "aws_ssoadmin_permission_set" "administrator" {
   name             = "AdministratorAccess"
   instance_arn     = local.sso_instance_arn
   session_duration = "PT2H"
   description      = "Full administrator access. For platform engineers only."
   tags             = { ManagedBy = "Terraform" }
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "aws_ssoadmin_managed_policy_attachment" "administrator" {
   instance_arn       = local.sso_instance_arn
   permission_set_arn = aws_ssoadmin_permission_set.administrator.arn
   managed_policy_arn = "arn:aws:iam::aws:policy/AdministratorAccess"
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "aws_ssoadmin_permission_set" "network_administrator" {
@@ -66,12 +85,20 @@ resource "aws_ssoadmin_permission_set" "network_administrator" {
   session_duration = "PT2H"
   description      = "Network administration access. For network team."
   tags             = { ManagedBy = "Terraform" }
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "aws_ssoadmin_managed_policy_attachment" "network_administrator" {
   instance_arn       = local.sso_instance_arn
   permission_set_arn = aws_ssoadmin_permission_set.network_administrator.arn
   managed_policy_arn = "arn:aws:iam::aws:policy/job-function/NetworkAdministrator"
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "aws_ssoadmin_permission_set" "read_only" {
@@ -80,12 +107,20 @@ resource "aws_ssoadmin_permission_set" "read_only" {
   session_duration = "PT1H"
   description      = "Read-only access. For developers viewing production."
   tags             = { ManagedBy = "Terraform" }
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "aws_ssoadmin_managed_policy_attachment" "read_only" {
   instance_arn       = local.sso_instance_arn
   permission_set_arn = aws_ssoadmin_permission_set.read_only.arn
   managed_policy_arn = "arn:aws:iam::aws:policy/ReadOnlyAccess"
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 # Groups
@@ -93,18 +128,30 @@ resource "aws_identitystore_group" "administrators" {
   display_name      = "administrators"
   description       = "Platform engineers with full access to all accounts."
   identity_store_id = local.identity_store_id
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "aws_identitystore_group" "security_team" {
   display_name      = "Security Team"
   description       = "Security engineers with access to security accounts."
   identity_store_id = local.identity_store_id
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 resource "aws_identitystore_group" "network_team" {
   display_name      = "Network Team"
   description       = "Network engineers with access to network account."
   identity_store_id = local.identity_store_id
+
+  lifecycle {
+    prevent_destroy = true
+  }
 }
 
 # Users
@@ -120,6 +167,10 @@ resource "aws_identitystore_user" "james_admin" {
     value   = "james.jose109099+aws-mgemt@gmail.com"
     type    = "work"
     primary = true
+  }
+
+  lifecycle {
+    prevent_destroy = true
   }
 }
 

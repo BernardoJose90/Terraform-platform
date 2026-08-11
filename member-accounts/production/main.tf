@@ -5,7 +5,7 @@
 ###############################################################################
 
 terraform {
-  required_version = ">= 1.10.0"
+  required_version = "~> 1.11.0"
   required_providers {
     aws = {
       source  = "hashicorp/aws"
@@ -109,6 +109,8 @@ module "github-oidc-roles" {
 # route table (see modules/vpc/main.tf's tgw_id handling).
 # ============================================================
 module "vpc" {
+  count = var.networking_enabled ? 1 : 0
+
   source = "../../modules/vpc"
 
   name = "production-vpc"
@@ -130,12 +132,16 @@ module "vpc" {
 # RAM sharing enabled.
 # ============================================================
 module "tgw_attachment" {
+  count = var.networking_enabled ? 1 : 0
+
   source = "../../modules/tgw-attachment"
 
-  name       = "prod-spoke"
+  name = "prod-spoke"
+  # Safe: this block is itself gated on the same condition as module.vpc,
+  # so when it exists, module.vpc[0] definitely exists too.
   tgw_id     = nonsensitive(data.aws_ssm_parameter.tgw_id.value)
-  vpc_id     = module.vpc.vpc_id
-  subnet_ids = module.vpc.private_subnet_ids
+  vpc_id     = module.vpc[0].vpc_id
+  subnet_ids = module.vpc[0].private_subnet_ids
 
   tags = var.tags
 }
@@ -154,23 +160,29 @@ module "tgw_attachment" {
 # main achieves the same thing without needing a firewall attachment.
 # ============================================================
 resource "aws_ec2_transit_gateway_route_table_association" "this" {
+  count = var.networking_enabled ? 1 : 0
+
   provider = aws.network
 
-  transit_gateway_attachment_id  = module.tgw_attachment.attachment_id
+  transit_gateway_attachment_id  = module.tgw_attachment[0].attachment_id
   transit_gateway_route_table_id = nonsensitive(data.aws_ssm_parameter.prod_spoke_route_table_id.value)
 }
 
 resource "aws_ec2_transit_gateway_route_table_propagation" "spoke" {
+  count = var.networking_enabled ? 1 : 0
+
   provider = aws.network
 
-  transit_gateway_attachment_id  = module.tgw_attachment.attachment_id
+  transit_gateway_attachment_id  = module.tgw_attachment[0].attachment_id
   transit_gateway_route_table_id = nonsensitive(data.aws_ssm_parameter.prod_spoke_route_table_id.value)
 }
 
 resource "aws_ec2_transit_gateway_route_table_propagation" "main" {
+  count = var.networking_enabled ? 1 : 0
+
   provider = aws.network
 
-  transit_gateway_attachment_id  = module.tgw_attachment.attachment_id
+  transit_gateway_attachment_id  = module.tgw_attachment[0].attachment_id
   transit_gateway_route_table_id = nonsensitive(data.aws_ssm_parameter.main_route_table_id.value)
 }
 
@@ -181,9 +193,14 @@ resource "aws_ec2_transit_gateway_route_table_propagation" "main" {
 # so the module cannot depend on the attachment. depends_on below is the point.
 # ============================================================
 resource "aws_route" "private_to_tgw" {
-  for_each = { for idx, az in var.azs : az => idx }
+  # {} when disabled — module.vpc has zero instances then, so there are no
+  # private_route_table_ids to route from anyway.
+  for_each = var.networking_enabled ? { for idx, az in var.azs : az => idx } : {}
 
-  route_table_id         = module.vpc.private_route_table_ids[each.value]
+  # Safe: for_each is {} exactly when networking_enabled is false, so this
+  # resource has zero instances and module.vpc[0]/module.tgw_attachment[0]
+  # are never evaluated for a nonexistent instance.
+  route_table_id         = module.vpc[0].private_route_table_ids[each.value]
   destination_cidr_block = "0.0.0.0/0"
   transit_gateway_id     = nonsensitive(data.aws_ssm_parameter.tgw_id.value)
 
@@ -191,8 +208,8 @@ resource "aws_route" "private_to_tgw" {
 
   lifecycle {
     precondition {
-      condition     = length(module.vpc.private_route_table_ids) == length(var.azs)
-      error_message = "Expected one private route table per AZ, got ${length(module.vpc.private_route_table_ids)} tables for ${length(var.azs)} AZs."
+      condition     = length(module.vpc[0].private_route_table_ids) == length(var.azs)
+      error_message = "Expected one private route table per AZ, got ${length(module.vpc[0].private_route_table_ids)} tables for ${length(var.azs)} AZs."
     }
   }
 }
