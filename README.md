@@ -21,6 +21,7 @@
 - [Deployment Order](#deployment-order)
 - [State Management](#state-management)
 - [CI/CD Pipeline](#cicd-pipeline)
+- [Teardown](#teardown)
 - [Security Best Practices](#security-best-practices)
 - [Troubleshooting](#troubleshooting)
 - [Contributing](#contributing)
@@ -301,6 +302,90 @@ jobs:
           terraform init
           terraform apply -auto-approve
 ```
+
+---
+
+## 🧹 Teardown
+
+Two separate, complementary tools exist for winding infrastructure down —
+they solve different problems and are not interchangeable.
+
+### Pausing spend: the `networking_enabled` feature flag
+
+For "stop paying for the networking layer over a break, bring it back
+later" — a `networking_enabled` variable (`variables.tf` in `production`,
+`development`, and `network`, backed by a committed `teardown.auto.tfvars`
+per account) gates the Transit Gateway, TGW attachments, NAT Gateways, and
+their associated routing resources behind `count`. Setting it to `false` is
+a normal PR that rides the existing plan → approval → apply pipeline —
+nothing is deleted from Terraform config, only from live AWS, and flipping
+it back to `true` recreates everything on the next apply. IAM roles, the
+state bucket, and the SSM parameters this account publishes (the ones under
+`/transit-gateway/*`) all stay intact and correct while disabled — see the
+comments on that variable and around the SSM parameter resources in
+`member-accounts/network/main.tf` for exactly how that's kept safe across
+the flag flipping.
+
+### Full teardown: `scripts/teardown.sh` / `terraform-teardown.yaml`
+
+For "the project is finished, fully empty the workload layer" — a real
+`terraform destroy`, run in strict dependency order, across all six member
+accounts. Two implementations exist for two different contexts:
+
+- **`scripts/teardown.sh`** — run locally, by a human, interactively. Requires
+  `--confirm` on the command line *and* typing the literal phrase
+  `destroy-workloads` when prompted.
+- **`.github/workflows/terraform-teardown.yaml`** — `workflow_dispatch` only,
+  never triggered by a push. Requires a `confirm` input matching
+  `destroy-workloads` (validated in the first job, before anything else can
+  run) and a `tier` input (`spokes` / `spokes-and-network` / `all`)
+  controlling how far it goes.
+
+These are two separate implementations of the same tiering and exclusion
+logic, not one script wrapping the other — a GitHub Actions runner can't
+supply the interactive terminal `teardown.sh` needs for its typed
+confirmation. Both are kept in sync deliberately; if you change the tiers
+or exclusions in one, change the other.
+
+**Ordering (strict, sequential — never parallel across or within a tier):**
+
+| Tier | Accounts | Why this position |
+|---|---|---|
+| 1 | `production`, `development` | Must go first: each holds a TGW VPC attachment into `network`'s Transit Gateway. Destroy `network` first and deleting the TGW fails with `DependencyViolation` while those attachments still exist. Worse, both spokes read `/transit-gateway/id` from `network` via a data source, and data sources are evaluated at *destroy* time too — once `network` is gone, a spoke can't even compute a plan to tear itself down. |
+| 2 | `network` | Runs only once both spokes are fully gone. |
+| 3 | `monitoring`, `security`, `security_analytics` | No dependency on `network` or each other, but run last regardless, to keep the whole script's direction "leaves before roots" throughout. |
+
+**What's always excluded**, in every account: `module.github-oidc-roles` —
+GitHub Actions' OIDC trust roles. Losing them locks CI out of the account
+until someone manually restores them from an admin session.
+
+**Additional exclusions, beyond that**, because targeting them wouldn't
+destroy anything anyway (both carry `lifecycle.prevent_destroy`, added after
+an earlier incident where a less-careful script deleted resources it didn't
+know existed):
+
+- `network`: `module.tgw_spoke_wiring_production` / `_development` — the
+  cross-account TGW wiring roles.
+- `security`: its entire IAM Identity Center footprint — the admin user, all
+  3 groups, all 3 permission sets, all 3 managed policy attachments, and
+  TerraformDeploy's own SSO-management policy (`sso.tf`,
+  `iam-supplemental.tf`).
+
+`security`'s SSO **account assignments** (`aws_ssoadmin_account_assignment.*`
+— who has admin/readonly access to which account) are *not*
+`prevent_destroy`-protected, but are excluded by default anyway as a
+judgment call: revoking everyone's access isn't "the workload layer" any
+more than the OIDC roles are. This is the one exclusion that's a policy
+choice rather than a hard technical constraint — override it deliberately if
+a run genuinely needs to revoke assignments too.
+
+**A caveat worth understanding before running either tool:** both use
+`-target` (this repo's pinned Terraform version, `~> 1.11.0`, has no
+`-exclude` flag) to select "everything except the excluded set." `-target`
+updates state but not the `.tf` config, so a plain `terraform plan` run
+immediately after a targeted destroy will show every destroyed resource as
+"to add" again — expected, not a bug, and both tools print it as a loud
+warning rather than hiding it.
 
 ---
 
