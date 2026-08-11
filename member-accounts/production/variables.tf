@@ -32,3 +32,17 @@ variable "tags" {
     Service     = "production"
   }
 }
+
+variable "networking_enabled" {
+  description = <<-EOT
+    Master switch for the billable networking layer in this account.
+    False stops spend; the account, its OIDC roles, its state file and
+    its SSM entries all survive. This is a pause, not a teardown.
+
+    ORDERING: production AND development must both be applied with false
+    BEFORE the network account is flipped. The TGW cannot be deleted while
+    spoke attachments exist.
+  EOT
+  type        = bool
+  default     = true
+}
