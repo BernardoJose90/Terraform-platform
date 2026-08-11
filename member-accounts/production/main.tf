@@ -8,8 +8,11 @@ terraform {
   required_version = "~> 1.11.0"
   required_providers {
     aws = {
-      source  = "hashicorp/aws"
-      version = ">= 5.83.0"
+      source = "hashicorp/aws"
+      # Aligned with network (see member-accounts/network/main.tf) — the lock
+      # file already resolves to 6.x, this just makes it explicit instead of
+      # silently floating on whatever ">= 5.83.0" happens to resolve to.
+      version = "~> 6.0"
     }
   }
   backend "s3" {

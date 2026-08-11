@@ -16,18 +16,21 @@ terraform {
   required_providers {
     aws = {
       source = "hashicorp/aws"
-      # Deliberately permissive for now because the accounts are currently split:
-      # development is pinned to 5.100.0 and network to 6.55.0 in their lock files.
-      # Once all three are aligned on one major, tighten this to e.g. "~> 6.0"
-      # so the module stops silently accepting whatever the caller happens to have.
-      version = ">= 5.0"
+      # All three accounts are now aligned on provider 6.x (see their own
+      # required_providers blocks), so this is pinned to match rather than
+      # silently accepting whatever major the caller happens to have.
+      version = "~> 6.0"
     }
   }
 }
 
 module "vpc" {
-  source  = "terraform-aws-modules/vpc/aws"
-  version = "~> 5.0"
+  source = "terraform-aws-modules/vpc/aws"
+  # 6.0.0 requires AWS provider v6 (already true for all three callers) and
+  # switches the flow-log group ARN to build from data.aws_region.current[0].region
+  # instead of the now-deprecated .name attribute — this is what silences the
+  # "Deprecated attribute" plan warning coming out of vpc-flow-logs.tf.
+  version = "~> 6.0"
 
   name = var.name
   cidr = var.cidr

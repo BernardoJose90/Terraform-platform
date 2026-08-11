@@ -9,10 +9,10 @@ terraform {
   required_providers {
     aws = {
       source = "hashicorp/aws"
-      # NOTE: this account is currently locked to 5.100.0 while network and
-      # production are on 6.x. Worth aligning in a separate change —
-      # terraform init -upgrade, then commit .terraform.lock.hcl.
-      version = ">= 5.83.0"
+      # Aligned with network and production (see their main.tf) — the lock
+      # file already resolves to 6.x, this just makes it explicit instead of
+      # silently floating on whatever ">= 5.83.0" happens to resolve to.
+      version = "~> 6.0"
     }
   }
   backend "s3" {

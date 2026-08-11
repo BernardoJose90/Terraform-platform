@@ -91,7 +91,7 @@ data "aws_iam_policy_document" "permissions" {
       "ec2:CreateTransitGatewayRoute",
       "ec2:ReplaceTransitGatewayRoute",
     ]
-    resources = ["arn:${data.aws_partition.current.partition}:ec2:${data.aws_region.current.name}:${data.aws_caller_identity.current.account_id}:transit-gateway-attachment/*"]
+    resources = ["arn:${data.aws_partition.current.partition}:ec2:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:transit-gateway-attachment/*"]
   }
 
   statement {
