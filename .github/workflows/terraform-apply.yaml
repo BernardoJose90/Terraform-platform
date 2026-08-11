@@ -30,7 +30,7 @@ permissions:
   actions: read
 
 env:
-  TERRAFORM_VERSION: "1.10.0"
+  TERRAFORM_VERSION: "1.11.4"
   AWS_REGION: "eu-west-2"
 
 jobs:

@@ -1,0 +1,433 @@
+name: Terraform Teardown
+
+# Manual, deliberate, full-workload teardown via CI. workflow_dispatch ONLY —
+# this must never run on push, and there is no "on: push" trigger here at all.
+#
+# This is the CI counterpart to scripts/teardown.sh, but a DELIBERATELY
+# separate implementation, not that script invoked non-interactively:
+# scripts/teardown.sh requires an interactive terminal to type the
+# confirmation phrase (see its own comments for why), which a GitHub Actions
+# runner can never provide. So this workflow re-implements the same tiering,
+# the same exclusions, and the same plan-then-apply-then-verify shape
+# directly in CI steps, with its own confirmation gate suited to
+# workflow_dispatch (a required input, validated in the very first job).
+#
+# KEEP THESE TWO FILES IN SYNC. If the tiers, the exclusion patterns, or the
+# ordering reasoning change in one, change the other — search both for
+# "EXCLUDE_PATTERN" and "TIER" if you're auditing for drift between them.
+#
+# See scripts/teardown.sh's header comment for the full reasoning behind:
+#   - why spokes (production, development) must be destroyed before network
+#   - why -target is used instead of -exclude (which doesn't exist in this
+#     repo's pinned Terraform version)
+#   - why module.tgw_spoke_wiring_production/development (network) and
+#     security's IAM Identity Center resources are excluded beyond just
+#     module.github-oidc-roles
+#   - why security's SSO account assignments are excluded too, as a
+#     judgment call, despite not being prevent_destroy-protected
+#
+# The README also documents this — see "Teardown" section.
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Type exactly: destroy-workloads"
+        required: true
+        type: string
+      tier:
+        description: "How far to tear down"
+        required: true
+        type: choice
+        options:
+          - spokes
+          - spokes-and-network
+          - all
+        default: spokes
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  TERRAFORM_VERSION: "1.11.4"
+  AWS_REGION: "eu-west-2"
+
+jobs:
+  # ──────────────────────────────────────────────────────────────────────────────
+  # 1. Validate the confirmation phrase. Every other job needs this one —
+  # nothing below can run unless this passes.
+  # ──────────────────────────────────────────────────────────────────────────────
+  validate-confirmation:
+    name: Validate confirmation phrase
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Check confirm input matches exactly
+        run: |
+          if [ "${{ inputs.confirm }}" != "destroy-workloads" ]; then
+            echo "::error::Confirmation phrase did not match. Expected exactly 'destroy-workloads'. Aborting — nothing was touched."
+            exit 1
+          fi
+          echo "Confirmation phrase matched."
+
+      - name: Report requested tier
+        run: |
+          echo "Requested tier: ${{ inputs.tier }}"
+          echo "  spokes             -> production, development"
+          echo "  spokes-and-network -> + network"
+          echo "  all                -> + monitoring, security, security_analytics"
+
+  # ──────────────────────────────────────────────────────────────────────────────
+  # 2. Discover account IDs from SSM (read-only), to build each account's
+  # TerraformDeploy role ARN. Same discovery role pattern as
+  # terraform-apply.yaml.
+  # ──────────────────────────────────────────────────────────────────────────────
+  discover-accounts:
+    name: Discover Account IDs
+    needs: validate-confirmation
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      tier1_matrix: ${{ steps.build.outputs.tier1_matrix }}
+      tier2_matrix: ${{ steps.build.outputs.tier2_matrix }}
+      tier3_matrix: ${{ steps.build.outputs.tier3_matrix }}
+    steps:
+      - name: Configure AWS credentials (discovery role — read-only)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.DISCOVERY_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gha-teardown-discover-accounts
+          retry-max-attempts: 3
+
+      - name: Build per-tier matrices from SSM
+        id: build
+        run: |
+          ACCOUNTS=$(aws ssm get-parameters-by-path \
+            --path "/organizations/accounts/" \
+            --recursive \
+            --query "Parameters[*].{Name:Name,Value:Value}" \
+            --output json)
+
+          build_matrix() {
+            # $1 = space-separated account names for this tier
+            local names="$1"
+            jq -c -n --argjson accounts "$ACCOUNTS" --arg names "$names" '
+              ($names | split(" ")) as $wanted |
+              {
+                include: [
+                  $accounts[] |
+                  select(.Name | split("/") | last as $n | $wanted | index($n)) |
+                  {
+                    account: (.Name | split("/") | last),
+                    working_directory: ("member-accounts/" + (.Name | split("/") | last)),
+                    role_arn: ("arn:aws:iam::" + .Value + ":role/TerraformDeploy"),
+                    account_id: .Value
+                  }
+                ]
+              }'
+          }
+
+          echo "tier1_matrix=$(build_matrix 'production development')" >> "$GITHUB_OUTPUT"
+          echo "tier2_matrix=$(build_matrix 'network')" >> "$GITHUB_OUTPUT"
+          echo "tier3_matrix=$(build_matrix 'monitoring security security_analytics')" >> "$GITHUB_OUTPUT"
+
+  # ──────────────────────────────────────────────────────────────────────────────
+  # 3. Tier 1 — spokes. Always runs (every tier option includes this).
+  # Sequential within the tier: max-parallel 1, so production and
+  # development never run concurrently.
+  # ──────────────────────────────────────────────────────────────────────────────
+  teardown-tier1-spokes:
+    name: Teardown (Tier 1) - ${{ matrix.account }}
+    needs:
+      - validate-confirmation
+      - discover-accounts
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: teardown-approval
+    strategy:
+      fail-fast: true
+      max-parallel: 1
+      matrix: ${{ fromJson(needs.discover-accounts.outputs.tier1_matrix) }}
+    concurrency:
+      group: tf-teardown-${{ matrix.account }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Configure AWS credentials (${{ matrix.account }})
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ matrix.role_arn }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gha-teardown-${{ matrix.account }}
+          retry-max-attempts: 3
+
+      - name: Terraform Init
+        working-directory: ${{ matrix.working_directory }}
+        run: terraform init -input=false
+
+      - name: Plan destroy (targeted, excluding module.github-oidc-roles)
+        id: plan
+        working-directory: ${{ matrix.working_directory }}
+        run: |
+          # EXCLUDE_PATTERN — spokes: only module.github-oidc-roles. Keep in
+          # sync with exclude_pattern_for() in scripts/teardown.sh.
+          EXCLUDE_RE='^module\.github-oidc-roles(\.|$)'
+
+          TARGETS=$(terraform state list | grep -v '^data\.' | grep -v -E "$EXCLUDE_RE" || true)
+
+          if [ -z "$TARGETS" ]; then
+            echo "Nothing to destroy in ${{ matrix.account }} after exclusions."
+            echo "has_targets=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "has_targets=true" >> "$GITHUB_OUTPUT"
+
+          echo "Will target for destroy:"
+          echo "$TARGETS" | sed 's/^/  /'
+
+          TARGET_ARGS=()
+          while IFS= read -r addr; do
+            TARGET_ARGS+=(-target="$addr")
+          done <<< "$TARGETS"
+
+          if ! terraform plan -destroy -input=false -lock-timeout=120s "${TARGET_ARGS[@]}" -out=destroy.tfplan; then
+            echo "::error::plan -destroy failed for ${{ matrix.account }}. Likely an upstream account this one depends on is already gone, or state here is broken. Stopping — do not re-run blindly."
+            exit 1
+          fi
+
+      - name: Apply destroy plan
+        if: steps.plan.outputs.has_targets == 'true'
+        working-directory: ${{ matrix.working_directory }}
+        run: terraform apply -input=false -lock-timeout=120s destroy.tfplan
+
+      - name: Post-apply verification plan
+        if: steps.plan.outputs.has_targets == 'true'
+        working-directory: ${{ matrix.working_directory }}
+        run: |
+          set +e
+          OUTPUT=$(terraform plan -input=false -lock-timeout=120s -detailed-exitcode -no-color 2>&1)
+          EXIT_CODE=$?
+          set -e
+          if [ $EXIT_CODE -eq 0 ]; then
+            echo "Post-apply plan: clean, no residual diff."
+          elif [ $EXIT_CODE -eq 2 ]; then
+            echo "::warning::Post-apply plan for ${{ matrix.account }} is NOT empty — expected after a targeted destroy (config still declares what was just destroyed). See job summary for the diff."
+            echo "$OUTPUT"
+          else
+            echo "::warning::Post-apply verification plan itself failed for ${{ matrix.account }} (exit $EXIT_CODE) — inspect manually."
+            echo "$OUTPUT"
+          fi
+
+  # ──────────────────────────────────────────────────────────────────────────────
+  # 4. Tier 2 — network. Only runs for tier = spokes-and-network or all.
+  # Needs tier 1 to have fully succeeded first (TGW attachments must be
+  # gone before the TGW itself can be deleted).
+  # ──────────────────────────────────────────────────────────────────────────────
+  teardown-tier2-network:
+    name: Teardown (Tier 2) - ${{ matrix.account }}
+    needs:
+      - validate-confirmation
+      - discover-accounts
+      - teardown-tier1-spokes
+    if: inputs.tier == 'spokes-and-network' || inputs.tier == 'all'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: teardown-approval
+    strategy:
+      fail-fast: true
+      max-parallel: 1
+      matrix: ${{ fromJson(needs.discover-accounts.outputs.tier2_matrix) }}
+    concurrency:
+      group: tf-teardown-${{ matrix.account }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Configure AWS credentials (${{ matrix.account }})
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ matrix.role_arn }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gha-teardown-${{ matrix.account }}
+          retry-max-attempts: 3
+
+      - name: Terraform Init
+        working-directory: ${{ matrix.working_directory }}
+        run: terraform init -input=false
+
+      - name: Plan destroy (targeted)
+        id: plan
+        working-directory: ${{ matrix.working_directory }}
+        run: |
+          # EXCLUDE_PATTERN — network: module.github-oidc-roles PLUS the two
+          # spoke-wiring roles (prevent_destroy-protected; targeting them
+          # would only guarantee a plan-time failure, not destroy anything).
+          # Keep in sync with exclude_pattern_for() in scripts/teardown.sh.
+          EXCLUDE_RE='^module\.github-oidc-roles(\.|$)|^module\.tgw_spoke_wiring_(production|development)(\.|$)'
+
+          TARGETS=$(terraform state list | grep -v '^data\.' | grep -v -E "$EXCLUDE_RE" || true)
+
+          if [ -z "$TARGETS" ]; then
+            echo "Nothing to destroy in ${{ matrix.account }} after exclusions."
+            echo "has_targets=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "has_targets=true" >> "$GITHUB_OUTPUT"
+
+          echo "Will target for destroy:"
+          echo "$TARGETS" | sed 's/^/  /'
+
+          TARGET_ARGS=()
+          while IFS= read -r addr; do
+            TARGET_ARGS+=(-target="$addr")
+          done <<< "$TARGETS"
+
+          if ! terraform plan -destroy -input=false -lock-timeout=120s "${TARGET_ARGS[@]}" -out=destroy.tfplan; then
+            echo "::error::plan -destroy failed for ${{ matrix.account }}. Stopping — do not re-run blindly."
+            exit 1
+          fi
+
+      - name: Apply destroy plan
+        if: steps.plan.outputs.has_targets == 'true'
+        working-directory: ${{ matrix.working_directory }}
+        run: terraform apply -input=false -lock-timeout=120s destroy.tfplan
+
+      - name: Post-apply verification plan
+        if: steps.plan.outputs.has_targets == 'true'
+        working-directory: ${{ matrix.working_directory }}
+        run: |
+          set +e
+          OUTPUT=$(terraform plan -input=false -lock-timeout=120s -detailed-exitcode -no-color 2>&1)
+          EXIT_CODE=$?
+          set -e
+          if [ $EXIT_CODE -eq 0 ]; then
+            echo "Post-apply plan: clean, no residual diff."
+          elif [ $EXIT_CODE -eq 2 ]; then
+            echo "::warning::Post-apply plan for ${{ matrix.account }} is NOT empty — expected after a targeted destroy. See job summary for the diff."
+            echo "$OUTPUT"
+          else
+            echo "::warning::Post-apply verification plan itself failed for ${{ matrix.account }} (exit $EXIT_CODE) — inspect manually."
+            echo "$OUTPUT"
+          fi
+
+  # ──────────────────────────────────────────────────────────────────────────────
+  # 5. Tier 3 — monitoring, security, security_analytics. Only runs for
+  # tier = all. Needs tier 2 to have fully succeeded first, to keep the
+  # overall "leaves before roots" direction, even though tier 3 has no
+  # actual dependency on network.
+  # ──────────────────────────────────────────────────────────────────────────────
+  teardown-tier3-remaining:
+    name: Teardown (Tier 3) - ${{ matrix.account }}
+    needs:
+      - validate-confirmation
+      - discover-accounts
+      - teardown-tier2-network
+    if: inputs.tier == 'all'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: teardown-approval
+    strategy:
+      fail-fast: true
+      max-parallel: 1
+      matrix: ${{ fromJson(needs.discover-accounts.outputs.tier3_matrix) }}
+    concurrency:
+      group: tf-teardown-${{ matrix.account }}
+      cancel-in-progress: false
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Configure AWS credentials (${{ matrix.account }})
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ matrix.role_arn }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gha-teardown-${{ matrix.account }}
+          retry-max-attempts: 3
+
+      - name: Terraform Init
+        working-directory: ${{ matrix.working_directory }}
+        run: terraform init -input=false
+
+      - name: Plan destroy (targeted)
+        id: plan
+        working-directory: ${{ matrix.working_directory }}
+        run: |
+          # EXCLUDE_PATTERN — per-account. security's pattern also excludes
+          # its IAM Identity Center resources (prevent_destroy-protected,
+          # see sso.tf) AND its SSO account assignments (not protected, but
+          # excluded as a judgment call — access control, not "workload").
+          # monitoring/security_analytics only ever match the default
+          # (github-oidc-roles), and today contain nothing else at all, so
+          # this step is expected to destroy nothing for those two.
+          # Keep in sync with exclude_pattern_for() in scripts/teardown.sh.
+          case "${{ matrix.account }}" in
+            security)
+              EXCLUDE_RE='^module\.github-oidc-roles(\.|$)|^aws_identitystore_(user|group|group_membership)\.|^aws_ssoadmin_(permission_set|managed_policy_attachment)\.|^aws_ssoadmin_account_assignment\.|^aws_iam_role_policy\.terraform_deploy_sso_identity_center_access$'
+              ;;
+            *)
+              EXCLUDE_RE='^module\.github-oidc-roles(\.|$)'
+              ;;
+          esac
+
+          TARGETS=$(terraform state list | grep -v '^data\.' | grep -v -E "$EXCLUDE_RE" || true)
+
+          if [ -z "$TARGETS" ]; then
+            echo "Nothing to destroy in ${{ matrix.account }} after exclusions."
+            echo "has_targets=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          echo "has_targets=true" >> "$GITHUB_OUTPUT"
+
+          echo "Will target for destroy:"
+          echo "$TARGETS" | sed 's/^/  /'
+
+          TARGET_ARGS=()
+          while IFS= read -r addr; do
+            TARGET_ARGS+=(-target="$addr")
+          done <<< "$TARGETS"
+
+          if ! terraform plan -destroy -input=false -lock-timeout=120s "${TARGET_ARGS[@]}" -out=destroy.tfplan; then
+            echo "::error::plan -destroy failed for ${{ matrix.account }}. Stopping — do not re-run blindly."
+            exit 1
+          fi
+
+      - name: Apply destroy plan
+        if: steps.plan.outputs.has_targets == 'true'
+        working-directory: ${{ matrix.working_directory }}
+        run: terraform apply -input=false -lock-timeout=120s destroy.tfplan
+
+      - name: Post-apply verification plan
+        if: steps.plan.outputs.has_targets == 'true'
+        working-directory: ${{ matrix.working_directory }}
+        run: |
+          set +e
+          OUTPUT=$(terraform plan -input=false -lock-timeout=120s -detailed-exitcode -no-color 2>&1)
+          EXIT_CODE=$?
+          set -e
+          if [ $EXIT_CODE -eq 0 ]; then
+            echo "Post-apply plan: clean, no residual diff."
+          elif [ $EXIT_CODE -eq 2 ]; then
+            echo "::warning::Post-apply plan for ${{ matrix.account }} is NOT empty — expected after a targeted destroy. See job summary for the diff."
+            echo "$OUTPUT"
+          else
+            echo "::warning::Post-apply verification plan itself failed for ${{ matrix.account }} (exit $EXIT_CODE) — inspect manually."
+            echo "$OUTPUT"
+          fi
