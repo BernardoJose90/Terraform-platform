@@ -6,7 +6,7 @@
 # This account never reads spoke state. It publishes tgw_id, ram_resource_share_arn, and its route table IDs to SSM, and grants each
 # spoke account a narrowly-scoped role (modules/tgw-spoke-wiring-role) to
 # wire its own TGW association/propagation/return-route directly. Apply
-# order is: this account once, then any spoke account, in any order, one
+# order is: this account once, then any spoke account, in any order one
 # apply each — see member-accounts/production|development/main.tf for the
 # other half.
 ###############################################################################
