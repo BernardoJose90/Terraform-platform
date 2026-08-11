@@ -3,16 +3,16 @@
 
 | Name | Version |
 |------|---------|
-| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.10.0 |
+| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | ~> 1.11.0 |
 | <a name="requirement_aws"></a> [aws](#requirement\_aws) | >= 5.83.0 |
 
 ## Providers
 
 | Name | Version |
 |------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.55.0 |
-| <a name="provider_aws.management"></a> [aws.management](#provider\_aws.management) | 6.55.0 |
-| <a name="provider_aws.network"></a> [aws.network](#provider\_aws.network) | 6.55.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.58.0 |
+| <a name="provider_aws.management"></a> [aws.management](#provider\_aws.management) | 6.58.0 |
+| <a name="provider_aws.network"></a> [aws.network](#provider\_aws.network) | 6.58.0 |
 
 ## Modules
 
@@ -43,6 +43,7 @@
 | <a name="input_aws_region"></a> [aws\_region](#input\_aws\_region) | AWS region to deploy the production environment into. | `string` | `"eu-west-2"` | no |
 | <a name="input_azs"></a> [azs](#input\_azs) | AZs to deploy the production VPC and TGW attachment into | `list(string)` | <pre>[<br/>  "eu-west-2a",<br/>  "eu-west-2b"<br/>]</pre> | no |
 | <a name="input_cidr"></a> [cidr](#input\_cidr) | CIDR block for the production VPC | `string` | `"10.20.0.0/16"` | no |
+| <a name="input_networking_enabled"></a> [networking\_enabled](#input\_networking\_enabled) | Master switch for the billable networking layer in this account.<br/>False stops spend; the account, its OIDC roles, its state file and<br/>its SSM entries all survive. This is a pause, not a teardown.<br/><br/>ORDERING: production AND development must both be applied with false<br/>BEFORE the network account is flipped. The TGW cannot be deleted while<br/>spoke attachments exist. | `bool` | `true` | no |
 | <a name="input_private_subnets"></a> [private\_subnets](#input\_private\_subnets) | TGW-attachment subnets, one per AZ | `list(string)` | <pre>[<br/>  "10.20.10.0/24",<br/>  "10.20.20.0/24"<br/>]</pre> | no |
 | <a name="input_tags"></a> [tags](#input\_tags) | Tags applied to all resources in this account | `map(string)` | <pre>{<br/>  "Environment": "production",<br/>  "ManagedBy": "Terraform",<br/>  "Service": "production"<br/>}</pre> | no |
 
@@ -50,7 +51,7 @@
 
 | Name | Description |
 |------|-------------|
-| <a name="output_tgw_attachment_id"></a> [tgw\_attachment\_id](#output\_tgw\_attachment\_id) | TGW VPC attachment ID for the production spoke |
-| <a name="output_vpc_cidr"></a> [vpc\_cidr](#output\_vpc\_cidr) | n/a |
-| <a name="output_vpc_id"></a> [vpc\_id](#output\_vpc\_id) | n/a |
+| <a name="output_tgw_attachment_id"></a> [tgw\_attachment\_id](#output\_tgw\_attachment\_id) | TGW VPC attachment ID for the production spoke. Null when networking\_enabled = false. |
+| <a name="output_vpc_cidr"></a> [vpc\_cidr](#output\_vpc\_cidr) | Null when networking\_enabled = false. |
+| <a name="output_vpc_id"></a> [vpc\_id](#output\_vpc\_id) | Null when networking\_enabled = false. |
 <!-- END_TF_DOCS -->

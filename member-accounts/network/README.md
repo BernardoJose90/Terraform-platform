@@ -3,15 +3,15 @@
 
 | Name | Version |
 |------|---------|
-| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.10.0 |
+| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | ~> 1.11.0 |
 | <a name="requirement_aws"></a> [aws](#requirement\_aws) | ~> 6.0 |
 
 ## Providers
 
 | Name | Version |
 |------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.55.0 |
-| <a name="provider_aws.management"></a> [aws.management](#provider\_aws.management) | 6.55.0 |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.58.0 |
+| <a name="provider_aws.management"></a> [aws.management](#provider\_aws.management) | 6.58.0 |
 
 ## Modules
 
@@ -43,6 +43,11 @@
 | [aws_ssm_parameter.development_account_id](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/ssm_parameter) | data source |
 | [aws_ssm_parameter.network_account_id](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/ssm_parameter) | data source |
 | [aws_ssm_parameter.production_account_id](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/ssm_parameter) | data source |
+| [aws_ssm_parameter.ram_resource_share_arn_frozen](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/ssm_parameter) | data source |
+| [aws_ssm_parameter.tgw_id_frozen](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/ssm_parameter) | data source |
+| [aws_ssm_parameter.tgw_route_table_id_dev_spoke_frozen](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/ssm_parameter) | data source |
+| [aws_ssm_parameter.tgw_route_table_id_main_frozen](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/ssm_parameter) | data source |
+| [aws_ssm_parameter.tgw_route_table_id_prod_spoke_frozen](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/ssm_parameter) | data source |
 
 ## Inputs
 
@@ -54,6 +59,7 @@
 | <a name="input_cidr"></a> [cidr](#input\_cidr) | CIDR block for the egress VPC | `string` | `"10.10.0.0/16"` | no |
 | <a name="input_dev_cidr"></a> [dev\_cidr](#input\_dev\_cidr) | Development VPC CIDR — used to build the NAT return-path routes in the egress VPC's public route tables | `string` | `"10.30.0.0/16"` | no |
 | <a name="input_management_account_id"></a> [management\_account\_id](#input\_management\_account\_id) | The AWS account ID of the management account. | `string` | `"145678291484"` | no |
+| <a name="input_networking_enabled"></a> [networking\_enabled](#input\_networking\_enabled) | Master switch for the billable networking layer in this account.<br/>False stops spend; the account, its OIDC roles, its state file and<br/>its SSM entries all survive. This is a pause, not a teardown.<br/><br/>ORDERING: production AND development must both be applied with false<br/>BEFORE the network account is flipped. The TGW cannot be deleted while<br/>spoke attachments exist. | `bool` | `true` | no |
 | <a name="input_private_subnets"></a> [private\_subnets](#input\_private\_subnets) | TGW-attachment subnets, one per AZ (private-sub-tgw-a/b). /28 is deliberate — these subnets only ever hold the TGW attachment's own ENI, one per AZ, so a /24 was never needed. | `list(string)` | <pre>[<br/>  "10.10.30.0/28",<br/>  "10.10.40.0/28"<br/>]</pre> | no |
 | <a name="input_prod_cidr"></a> [prod\_cidr](#input\_prod\_cidr) | Production VPC CIDR — used to build the NAT return-path routes in the egress VPC's public route tables | `string` | `"10.20.0.0/16"` | no |
 | <a name="input_public_subnets"></a> [public\_subnets](#input\_public\_subnets) | NAT gateway subnets, one per AZ (sub-nat-egress-a/b) | `list(string)` | <pre>[<br/>  "10.10.50.0/24",<br/>  "10.10.60.0/24"<br/>]</pre> | no |
@@ -63,9 +69,9 @@
 
 | Name | Description |
 |------|-------------|
-| <a name="output_egress_vpc_cidr"></a> [egress\_vpc\_cidr](#output\_egress\_vpc\_cidr) | n/a |
-| <a name="output_egress_vpc_id"></a> [egress\_vpc\_id](#output\_egress\_vpc\_id) | n/a |
-| <a name="output_ram_resource_share_arn"></a> [ram\_resource\_share\_arn](#output\_ram\_resource\_share\_arn) | RAM resource share ARN — also published to SSM at /transit-gateway/ram\_resource\_share\_arn |
-| <a name="output_tgw_id"></a> [tgw\_id](#output\_tgw\_id) | Transit Gateway ID — also published to SSM at /transit-gateway/id for spoke accounts |
-| <a name="output_tgw_route_table_ids"></a> [tgw\_route\_table\_ids](#output\_tgw\_route\_table\_ids) | Map of TGW route table IDs (main, prod\_spoke, dev\_spoke) — the main/prod\_spoke/dev\_spoke IDs are also published to SSM for spoke accounts |
+| <a name="output_egress_vpc_cidr"></a> [egress\_vpc\_cidr](#output\_egress\_vpc\_cidr) | Null when networking\_enabled = false. |
+| <a name="output_egress_vpc_id"></a> [egress\_vpc\_id](#output\_egress\_vpc\_id) | Null when networking\_enabled = false. |
+| <a name="output_ram_resource_share_arn"></a> [ram\_resource\_share\_arn](#output\_ram\_resource\_share\_arn) | RAM resource share ARN — also published to SSM at /transit-gateway/ram\_resource\_share\_arn. Null when networking\_enabled = false. |
+| <a name="output_tgw_id"></a> [tgw\_id](#output\_tgw\_id) | Transit Gateway ID — also published to SSM at /transit-gateway/id for spoke accounts. Null when networking\_enabled = false (use the SSM parameter's frozen value instead if you need it while disabled). |
+| <a name="output_tgw_route_table_ids"></a> [tgw\_route\_table\_ids](#output\_tgw\_route\_table\_ids) | Map of TGW route table IDs (main, prod\_spoke, dev\_spoke) — the main/prod\_spoke/dev\_spoke IDs are also published to SSM for spoke accounts. Null when networking\_enabled = false. |
 <!-- END_TF_DOCS -->
