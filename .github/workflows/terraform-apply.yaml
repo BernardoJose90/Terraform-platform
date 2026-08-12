@@ -147,6 +147,12 @@ jobs:
     outputs:
       matrix: ${{ steps.build-matrix.outputs.matrix }}
       account_count: ${{ steps.build-matrix.outputs.account_count }}
+      # network is split out from everyone else so it can apply in its own
+      # job, ahead of every spoke account — see apply-network/apply below.
+      network_matrix: ${{ steps.build-matrix.outputs.network_matrix }}
+      network_count: ${{ steps.build-matrix.outputs.network_count }}
+      other_matrix: ${{ steps.build-matrix.outputs.other_matrix }}
+      other_count: ${{ steps.build-matrix.outputs.other_count }}
     steps:
       - name: Configure AWS credentials (discovery role — read-only)
         uses: aws-actions/configure-aws-credentials@v4
@@ -178,29 +184,44 @@ jobs:
           # bypasses the IN($changed_list[]) filter entirely, so every
           # discovered account is included instead of just the ones with a
           # direct member-accounts/ change.
-          MATRIX=$(jq -c -n --argjson accounts "$ACCOUNTS" --argjson tiers "$TIERS" --arg changed "$CHANGED_ACCOUNTS" '
+          FILTERED=$(jq -c -n --argjson accounts "$ACCOUNTS" --argjson tiers "$TIERS" --arg changed "$CHANGED_ACCOUNTS" '
             ($changed | split(",")) as $changed_list |
             ($tiers | map({(.Name | split("/") | last): .Value}) | add) as $tier_map |
-            {
-              include: [
-                $accounts[] |
-                select(.Name | split("/") | last != "management") |
-                select($changed == "ALL" or (.Name | split("/") | last | IN($changed_list[]))) |
-                {
-                  account: (.Name | split("/") | last),
-                  working_directory: ("member-accounts/" + (.Name | split("/") | last)),
-                  role_arn: ("arn:aws:iam::" + .Value + ":role/TerraformDeploy"),
-                  environment: ($tier_map[(.Name | split("/") | last)] // "production-approval"),
-                  account_id: .Value
-                }
-              ]
-            }')
+            [
+              $accounts[] |
+              select(.Name | split("/") | last != "management") |
+              select($changed == "ALL" or (.Name | split("/") | last | IN($changed_list[]))) |
+              {
+                account: (.Name | split("/") | last),
+                working_directory: ("member-accounts/" + (.Name | split("/") | last)),
+                role_arn: ("arn:aws:iam::" + .Value + ":role/TerraformDeploy"),
+                environment: ($tier_map[(.Name | split("/") | last)] // "production-approval"),
+                account_id: .Value
+              }
+            ]')
 
-          ACCOUNT_COUNT=$(echo "$MATRIX" | jq '.include | length')
+          MATRIX=$(echo "$FILTERED" | jq -c '{include: .}')
+          ACCOUNT_COUNT=$(echo "$FILTERED" | jq 'length')
+
+          # Spoke accounts (production, development, ...) read SSM parameters
+          # and assume a role that only exist once network has applied and
+          # published them — see member-accounts/network/main.tf's own
+          # "apply order" comment. Splitting network into its own matrix
+          # lets apply-network run to completion before apply (everyone
+          # else) starts, instead of racing it when both land in the same
+          # workflow run (e.g. a shared modules/ change touches both).
+          NETWORK_MATRIX=$(echo "$FILTERED" | jq -c '{include: [.[] | select(.account == "network")]}')
+          NETWORK_COUNT=$(echo "$NETWORK_MATRIX" | jq '.include | length')
+          OTHER_MATRIX=$(echo "$FILTERED" | jq -c '{include: [.[] | select(.account != "network")]}')
+          OTHER_COUNT=$(echo "$OTHER_MATRIX" | jq '.include | length')
 
           echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
           echo "account_count=$ACCOUNT_COUNT" >> "$GITHUB_OUTPUT"
-          echo "Discovered and filtered accounts: $ACCOUNT_COUNT"
+          echo "network_matrix=$NETWORK_MATRIX" >> "$GITHUB_OUTPUT"
+          echo "network_count=$NETWORK_COUNT" >> "$GITHUB_OUTPUT"
+          echo "other_matrix=$OTHER_MATRIX" >> "$GITHUB_OUTPUT"
+          echo "other_count=$OTHER_COUNT" >> "$GITHUB_OUTPUT"
+          echo "Discovered and filtered accounts: $ACCOUNT_COUNT (network: $NETWORK_COUNT, other: $OTHER_COUNT)"
 
       - name: No accounts to apply
         if: steps.build-matrix.outputs.account_count == '0'
@@ -217,8 +238,11 @@ jobs:
     needs:
       - discover-accounts
     if: needs.discover-accounts.outputs.account_count != '0' && needs.discover-accounts.outputs.account_count != ''
-    outputs:
-      plan_exists: ${{ steps.check.outputs.plan_exists }}
+    # No job-level `outputs:` here on purpose: this is a matrix job, and
+    # GitHub Actions collapses a matrix job's outputs to whichever instance
+    # finished last, not one value per account. The apply jobs re-check
+    # locally per account instead of trusting an output from here — see
+    # their "Check reviewed plan actually downloaded" step.
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.discover-accounts.outputs.matrix) }}
@@ -290,20 +314,26 @@ jobs:
           retention-days: 5
 
   # ──────────────────────────────────────────────────────────────────────────────
-  # 6. Apply ONLY for changed and discovered accounts
+  # 6a. Apply network FIRST, alone — spoke accounts (production, development,
+  #     ...) read SSM parameters and assume a role that only exist once
+  #     network has applied and published them (see network/main.tf's own
+  #     "apply order" comment). Without this split, a shared modules/ change
+  #     that puts network and a spoke in the SAME run's matrix would let
+  #     GitHub Actions run them concurrently (matrix instances have no
+  #     inherent ordering) and race — spoke's apply hitting network state
+  #     that isn't there yet.
   # ──────────────────────────────────────────────────────────────────────────────
-  apply:
+  apply-network:
     name: Terraform Apply - ${{ matrix.account }}
     needs:
       - discover-accounts
       - resolve-plan-run
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    if: needs.discover-accounts.outputs.account_count != '0' && needs.discover-accounts.outputs.account_count != ''
+    if: needs.discover-accounts.outputs.network_count != '0' && needs.discover-accounts.outputs.network_count != ''
     strategy:
       fail-fast: false
-      max-parallel: 3
-      matrix: ${{ fromJson(needs.discover-accounts.outputs.matrix) }}
+      matrix: ${{ fromJson(needs.discover-accounts.outputs.network_matrix) }}
 
     environment: ${{ matrix.environment }}
 
@@ -331,15 +361,34 @@ jobs:
         working-directory: ${{ matrix.working_directory }}
         run: terraform init -input=false
 
+      # needs.resolve-plan-run.outputs.plan_exists is NOT usable here:
+      # resolve-plan-run is itself a matrix job, and GitHub Actions collapses
+      # a matrix job's outputs to whichever instance happened to finish
+      # last — not one value per account. Every account in THIS matrix would
+      # end up reading the same (usually wrong) shared value instead of its
+      # own. Downloading unconditionally and checking the file locally,
+      # exactly like resolve-plan-run itself does, is the only correct way
+      # for each account to know about its own reviewed plan.
       - name: Download reviewed plan from resolve job
-        if: needs.resolve-plan-run.outputs.plan_exists == 'true'
+        id: download-reviewed
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: tfplan-${{ matrix.account }}
           path: ${{ matrix.working_directory }}
 
+      - name: Check reviewed plan actually downloaded
+        id: reviewed
+        working-directory: ${{ matrix.working_directory }}
+        run: |
+          if [ -f tfplan.binary ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Terraform Apply (reviewed plan)
-        if: needs.resolve-plan-run.outputs.plan_exists == 'true'
+        if: steps.reviewed.outputs.found == 'true'
         working-directory: ${{ matrix.working_directory }}
         run: |
           echo "🚀 Applying the exact plan reviewed on the merged PR for ${{ matrix.account }} (ID: ${{ matrix.account_id }})"
@@ -349,7 +398,151 @@ jobs:
           terraform apply -input=false -lock-timeout=120s tfplan.binary 2>&1 | tee apply_output.txt
 
       - name: Terraform Apply (fresh plan — fallback)
-        if: needs.resolve-plan-run.outputs.plan_exists != 'true'
+        if: steps.reviewed.outputs.found != 'true'
+        working-directory: ${{ matrix.working_directory }}
+        run: |
+          echo "⚠️ No reviewed plan found for ${{ matrix.account }} (this run wasn't triggered by a merged PR)."
+          echo "🚀 Computing a fresh plan and applying it for ${{ matrix.account }} (ID: ${{ matrix.account_id }})"
+          echo "📂 Working directory: ${{ matrix.working_directory }}"
+          echo "🏷️ Environment: ${{ matrix.environment }}"
+          echo ""
+          terraform plan -no-color -input=false -lock-timeout=60s -out=tfplan.binary
+          terraform apply -input=false -lock-timeout=120s tfplan.binary 2>&1 | tee apply_output.txt
+
+      - name: Report apply outcome
+        working-directory: ${{ matrix.working_directory }}
+        run: |
+          echo ""
+          echo "─────────────────────────────────────────────────────────────"
+          echo "✅ Apply completed for ${{ matrix.account }}"
+          echo "─────────────────────────────────────────────────────────────"
+
+          if grep -q "No changes" apply_output.txt; then
+            echo "ℹ️ No changes were applied (infrastructure already up to date)"
+          else
+            echo "📝 Changes applied successfully"
+          fi
+
+      - name: Apply Success Notification
+        if: success()
+        working-directory: ${{ matrix.working_directory }}
+        run: |
+          echo "════════════════════════════════════════════════════════════"
+          echo "✅ SUCCESS: ${{ matrix.account }}"
+          echo "════════════════════════════════════════════════════════════"
+          echo ""
+          echo "📋 Summary:"
+          echo "  Account: ${{ matrix.account }}"
+          echo "  Account ID: ${{ matrix.account_id }}"
+          echo "  Environment: ${{ matrix.environment }}"
+          echo "  Region: ${{ env.AWS_REGION }}"
+
+
+      - name: Apply Failure Notification
+        if: failure()
+        run: |
+          echo "════════════════════════════════════════════════════════════"
+          echo "❌ FAILED: ${{ matrix.account }}"
+          echo "════════════════════════════════════════════════════════════"
+
+      - name: Upload apply artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: apply-${{ matrix.account }}
+          path: ${{ matrix.working_directory }}/apply_output.txt
+          retention-days: 7
+
+  # ──────────────────────────────────────────────────────────────────────────────
+  # 6b. Apply every other changed account. Waits on apply-network so it never
+  #     races network — but only actually blocks on it when network was part
+  #     of THIS run (result == 'skipped' means it wasn't, which is the
+  #     normal case for a spoke-only change and must not hold things up).
+  #     If network WAS in this run and failed, this job's `if` evaluates
+  #     false and every other account's apply is skipped too, rather than
+  #     applying against a network state known to be broken/incomplete.
+  # ──────────────────────────────────────────────────────────────────────────────
+  apply:
+    name: Terraform Apply - ${{ matrix.account }}
+    needs:
+      - discover-accounts
+      - resolve-plan-run
+      - apply-network
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: |
+      needs.discover-accounts.outputs.other_count != '0' &&
+      needs.discover-accounts.outputs.other_count != '' &&
+      (needs.apply-network.result == 'success' || needs.apply-network.result == 'skipped')
+    strategy:
+      fail-fast: false
+      max-parallel: 3
+      matrix: ${{ fromJson(needs.discover-accounts.outputs.other_matrix) }}
+
+    environment: ${{ matrix.environment }}
+
+    concurrency:
+      group: tf-apply-${{ matrix.account }}
+      cancel-in-progress: false
+
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      - name: Configure AWS credentials (${{ matrix.account }})
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ matrix.role_arn }}
+          aws-region: ${{ env.AWS_REGION }}
+          role-session-name: gha-apply-${{ matrix.account }}
+          retry-max-attempts: 3
+
+      - name: Terraform Init
+        working-directory: ${{ matrix.working_directory }}
+        run: terraform init -input=false
+
+      # needs.resolve-plan-run.outputs.plan_exists is NOT usable here:
+      # resolve-plan-run is itself a matrix job, and GitHub Actions collapses
+      # a matrix job's outputs to whichever instance happened to finish
+      # last — not one value per account. Every account in THIS matrix would
+      # end up reading the same (usually wrong) shared value instead of its
+      # own. Downloading unconditionally and checking the file locally,
+      # exactly like resolve-plan-run itself does, is the only correct way
+      # for each account to know about its own reviewed plan.
+      - name: Download reviewed plan from resolve job
+        id: download-reviewed
+        continue-on-error: true
+        uses: actions/download-artifact@v4
+        with:
+          name: tfplan-${{ matrix.account }}
+          path: ${{ matrix.working_directory }}
+
+      - name: Check reviewed plan actually downloaded
+        id: reviewed
+        working-directory: ${{ matrix.working_directory }}
+        run: |
+          if [ -f tfplan.binary ]; then
+            echo "found=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "found=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Terraform Apply (reviewed plan)
+        if: steps.reviewed.outputs.found == 'true'
+        working-directory: ${{ matrix.working_directory }}
+        run: |
+          echo "🚀 Applying the exact plan reviewed on the merged PR for ${{ matrix.account }} (ID: ${{ matrix.account_id }})"
+          echo "📂 Working directory: ${{ matrix.working_directory }}"
+          echo "🏷️ Environment: ${{ matrix.environment }}"
+          echo ""
+          terraform apply -input=false -lock-timeout=120s tfplan.binary 2>&1 | tee apply_output.txt
+
+      - name: Terraform Apply (fresh plan — fallback)
+        if: steps.reviewed.outputs.found != 'true'
         working-directory: ${{ matrix.working_directory }}
         run: |
           echo "⚠️ No reviewed plan found for ${{ matrix.account }} (this run wasn't triggered by a merged PR)."
@@ -411,6 +604,7 @@ jobs:
     name: Apply Summary
     needs:
       - discover-accounts
+      - apply-network
       - apply
     runs-on: ubuntu-latest
     if: always()
