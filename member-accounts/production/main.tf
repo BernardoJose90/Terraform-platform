@@ -52,10 +52,7 @@ provider "aws" {
 
 # Assumes a role in the network account scoped to prod_spoke + main only
 # (modules/tgw-spoke-wiring-role); this account can never touch
-# tgw-dev-spoke-rt. Replaces terraform_remote_state, which read the
-# network account's entire state file and made network's own plan depend
-# on this account's output, a cycle neither account could apply cleanly
-# on its own. See member-accounts/network/main.tf for the other half.
+# tgw-dev-spoke-rt. 
 provider "aws" {
   alias  = "network"
   region = var.aws_region
@@ -126,7 +123,7 @@ module "vpc" {
   # renaming these later, if ever wanted, is just a tag update, not a
   # replacement (subnet/route table Name is a tag, not an immutable
   # attribute).
-  private_subnet_names = [for az in var.azs : "production-vpc-private-${az}"]
+  private_subnet_names = [for az in var.azs : "production-Twg-private-sub-${az}"]
 
   enable_nat_gateway = false
   tgw_id             = nonsensitive(data.aws_ssm_parameter.tgw_id.value)
@@ -143,7 +140,7 @@ module "tgw_attachment" {
 
   source = "../../modules/tgw-attachment"
 
-  name = "prod-spoke"
+  name = "tgw-attach-prod-spoke"
   # Safe: this block is itself gated on the same condition as module.vpc,
   # so when it exists, module.vpc[0] definitely exists too.
   tgw_id     = nonsensitive(data.aws_ssm_parameter.tgw_id.value)
@@ -166,7 +163,7 @@ module "tgw_attachment" {
 # VPC). This replaces the old inspected_return static route: propagation
 # into main achieves the same thing without needing a firewall attachment.
 # ============================================================
-resource "aws_ec2_transit_gateway_route_table_association" "this" {
+resource "aws_ec2_transit_gateway_route_table_association" "tgw_rtb_association" {
   count = var.networking_enabled ? 1 : 0
 
   provider = aws.network
@@ -238,44 +235,44 @@ resource "aws_route" "private_to_tgw" {
 # TEARDOWN FLAG: gated the same as everything else that depends on
 # module.vpc[0]/the TGW ID.
 # ============================================================
-module "purpose_subnets" {
+module "prod_purpose_subnets" {
   count = var.networking_enabled ? 1 : 0
 
-  source = "../../modules/purpose-subnets"
+  source = "../../modules/prod-purpose-subnets"
 
   vpc_id = module.vpc[0].vpc_id
   tgw_id = nonsensitive(data.aws_ssm_parameter.tgw_id.value)
 
-  purposes = {
+  production_workload_subnets = {
     eks = {
       route_table_name = "prod-eks-rtb"
       to_tgw           = true
       subnets = {
-        a = { az = "eu-west-2a", cidr = "10.20.30.0/24", name = "prod-eks-sub-a" }
-        b = { az = "eu-west-2b", cidr = "10.20.40.0/24", name = "prod-eks-sub-b" }
+        a = { az = "eu-west-2a", cidr = "10.20.30.0/24", name = "prod-eks-a" }
+        b = { az = "eu-west-2b", cidr = "10.20.40.0/24", name = "prod-eks-b" }
       }
     }
     rds = {
       route_table_name = "prod-rds-rtb"
       to_tgw           = false
       subnets = {
-        a = { az = "eu-west-2a", cidr = "10.20.50.0/24", name = "prod-rds-sub-a" }
-        b = { az = "eu-west-2b", cidr = "10.20.60.0/24", name = "prod-rds-sub-b" }
+        a = { az = "eu-west-2a", cidr = "10.20.50.0/24", name = "prod-rds-a" }
+        b = { az = "eu-west-2b", cidr = "10.20.60.0/24", name = "prod-rds-b" }
       }
     }
     alb = {
       route_table_name = "prod-private-alb-rtb"
       to_tgw           = false
       subnets = {
-        a = { az = "eu-west-2a", cidr = "10.20.70.0/24", name = "prod-alb-sub-a" }
-        b = { az = "eu-west-2b", cidr = "10.20.80.0/24", name = "prod-alb-sub-b" }
+        a = { az = "eu-west-2a", cidr = "10.20.70.0/24", name = "prod-alb-a" }
+        b = { az = "eu-west-2b", cidr = "10.20.80.0/24", name = "prod-alb-b" }
       }
     }
     resources = {
       route_table_name = "prod-private-resources-rtb"
-      to_tgw           = false
+      to_tgw           = true
       subnets = {
-        a = { az = "eu-west-2a", cidr = "10.20.100.0/24", name = "private-resources-sub" }
+        a = { az = "eu-west-2a", cidr = "10.20.100.0/24", name = "prod-private-resources" }
       }
     }
   }
@@ -285,4 +282,20 @@ module "purpose_subnets" {
   # A route targeting the TGW is only valid once the attachment exists —
   # same reasoning as aws_route.private_to_tgw above.
   depends_on = [module.tgw_attachment]
+}
+
+# Renames from fix/fixed_modules_and_veriables_name. Without these,
+# Terraform treats the renamed module/resource as new and plans to destroy
+# the existing production subnets, route tables, associations and the TGW
+# route table association, then recreate them — a real outage, not a
+# no-op rename. Remove once applied and state has caught up (see
+# 2495070 for the precedent).
+moved {
+  from = module.purpose_subnets
+  to   = module.prod_purpose_subnets
+}
+
+moved {
+  from = aws_ec2_transit_gateway_route_table_association.this
+  to   = aws_ec2_transit_gateway_route_table_association.tgw_rtb_association
 }

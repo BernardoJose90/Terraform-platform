@@ -9,7 +9,7 @@ variable "tgw_id" {
   default     = null
 }
 
-variable "purposes" {
+variable "production_workload_subnets" {
   description = <<-EOT
     One entry per purpose-specific subnet group (e.g. "eks", "rds"). Each
     gets its own route table, shared across every AZ listed in its
@@ -35,7 +35,7 @@ variable "purposes" {
   }))
 
   validation {
-    condition     = !anytrue([for p in var.purposes : p.to_tgw]) || var.tgw_id != null
+    condition     = !anytrue([for p in var.production_workload_subnets : p.to_tgw]) || var.tgw_id != null
     error_message = "At least one purpose has to_tgw = true, so tgw_id must be set."
   }
 }
