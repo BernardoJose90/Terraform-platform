@@ -1,5 +1,12 @@
-name: Generate Terraform Docs
+name: Terraform Docs Check
 
+# Check-only: fails the job if generated docs would differ from what's
+# committed, but never writes or pushes anything itself. Replaces the old
+# auto-commit design (terraform-docs bot pushing straight to the branch),
+# which deadlocked PRs — a bot commit with "[skip ci]" became the PR's new
+# HEAD, and required status checks then waited forever on a report that
+# could structurally never arrive. No bot commits means no such deadlock,
+# on PRs or on main, so this runs safely on both triggers.
 on:
   pull_request:
     branches: [main]
@@ -16,21 +23,17 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write
-  pull-requests: write
+  contents: read
 
 jobs:
-  generate-docs:
-    name: Generate and Update README
+  check-docs:
+    name: Check Terraform Docs Are Up To Date
     runs-on: ubuntu-latest
     timeout-minutes: 5
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-        with:
-          ref: ${{ github.head_ref || github.ref_name }}
-          fetch-depth: 0
 
       - name: Discover terraform directories
         id: discover
@@ -41,11 +44,16 @@ jobs:
           echo "dirs=$DIRS" >> "$GITHUB_OUTPUT"
           echo "Found: $DIRS"
 
-      - name: Render terraform docs and push changes back
+      - name: Check generated docs match committed docs
         uses: terraform-docs/gh-actions@v1
         with:
           working-dir: ${{ steps.discover.outputs.dirs }}
           output-file: README.md
           output-method: inject
-          git-push: "true"
-          git-commit-message: "docs: auto-generate Terraform documentation [skip ci]"
+          fail-on-diff: "true"
+          git-push: "false"
+
+      - name: If this failed
+        if: failure()
+        run: |
+          echo "::error::README.md is out of date. Run 'terraform-docs markdown table --output-file README.md <dir>' locally (or 'terraform-docs' via pre-commit) and commit the result."
