@@ -20,8 +20,7 @@ resource "aws_iam_role_policy" "terraform_deploy_sso_identity_center_access" {
   role = module.github-oidc-roles.role_name
 
   # Losing this doesn't break current access, but breaks CI's ability to
-  # fix or change anything in sso.tf until it's manually restored, which
-  # is exactly what happened once already (see sso.tf's comment).
+  # fix or change anything in sso.tf until it's manually restored. This is a safety measure to prevent accidental deletion of the policy, which would require manual intervention to restore.
   lifecycle {
     prevent_destroy = true
   }
