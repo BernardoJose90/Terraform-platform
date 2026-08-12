@@ -30,24 +30,28 @@ resource "aws_iam_role_policy" "terraform_deploy_sso_identity_center_access" {
     Version = "2012-10-17"
     Statement = [
       {
+        # IAM action namespace for this service is "sso:", not "sso-admin:".
+        # "sso-admin" is only the AWS CLI module / Terraform provider SDK
+        # package name (ssoadmin); every one of these calls is denied under
+        # sso-admin: even though it reads like the right prefix.
         Sid    = "SsoAdminPermissionSetsAndAssignments"
         Effect = "Allow"
         Action = [
-          "sso-admin:ListInstances",
-          "sso-admin:CreatePermissionSet",
-          "sso-admin:DeletePermissionSet",
-          "sso-admin:DescribePermissionSet",
-          "sso-admin:UpdatePermissionSet",
-          "sso-admin:ListPermissionSets",
-          "sso-admin:TagResource",
-          "sso-admin:AttachManagedPolicyToPermissionSet",
-          "sso-admin:DetachManagedPolicyFromPermissionSet",
-          "sso-admin:ListManagedPoliciesInPermissionSet",
-          "sso-admin:CreateAccountAssignment",
-          "sso-admin:DeleteAccountAssignment",
-          "sso-admin:DescribeAccountAssignmentCreationStatus",
-          "sso-admin:DescribeAccountAssignmentDeletionStatus",
-          "sso-admin:ListAccountAssignments",
+          "sso:ListInstances",
+          "sso:CreatePermissionSet",
+          "sso:DeletePermissionSet",
+          "sso:DescribePermissionSet",
+          "sso:UpdatePermissionSet",
+          "sso:ListPermissionSets",
+          "sso:TagResource",
+          "sso:AttachManagedPolicyToPermissionSet",
+          "sso:DetachManagedPolicyFromPermissionSet",
+          "sso:ListManagedPoliciesInPermissionSet",
+          "sso:CreateAccountAssignment",
+          "sso:DeleteAccountAssignment",
+          "sso:DescribeAccountAssignmentCreationStatus",
+          "sso:DescribeAccountAssignmentDeletionStatus",
+          "sso:ListAccountAssignments",
         ]
         Resource = "*"
       },
