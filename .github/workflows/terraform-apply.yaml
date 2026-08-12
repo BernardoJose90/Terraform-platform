@@ -6,13 +6,20 @@ name: Terraform Apply
 # Adding a new account never requires editing this file.
 #
 # Where possible, this workflow applies the EXACT plan that was reviewed on
-# the merged pull request (produced by terraform-plan.yml), rather than
+# the merged pull request (produced by terraform-plan.yaml), rather than
 # recomputing a new plan at apply time. This closes the gap where a
 # reviewer approves one plan but a different one — computed against
 # possibly-drifted state — is what actually gets applied. If no matching
 # reviewed plan can be found (e.g. workflow_dispatch, or a direct push to
 # main without a PR), it falls back to computing a fresh plan and applying
 # that.
+#
+# Finding that reviewed plan means resolving THIS push's commit (a brand
+# new merge/squash/rebase commit, per whichever merge method was used) back
+# to the PR whose terraform-plan.yaml run actually produced the artifact —
+# see resolve-plan-run below. A direct SHA match never works: none of
+# GitHub's three merge methods produce a commit on main whose SHA equals
+# the one the PR's plan run actually ran against.
 
 on:
   push:
@@ -28,6 +35,10 @@ permissions:
   id-token: write
   contents: read
   actions: read
+  # Needed by resolve-plan-run's PR lookup (listPullRequestsAssociatedWithCommit),
+  # which resolves this push's merge/squash/rebase commit back to the PR whose
+  # plan run actually has the artifact — see that job for why.
+  pull-requests: read
 
 env:
   TERRAFORM_VERSION: "1.11.4"
@@ -214,15 +225,46 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
-      
+      # A direct commit-SHA match against github.sha never works here: this
+      # workflow runs on `push` to main, where github.sha is a brand-new
+      # merge/squash/rebase commit that never equals the SHA terraform-plan.yaml
+      # actually ran against (the PR branch's own head commit). Resolving the
+      # associated PR first, and downloading by PR number instead, is what
+      # makes this correct for all three of GitHub's merge methods — the
+      # download step below then uses the PR's head SHA internally.
+      #
+      # A commit with no associated PR (workflow_dispatch, a direct push) is
+      # expected and fine: pr_number comes back empty, and the download step's
+      # own commit: fallback below correctly finds nothing, so the workflow
+      # falls through to computing a fresh plan as designed.
+      - name: Resolve PR number for this commit
+        id: resolve-pr
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const { data: prs } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              commit_sha: context.sha,
+            });
+            const match = prs.find(p => p.merged_at) || prs[0];
+            core.setOutput('pr_number', match ? String(match.number) : '');
+            core.info(match
+              ? `Commit ${context.sha} -> PR #${match.number}`
+              : `Commit ${context.sha} has no associated PR (direct push or workflow_dispatch)`);
+
       - name: Download plan artifact from previous workflow
         id: download
         uses: dawidd6/action-download-artifact@v2
         continue-on-error: true
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          workflow: terraform-plan.yml
-          commit: ${{ github.sha }}
+          workflow: terraform-plan.yaml
+          # Exactly one of pr/commit may be set (the action errors if both
+          # are) — pr wins when resolve-pr found one, otherwise this falls
+          # back to the (expected-to-miss) direct SHA match.
+          pr: ${{ steps.resolve-pr.outputs.pr_number }}
+          commit: ${{ steps.resolve-pr.outputs.pr_number == '' && github.sha || '' }}
           name: tfplan-${{ matrix.account }}
           path: ${{ matrix.working_directory }}
           if_no_artifact_found: warn
