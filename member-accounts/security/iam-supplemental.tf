@@ -81,7 +81,7 @@ resource "aws_iam_role_policy" "terraform_deploy_sso_identity_center_access" {
           "identitystore:CreateGroupMembership",
           "identitystore:DeleteGroupMembership",
           # The provider's Read function calls DescribeGroupMembership, a
-          # separate API from GetGroupMembership/GetGroupMembershipId below.
+          # separate API from GetGroupMembership/GetGroupMembershipId below
           "identitystore:DescribeGroupMembership",
           "identitystore:GetGroupMembership",
           "identitystore:GetGroupMembershipId",
