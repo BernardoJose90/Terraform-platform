@@ -1,9 +1,9 @@
 output "tgw_id" {
-  value = aws_ec2_transit_gateway.this.id
+  value = aws_ec2_transit_gateway.tgw.id
 }
 
 output "tgw_arn" {
-  value = aws_ec2_transit_gateway.this.arn
+  value = aws_ec2_transit_gateway.tgw.arn
 }
 
 output "tgw_route_table_ids" {

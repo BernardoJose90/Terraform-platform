@@ -30,19 +30,19 @@ output "private_route_table_ids" {
   value       = module.vpc.private_route_table_ids
 }
 
-# ← ADDED. Needed by the network account to add return routes (spoke CIDRs -> TGW)
-# to the egress VPC's public route tables, so traffic coming back through the NAT
-# gateways can find its way to the spokes. Without this the NAT gateway has no route
-# to 10.20.0.0/16 or 10.30.0.0/16 and return traffic is silently dropped.
+# Needed by the network account to add return routes (spoke CIDRs -> TGW) to the
+# egress VPC's public route tables, so traffic coming back through the NAT gateways
+# can find its way to the spokes. Without this the NAT gateway has no route to
+# 10.20.0.0/16 or 10.30.0.0/16 and return traffic is silently dropped.
 #
-# Note this is a LIST. The upstream module normally creates a single shared public
-# route table, so it usually has one element — but do not assume that; iterate.
+# This is a LIST. The upstream module normally creates a single shared public
+# route table, so it usually has one element, but don't assume that; iterate.
 output "public_route_table_ids" {
   description = "Public route table IDs. Usually a single shared table. Empty for spoke VPCs, which have no public subnets."
   value       = module.vpc.public_route_table_ids
 }
 
-# ← ADDED. NAT Gateways can only get ONE flat tags map from this module
+# NAT gateways can only get one flat tags map from this module
 # (nat_gateway_tags), so a different Name per AZ isn't possible through a
 # variable. Exposed so a caller that needs that (e.g. "nat-egress-a" vs
 # "nat-egress-b") can rename each one individually with aws_ec2_tag.
