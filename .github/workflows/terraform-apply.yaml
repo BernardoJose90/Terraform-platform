@@ -322,23 +322,33 @@ jobs:
   #     GitHub Actions run them concurrently (matrix instances have no
   #     inherent ordering) and race — spoke's apply hitting network state
   #     that isn't there yet.
+  #
+  # Deliberately NOT a matrix job, unlike apply below — network_count is
+  # always exactly 0 or 1 (there's only ever one "network" account), so a
+  # plain if:-gated job is enough. This was a matrix job originally, gated
+  # on a zero-or-one-element network_matrix, and it broke apply in
+  # production: the downstream job's if: read needs.apply-network.result
+  # expecting 'skipped' when network wasn't in the run, but a matrix job
+  # with zero generated instances doesn't behave like a normal skipped job
+  # — verified locally with act, a zero-instance matrix job reported
+  # result 'success' with none of its steps ever running, which is not
+  # what either the original code or a plain if:false job produces. A
+  # plain (non-matrix) job's if:false reliably reports 'skipped' — this is
+  # the well-documented, low-risk case, confirmed with the same local
+  # test — so apply-network no longer uses strategy.matrix at all.
   # ──────────────────────────────────────────────────────────────────────────────
   apply-network:
-    name: Terraform Apply - ${{ matrix.account }}
+    name: Terraform Apply - network
     needs:
       - discover-accounts
       - resolve-plan-run
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    if: needs.discover-accounts.outputs.network_count != '0' && needs.discover-accounts.outputs.network_count != ''
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJson(needs.discover-accounts.outputs.network_matrix) }}
-
-    environment: ${{ matrix.environment }}
+    if: needs.discover-accounts.outputs.network_count == '1'
+    environment: ${{ fromJson(needs.discover-accounts.outputs.network_matrix).include[0].environment }}
 
     concurrency:
-      group: tf-apply-${{ matrix.account }}
+      group: tf-apply-network
       cancel-in-progress: false
 
     steps:
@@ -349,37 +359,35 @@ jobs:
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
-      - name: Configure AWS credentials (${{ matrix.account }})
+      - name: Configure AWS credentials (network)
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ matrix.role_arn }}
+          role-to-assume: ${{ fromJson(needs.discover-accounts.outputs.network_matrix).include[0].role_arn }}
           aws-region: ${{ env.AWS_REGION }}
-          role-session-name: gha-apply-${{ matrix.account }}
+          role-session-name: gha-apply-network
           retry-max-attempts: 3
 
       - name: Terraform Init
-        working-directory: ${{ matrix.working_directory }}
+        working-directory: member-accounts/network
         run: terraform init -input=false
 
       # needs.resolve-plan-run.outputs.plan_exists is NOT usable here:
       # resolve-plan-run is itself a matrix job, and GitHub Actions collapses
       # a matrix job's outputs to whichever instance happened to finish
-      # last — not one value per account. Every account in THIS matrix would
-      # end up reading the same (usually wrong) shared value instead of its
-      # own. Downloading unconditionally and checking the file locally,
-      # exactly like resolve-plan-run itself does, is the only correct way
-      # for each account to know about its own reviewed plan.
+      # last — not one value per account. Downloading unconditionally and
+      # checking the file locally, exactly like resolve-plan-run itself
+      # does, is the only correct way to know about network's own plan.
       - name: Download reviewed plan from resolve job
         id: download-reviewed
         continue-on-error: true
         uses: actions/download-artifact@v4
         with:
-          name: tfplan-${{ matrix.account }}
-          path: ${{ matrix.working_directory }}
+          name: tfplan-network
+          path: member-accounts/network
 
       - name: Check reviewed plan actually downloaded
         id: reviewed
-        working-directory: ${{ matrix.working_directory }}
+        working-directory: member-accounts/network
         run: |
           if [ -f tfplan.binary ]; then
             echo "found=true" >> "$GITHUB_OUTPUT"
@@ -389,32 +397,30 @@ jobs:
 
       - name: Terraform Apply (reviewed plan)
         if: steps.reviewed.outputs.found == 'true'
-        working-directory: ${{ matrix.working_directory }}
+        working-directory: member-accounts/network
         run: |
-          echo "🚀 Applying the exact plan reviewed on the merged PR for ${{ matrix.account }} (ID: ${{ matrix.account_id }})"
-          echo "📂 Working directory: ${{ matrix.working_directory }}"
-          echo "🏷️ Environment: ${{ matrix.environment }}"
+          echo "🚀 Applying the exact plan reviewed on the merged PR for network"
+          echo "📂 Working directory: member-accounts/network"
           echo ""
           terraform apply -input=false -lock-timeout=120s tfplan.binary 2>&1 | tee apply_output.txt
 
       - name: Terraform Apply (fresh plan — fallback)
         if: steps.reviewed.outputs.found != 'true'
-        working-directory: ${{ matrix.working_directory }}
+        working-directory: member-accounts/network
         run: |
-          echo "⚠️ No reviewed plan found for ${{ matrix.account }} (this run wasn't triggered by a merged PR)."
-          echo "🚀 Computing a fresh plan and applying it for ${{ matrix.account }} (ID: ${{ matrix.account_id }})"
-          echo "📂 Working directory: ${{ matrix.working_directory }}"
-          echo "🏷️ Environment: ${{ matrix.environment }}"
+          echo "⚠️ No reviewed plan found for network (this run wasn't triggered by a merged PR)."
+          echo "🚀 Computing a fresh plan and applying it for network"
+          echo "📂 Working directory: member-accounts/network"
           echo ""
           terraform plan -no-color -input=false -lock-timeout=60s -out=tfplan.binary
           terraform apply -input=false -lock-timeout=120s tfplan.binary 2>&1 | tee apply_output.txt
 
       - name: Report apply outcome
-        working-directory: ${{ matrix.working_directory }}
+        working-directory: member-accounts/network
         run: |
           echo ""
           echo "─────────────────────────────────────────────────────────────"
-          echo "✅ Apply completed for ${{ matrix.account }}"
+          echo "✅ Apply completed for network"
           echo "─────────────────────────────────────────────────────────────"
 
           if grep -q "No changes" apply_output.txt; then
@@ -425,42 +431,37 @@ jobs:
 
       - name: Apply Success Notification
         if: success()
-        working-directory: ${{ matrix.working_directory }}
         run: |
           echo "════════════════════════════════════════════════════════════"
-          echo "✅ SUCCESS: ${{ matrix.account }}"
+          echo "✅ SUCCESS: network"
           echo "════════════════════════════════════════════════════════════"
-          echo ""
-          echo "📋 Summary:"
-          echo "  Account: ${{ matrix.account }}"
-          echo "  Account ID: ${{ matrix.account_id }}"
-          echo "  Environment: ${{ matrix.environment }}"
-          echo "  Region: ${{ env.AWS_REGION }}"
-
 
       - name: Apply Failure Notification
         if: failure()
         run: |
           echo "════════════════════════════════════════════════════════════"
-          echo "❌ FAILED: ${{ matrix.account }}"
+          echo "❌ FAILED: network"
           echo "════════════════════════════════════════════════════════════"
 
       - name: Upload apply artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: apply-${{ matrix.account }}
-          path: ${{ matrix.working_directory }}/apply_output.txt
+          name: apply-network
+          path: member-accounts/network/apply_output.txt
           retention-days: 7
 
   # ──────────────────────────────────────────────────────────────────────────────
   # 6b. Apply every other changed account. Waits on apply-network so it never
-  #     races network — but only actually blocks on it when network was part
-  #     of THIS run (result == 'skipped' means it wasn't, which is the
-  #     normal case for a spoke-only change and must not hold things up).
-  #     If network WAS in this run and failed, this job's `if` evaluates
-  #     false and every other account's apply is skipped too, rather than
-  #     applying against a network state known to be broken/incomplete.
+  #     races network. !failure() && !cancelled() (rather than string-
+  #     matching needs.apply-network.result) is what GitHub's own docs
+  #     recommend for "proceed unless something upstream actually failed" —
+  #     verified locally with act: it correctly proceeds after an upstream
+  #     job skips itself (if:false) and correctly blocks after an upstream
+  #     job genuinely fails, without needing to know result's exact string
+  #     value either way. If network WAS in this run and failed, every
+  #     other account's apply is skipped too, rather than applying against
+  #     a network state known to be broken/incomplete.
   # ──────────────────────────────────────────────────────────────────────────────
   apply:
     name: Terraform Apply - ${{ matrix.account }}
@@ -470,10 +471,7 @@ jobs:
       - apply-network
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    if: |
-      needs.discover-accounts.outputs.other_count != '0' &&
-      needs.discover-accounts.outputs.other_count != '' &&
-      (needs.apply-network.result == 'success' || needs.apply-network.result == 'skipped')
+    if: ${{ needs.discover-accounts.outputs.other_count != '0' && needs.discover-accounts.outputs.other_count != '' && !failure() && !cancelled() }}
     strategy:
       fail-fast: false
       max-parallel: 3
