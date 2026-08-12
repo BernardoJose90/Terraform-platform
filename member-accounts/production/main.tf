@@ -283,3 +283,19 @@ module "prod_purpose_subnets" {
   # same reasoning as aws_route.private_to_tgw above.
   depends_on = [module.tgw_attachment]
 }
+
+# Renames from fix/fixed_modules_and_veriables_name. Without these,
+# Terraform treats the renamed module/resource as new and plans to destroy
+# the existing production subnets, route tables, associations and the TGW
+# route table association, then recreate them — a real outage, not a
+# no-op rename. Remove once applied and state has caught up (see
+# 2495070 for the precedent).
+moved {
+  from = module.purpose_subnets
+  to   = module.prod_purpose_subnets
+}
+
+moved {
+  from = aws_ec2_transit_gateway_route_table_association.this
+  to   = aws_ec2_transit_gateway_route_table_association.tgw_rtb_association
+}

@@ -39,7 +39,7 @@ resource "aws_route_table_association" "prod_workload_rtb_association" {
   for_each = local.subnet_instances
 
   subnet_id      = aws_subnet.prod_workload_sub[each.key].id
-  route_table_id = aws_route_table.prod_workload_rtb[each.value.purpose].id
+  route_table_id = aws_route_table.prod_workload_rtb[each.value.production_workload_subnet].id
 }
 
 # Only purposes with to_tgw = true get this route — see variables.tf.
@@ -49,4 +49,24 @@ resource "aws_route" "to_tgw" {
   route_table_id         = aws_route_table.prod_workload_rtb[each.key].id
   destination_cidr_block = "0.0.0.0/0"
   transit_gateway_id     = var.tgw_id
+}
+
+# Resource renames from the old modules/purpose-subnets module (see the
+# module-level "moved" block at the member-accounts/production/main.tf
+# call site). Without these, Terraform sees a brand-new resource type/name
+# and plans to destroy the existing subnets/route tables/associations and
+# recreate them — losing subnet IDs that RDS/EKS/ALB already reference.
+moved {
+  from = aws_subnet.this
+  to   = aws_subnet.prod_workload_sub
+}
+
+moved {
+  from = aws_route_table.this
+  to   = aws_route_table.prod_workload_rtb
+}
+
+moved {
+  from = aws_route_table_association.this
+  to   = aws_route_table_association.prod_workload_rtb_association
 }
