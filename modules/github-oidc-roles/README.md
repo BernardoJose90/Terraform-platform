@@ -49,6 +49,6 @@ No modules.
 | Name | Description |
 |------|-------------|
 | <a name="output_plan_role_arn"></a> [plan\_role\_arn](#output\_plan\_role\_arn) | n/a |
-| <a name="output_role_arn"></a> [role\_arn](#output\_role\_arn) | ============================================= OUTPUTS ============================================= |
+| <a name="output_role_arn"></a> [role\_arn](#output\_role\_arn) | n/a |
 | <a name="output_role_name"></a> [role\_name](#output\_role\_name) | n/a |
 <!-- END_TF_DOCS -->
