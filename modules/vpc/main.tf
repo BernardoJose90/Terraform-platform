@@ -28,7 +28,7 @@ module "vpc" {
   source = "terraform-aws-modules/vpc/aws"
   # 6.0.0 requires AWS provider v6 (already true for all three callers) and
   # switches the flow-log group ARN to build from data.aws_region.current[0].region
-  # instead of the now-deprecated .name attribute — this is what silences the
+  # instead of the now-deprecated .name attribute; this is what silences the
   # "Deprecated attribute" plan warning coming out of vpc-flow-logs.tf.
   version = "~> 6.0"
 
@@ -45,7 +45,7 @@ module "vpc" {
   single_nat_gateway     = var.single_nat_gateway
   one_nat_gateway_per_az = var.one_nat_gateway_per_az
 
-  # Spokes generally have no public subnets / IGW at all — enable_nat_gateway
+  # Spokes generally have no public subnets/IGW at all: enable_nat_gateway
   # false + an empty public_subnets list gives you a fully private VPC.
 
   private_subnet_names = var.private_subnet_names

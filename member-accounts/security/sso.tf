@@ -8,8 +8,8 @@
 # widening its automation permissions. See the Terraform-Org repo's
 # organizations.tf (aws_organizations_delegated_administrator.identity_center)
 # and this account's iam-supplemental.tf for the permissions that make this
-# possible. Resource bodies are unchanged from where this lived previously —
-# same names, same IDs, only which account's Terraform manages them changed.
+# possible. Resource bodies are unchanged from where this lived previously,
+# same names and IDs, only which account's Terraform manages them changed.
 #
 # Account IDs are read from the management account's SSM parameter store via
 # the aws.management provider (same pattern as security_account_id in
@@ -51,12 +51,12 @@ locals {
 # policy attachments, the groups, and the user below): these are the
 # foundational "what does AdministratorAccess/NetworkAdministrator/
 # ReadOnly even mean, and who is james.admin" definitions. A prior
-# incident deleted the user, the network_team group, and (had an AWS SCP
-# not happened to block it) would have taken the administrator permission
-# set's policy attachment and every account's admin assignment with it —
-# recovery required a manual break-glass session to restore access. None
-# of these should ever be destroyed as a side effect of an unrelated
-# change; removing this protection should be a deliberate, reviewed step.
+# incident deleted the user and the network_team group, and (had an AWS
+# SCP not blocked it) would have taken the administrator permission set's
+# policy attachment and every account's admin assignment with it; recovery
+# required a manual break-glass session. None of these should ever be
+# destroyed as a side effect of an unrelated change; removing this
+# protection should be a deliberate, reviewed step.
 resource "aws_ssoadmin_permission_set" "administrator" {
   name             = "AdministratorAccess"
   instance_arn     = local.sso_instance_arn

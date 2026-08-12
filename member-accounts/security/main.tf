@@ -21,7 +21,7 @@ terraform {
   }
 }
 
-# ✅ Provider for reading SSM from management account (assumes cross-account role)
+# Provider for reading SSM from the management account (cross-account role).
 provider "aws" {
   alias  = "management"
   region = var.aws_region
@@ -30,38 +30,24 @@ provider "aws" {
   }
 }
 
-# ✅ Read the production account ID from SSM
 data "aws_ssm_parameter" "security_account_id" {
   provider = aws.management
   name     = "/organizations/accounts/security"
 }
 
-# ✅ Main provider for the production account itself — no profile needed
+# Main provider for the security account itself, no profile needed.
 provider "aws" {
   region              = var.aws_region
   allowed_account_ids = [data.aws_ssm_parameter.security_account_id.value]
-
-
 }
-
-
-
-# Optional: Add VPC if needed
-# module "vpc" {
-#   source = "../../modules/vpc"
-#   name   = "security-vpc"
-#   cidr   = "10.1.0.0/16"
-# }
 
 module "github-oidc-roles" {
   source       = "../../modules/github-oidc-roles"
   account_name = "security"
 
-  # GitHub repository information (case-sensitive!)
   github_org  = "BernardoJose90"
   github_repo = "Terraform-platform"
 
-  # AWS account configuration
   management_account_id = "145678291484"
   state_bucket_name     = "james-terraform-state-2026"
   state_key_prefix      = "security" # must match the backend "s3" key above
