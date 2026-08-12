@@ -13,7 +13,7 @@
 # sso-admin/identitystore actions at all, so this fills that in. Actions
 # cross-checked against the AWS Service Authorization Reference for
 # sso-admin and identitystore, not hand-guessed.
-###############################################################################
+##############################################################################
 
 resource "aws_iam_role_policy" "terraform_deploy_sso_identity_center_access" {
   name = "SSOIdentityCenterAccess"
