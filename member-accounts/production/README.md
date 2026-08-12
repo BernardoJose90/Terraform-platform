@@ -19,6 +19,7 @@
 | Name | Source | Version |
 |------|--------|---------|
 | <a name="module_github-oidc-roles"></a> [github-oidc-roles](#module\_github-oidc-roles) | ../../modules/github-oidc-roles | n/a |
+| <a name="module_purpose_subnets"></a> [purpose\_subnets](#module\_purpose\_subnets) | ../../modules/purpose-subnets | n/a |
 | <a name="module_tgw_attachment"></a> [tgw\_attachment](#module\_tgw\_attachment) | ../../modules/tgw-attachment | n/a |
 | <a name="module_vpc"></a> [vpc](#module\_vpc) | ../../modules/vpc | n/a |
 
@@ -44,7 +45,7 @@
 | <a name="input_azs"></a> [azs](#input\_azs) | AZs to deploy the production VPC and TGW attachment into | `list(string)` | <pre>[<br/>  "eu-west-2a",<br/>  "eu-west-2b"<br/>]</pre> | no |
 | <a name="input_cidr"></a> [cidr](#input\_cidr) | CIDR block for the production VPC | `string` | `"10.20.0.0/16"` | no |
 | <a name="input_networking_enabled"></a> [networking\_enabled](#input\_networking\_enabled) | Master switch for the billable networking layer in this account.<br/>False stops spend; the account, its OIDC roles, its state file and<br/>its SSM entries all survive. This is a pause, not a teardown.<br/><br/>ORDERING: production AND development must both be applied with false<br/>BEFORE the network account is flipped. The TGW cannot be deleted while<br/>spoke attachments exist. | `bool` | `true` | no |
-| <a name="input_private_subnets"></a> [private\_subnets](#input\_private\_subnets) | TGW-attachment subnets, one per AZ | `list(string)` | <pre>[<br/>  "10.20.10.0/24",<br/>  "10.20.20.0/24"<br/>]</pre> | no |
+| <a name="input_private_subnets"></a> [private\_subnets](#input\_private\_subnets) | TGW-attachment subnets, one per AZ | `list(string)` | <pre>[<br/>  "10.20.10.0/24",<br/>  "10.20.20.0/24",<br/>  "10.20.110.0/24"<br/>]</pre> | no |
 | <a name="input_tags"></a> [tags](#input\_tags) | Tags applied to all resources in this account | `map(string)` | <pre>{<br/>  "Environment": "production",<br/>  "ManagedBy": "Terraform",<br/>  "Service": "production"<br/>}</pre> | no |
 
 ## Outputs

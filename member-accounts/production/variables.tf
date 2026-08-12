@@ -20,7 +20,7 @@ variable "azs" {
 variable "private_subnets" {
   description = "TGW-attachment subnets, one per AZ"
   type        = list(string)
-  default     = ["10.20.10.0/24", "10.20.20.0/24"]
+  default     = ["10.20.10.0/24", "10.20.20.0/24", "10.20.110.0/24"]
 }
 
 variable "tags" {
