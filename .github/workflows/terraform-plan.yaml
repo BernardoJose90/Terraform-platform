@@ -335,6 +335,21 @@ jobs:
             echo "✅ Terraform plan SUCCEEDED"
           fi
 
+          # Destructive-change detection. The "Z to destroy" count in
+          # Terraform's own summary line covers both plain destroys and the
+          # destroy half of a "-/+ replace" — a single reliable signal
+          # without having to pattern-match individual resource action
+          # lines. Doesn't block the job (a deliberate destroy is sometimes
+          # correct); just makes it impossible to merge past unnoticed.
+          DESTROY_COUNT=$(grep -oE '[0-9]+ to destroy' plan_output.txt | grep -oE '^[0-9]+' | head -1)
+          DESTROY_COUNT=${DESTROY_COUNT:-0}
+          if [ "$DESTROY_COUNT" -gt 0 ]; then
+            echo "⚠️  Plan destroys/replaces $DESTROY_COUNT resource(s)"
+            echo "has_destructive=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_destructive=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Check Plan Exit Code
         if: steps.plan.outputs.plan_exit_code != '0'
         run: |
@@ -365,10 +380,40 @@ jobs:
             }
 
             const hasChanges = !output.includes("No changes") && !output.includes("0 to add, 0 to change, 0 to destroy");
-            const statusIcon = hasChanges ? '📝' : '✅';
+            const isDestructive = '${{ steps.plan.outputs.has_destructive }}' === 'true';
+            const statusIcon = isDestructive ? '💥' : (hasChanges ? '📝' : '✅');
+            const destructiveBanner = isDestructive
+              ? `\n> ⚠️ **This plan destroys or replaces at least one resource in \`${{ matrix.account }}\`.** Review the diff carefully before merging — this is not necessarily wrong, but it needs a deliberate look, not a skim.\n`
+              : '';
 
             const marker = `<!-- terraform-plan-account:${{ matrix.account }} -->`;
-            const body = `${marker}\n### ${statusIcon} Terraform Plan — \`${{ matrix.account }}\` (ID: ${{ matrix.account_id }})\n\n<details><summary>Show plan output</summary>\n\n\`\`\`\n${output}\n\`\`\`\n</details>\n\n**Environment:** \`${{ matrix.environment }}\``;
+            const body = `${marker}\n### ${statusIcon} Terraform Plan — \`${{ matrix.account }}\` (ID: ${{ matrix.account_id }})\n${destructiveBanner}\n<details><summary>Show plan output</summary>\n\n\`\`\`\n${output}\n\`\`\`\n</details>\n\n**Environment:** \`${{ matrix.environment }}\``;
+
+            if (isDestructive) {
+              try {
+                await github.rest.issues.addLabels({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  labels: ['destructive-change'],
+                });
+              } catch (e) {
+                // Label doesn't exist in this repo yet — create it once, then retry.
+                await github.rest.issues.createLabel({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  name: 'destructive-change',
+                  color: 'd93f0b',
+                  description: "This PR's plan destroys or replaces at least one resource",
+                });
+                await github.rest.issues.addLabels({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  issue_number: context.issue.number,
+                  labels: ['destructive-change'],
+                });
+              }
+            }
 
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
@@ -635,4 +680,24 @@ jobs:
           echo "  - Cost estimates posted as PR comments"
           echo "  - Reports saved as artifacts"
           echo "════════════════════════════════════════════════════════════"
-          
+
+      # This job has a stable name regardless of which accounts ended up in
+      # the matrix, unlike the per-account "Terraform Plan - X" checks — so
+      # it's the one that's actually safe to add as a required status check.
+      # Without this step it was always green (if: always(), no failure
+      # condition of its own), so a required check on "Plan Summary" alone
+      # wouldn't have meant anything. discover-accounts/plan can each be
+      # "skipped" (nothing changed) without that being a problem; only an
+      # actual "failure" result should block merge.
+      - name: Fail if any account's plan failed
+        run: |
+          DISCOVER_RESULT="${{ needs.discover-accounts.result }}"
+          PLAN_RESULT="${{ needs.plan.result }}"
+          echo "discover-accounts: $DISCOVER_RESULT"
+          echo "plan: $PLAN_RESULT"
+
+          if [ "$DISCOVER_RESULT" = "failure" ] || [ "$PLAN_RESULT" = "failure" ]; then
+            echo "❌ One or more accounts failed to plan — failing this required check."
+            exit 1
+          fi
+          echo "✅ Every account that needed a plan produced one successfully."
