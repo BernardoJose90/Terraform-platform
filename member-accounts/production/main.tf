@@ -94,7 +94,7 @@ module "github-oidc-roles" {
 
   management_account_id = "145678291484"
   state_bucket_name     = "james-terraform-state-2026"
-  state_key_prefix      = "production" # must match the backend "s3" key above
+  state_key_prefix      = "production"
   role_name             = "TerraformDeploy"
 
   extra_assumable_role_arns = [
@@ -118,6 +118,15 @@ module "vpc" {
 
   azs             = var.azs
   private_subnets = var.private_subnets
+
+  # Explicit rather than left to modules/vpc's default-name fallback (see
+  # its variables.tf), matching how network/main.tf names its own subnets.
+  # Same names the fallback already produces today (name + "-private-" +
+  # az), so this is purely making the naming intentional, not a change —
+  # renaming these later, if ever wanted, is just a tag update, not a
+  # replacement (subnet/route table Name is a tag, not an immutable
+  # attribute).
+  private_subnet_names = [for az in var.azs : "production-vpc-private-${az}"]
 
   enable_nat_gateway = false
   tgw_id             = nonsensitive(data.aws_ssm_parameter.tgw_id.value)
@@ -211,4 +220,69 @@ resource "aws_route" "private_to_tgw" {
       error_message = "Expected one private route table per AZ, got ${length(module.vpc[0].private_route_table_ids)} tables for ${length(var.azs)} AZs."
     }
   }
+}
+
+# ============================================================
+# Purpose-specific private subnets — EKS worker nodes, RDS, an internal
+# ALB (reached via CloudFront VPC origins), and a general-purpose private
+# tier. Its own module (modules/purpose-subnets) rather than folded into
+# modules/vpc: network/development have no reason to know about
+# production's own application topology, and this repo's own convention
+# is that any structural, parameterized pattern gets its own module —
+# see modules/tgw, modules/tgw-attachment, etc.
+#
+# Only eks and resources get an outbound TGW route — rds and alb
+# deliberately don't (a database tier and an internal ALB have no
+# business initiating outbound internet traffic).
+#
+# TEARDOWN FLAG: gated the same as everything else that depends on
+# module.vpc[0]/the TGW ID.
+# ============================================================
+module "purpose_subnets" {
+  count = var.networking_enabled ? 1 : 0
+
+  source = "../../modules/purpose-subnets"
+
+  vpc_id = module.vpc[0].vpc_id
+  tgw_id = nonsensitive(data.aws_ssm_parameter.tgw_id.value)
+
+  purposes = {
+    eks = {
+      route_table_name = "prod-eks-rtb"
+      to_tgw           = true
+      subnets = {
+        a = { az = "eu-west-2a", cidr = "10.20.30.0/24", name = "prod-eks-sub-a" }
+        b = { az = "eu-west-2b", cidr = "10.20.40.0/24", name = "prod-eks-sub-b" }
+      }
+    }
+    rds = {
+      route_table_name = "prod-rds-rtb"
+      to_tgw           = false
+      subnets = {
+        a = { az = "eu-west-2a", cidr = "10.20.50.0/24", name = "prod-rds-sub-a" }
+        b = { az = "eu-west-2b", cidr = "10.20.60.0/24", name = "prod-rds-sub-b" }
+      }
+    }
+    alb = {
+      route_table_name = "prod-private-alb-rtb"
+      to_tgw           = false
+      subnets = {
+        a = { az = "eu-west-2a", cidr = "10.20.70.0/24", name = "prod-alb-sub-a" }
+        b = { az = "eu-west-2b", cidr = "10.20.80.0/24", name = "prod-alb-sub-b" }
+      }
+    }
+    resources = {
+      route_table_name = "prod-private-resources-rtb"
+      to_tgw           = false
+      subnets = {
+        a = { az = "eu-west-2a", cidr = "10.20.100.0/24", name = "private-resources-sub" }
+      }
+    }
+  }
+
+  tags = var.tags
+
+  # A route targeting the TGW is only valid once the attachment exists —
+  # same reasoning as aws_route.private_to_tgw above.
+  depends_on = [module.tgw_attachment]
 }
