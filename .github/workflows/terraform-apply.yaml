@@ -80,11 +80,30 @@ jobs:
       - name: Detect changed account folders
         id: filter
         run: |
+          # modules/ is checked FIRST and separately. A shared module has no
+          # single owning account, and any account that consumes it can be
+          # affected — without a dependency graph mapping module -> accounts,
+          # the only safe answer to "which accounts" is "all of them". This
+          # is deliberately blunter than the member-accounts/ diff below: a
+          # module-only change costs a few extra minutes re-applying every
+          # account, versus silently never applying to the accounts that
+          # actually depend on it (the failure mode this replaces).
+          CHANGED_MODULE_FILES=$(git diff --name-only HEAD~1 HEAD -- modules/ || echo "")
+
+          if [ -n "$CHANGED_MODULE_FILES" ]; then
+            echo "Changed files under modules/:"
+            echo "$CHANGED_MODULE_FILES"
+            echo "-> treating every discovered account as changed"
+            echo "changed_accounts=ALL" >> "$GITHUB_OUTPUT"
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           # Get list of changed files in member-accounts/
           CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD -- member-accounts/ || echo "")
 
           if [ -z "$CHANGED_FILES" ]; then
-            echo "No changes detected in member-accounts/"
+            echo "No changes detected in member-accounts/ or modules/"
             echo "changed_accounts=" >> "$GITHUB_OUTPUT"
             echo "has_changes=false" >> "$GITHUB_OUTPUT"
             exit 0
@@ -144,6 +163,10 @@ jobs:
             --query "Parameters[*].{Name:Name,Value:Value}" \
             --output json)
 
+          # $changed == "ALL" (set by detect-changes when modules/ changed)
+          # bypasses the IN($changed_list[]) filter entirely, so every
+          # discovered account is included instead of just the ones with a
+          # direct member-accounts/ change.
           MATRIX=$(jq -c -n --argjson accounts "$ACCOUNTS" --argjson tiers "$TIERS" --arg changed "$CHANGED_ACCOUNTS" '
             ($changed | split(",")) as $changed_list |
             ($tiers | map({(.Name | split("/") | last): .Value}) | add) as $tier_map |
@@ -151,7 +174,7 @@ jobs:
               include: [
                 $accounts[] |
                 select(.Name | split("/") | last != "management") |
-                select(.Name | split("/") | last | IN($changed_list[])) |
+                select($changed == "ALL" or (.Name | split("/") | last | IN($changed_list[]))) |
                 {
                   account: (.Name | split("/") | last),
                   working_directory: ("member-accounts/" + (.Name | split("/") | last)),
