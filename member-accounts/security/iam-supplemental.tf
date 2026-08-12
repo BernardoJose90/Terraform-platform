@@ -1,18 +1,16 @@
 ###############################################################################
 # Supplemental IAM Identity Center / Identity Store access for TerraformDeploy
 #
-# security is the delegated administrator for sso.amazonaws.com (registered
+# security account is the delegated administrator for sso.amazonaws.com (registered
 # from the management account's AWS Organizations config; see
 # aws_organizations_delegated_administrator.identity_center there). SSO
 # resource management (permission sets, groups, users, account assignments,
 # see sso.tf in this directory) runs from here instead of the management
-# account, per AWS's own guidance to minimize what has access to the
+# account based on AWS's own guidance this minimize what has access to the
 # management account rather than widening its automation role.
 #
 # github-oidc-roles' base permission set (module.github-oidc-roles) has no
-# sso-admin/identitystore actions at all, so this fills that in. Actions
-# cross-checked against the AWS Service Authorization Reference for
-# sso-admin and identitystore, not hand-guessed.
+# sso-admin/identitystore actions at all, so this fills that in.
 ##############################################################################
 
 resource "aws_iam_role_policy" "terraform_deploy_sso_identity_center_access" {
