@@ -8,7 +8,6 @@
 # see sso.tf in this directory) runs from here instead of the management
 # account based on AWS's own guidance this minimize what has access to the
 # management account rather than widening its automation role.
-#
 # github-oidc-roles' base permission set (module.github-oidc-roles) has no
 # sso-admin/identitystore actions at all, so this fills that in.
 ##############################################################################
