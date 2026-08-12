@@ -21,8 +21,17 @@ on:
     # wanted (exclude it). Verified against detect-changes' CHANGED_ACCOUNTS
     # derivation below too — it greps on `member-accounts/[^/]+/`, which
     # matches a tfvars file's path exactly the same as a .tf file's.
+    #
+    # .github/workflows/** is deliberately NOT ignored here, unlike
+    # terraform-apply.yaml's copy of this list. protect-main's required
+    # status checks (Validate & Format, Security Scan, Plan Summary) all
+    # come from THIS workflow — if it skipped itself on workflow-only
+    # changes, a PR that only edits a workflow file would never get those
+    # checks reported at all, and branch protection would block it forever
+    # ("Expected — waiting for status to be reported"), with no way out
+    # short of an admin bypass. Running these two lightweight jobs on a
+    # workflow-only change is cheap; being unmergeable by construction isn't.
     paths-ignore:
-      - '.github/workflows/**'
       - '.gitignore**'
       - '**.md'
       - '**.txt'
