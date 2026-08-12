@@ -43,14 +43,24 @@ resource "aws_iam_role_policy" "terraform_deploy_sso_identity_center_access" {
           "sso:DescribePermissionSet",
           "sso:UpdatePermissionSet",
           "sso:ListPermissionSets",
+          # Tag read/write on permission sets. ListTagsForResource is read
+          # on every plan/apply (tag-reconciliation); TagResource alone
+          # isn't enough for the reverse (a tag removed from var.tags).
           "sso:TagResource",
+          "sso:UntagResource",
+          "sso:ListTagsForResource",
           "sso:AttachManagedPolicyToPermissionSet",
           "sso:DetachManagedPolicyFromPermissionSet",
           "sso:ListManagedPoliciesInPermissionSet",
-          "sso:CreateAccountAssignment",
-          "sso:DeleteAccountAssignment",
+          # Re-provisioning: AWS only applies a changed permission set to
+          # already-assigned accounts once it's re-provisioned; Update alone
+          # updates the definition but not what's actually deployed.
+          "sso:ProvisionPermissionSet",
           "sso:DescribeAccountAssignmentCreationStatus",
           "sso:DescribeAccountAssignmentDeletionStatus",
+          "sso:DescribePermissionSetProvisioningStatus",
+          "sso:CreateAccountAssignment",
+          "sso:DeleteAccountAssignment",
           "sso:ListAccountAssignments",
         ]
         Resource = "*"
@@ -71,6 +81,9 @@ resource "aws_iam_role_policy" "terraform_deploy_sso_identity_center_access" {
           "identitystore:ListUsers",
           "identitystore:CreateGroupMembership",
           "identitystore:DeleteGroupMembership",
+          # The provider's Read function calls DescribeGroupMembership, a
+          # separate API from GetGroupMembership/GetGroupMembershipId below.
+          "identitystore:DescribeGroupMembership",
           "identitystore:GetGroupMembership",
           "identitystore:GetGroupMembershipId",
           "identitystore:ListGroupMemberships",
