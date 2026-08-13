@@ -320,7 +320,7 @@ data "aws_iam_policy_document" "github_oidc_trust_plan" {
   }
 }
 
-# Read-only role for the terraform plan workflow: can read resources, not modify them.
+# Read-only role for the terraform plan workflow: can read resources, not modify them
 resource "aws_iam_role" "terraform_plan" {
   name                 = "TerraformPlan"
   assume_role_policy   = data.aws_iam_policy_document.github_oidc_trust_plan.json
