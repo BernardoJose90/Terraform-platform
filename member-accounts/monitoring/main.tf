@@ -1,7 +1,7 @@
 ###############################################################################
 # Account: Monitoring
 # Email  : james.jose109099+aws-monitor@gmail.com
-# Purpose: Centralized CloudWatch, dashboards, alarms, X-Ray
+# Purpose: Centralized CloudWatch, dashboards, alarms.
 ###############################################################################
 
 terraform {

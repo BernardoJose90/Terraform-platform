@@ -174,7 +174,7 @@ jobs:
       other_count: ${{ steps.build-matrix.outputs.other_count }}
     steps:
       - name: Configure AWS credentials (discovery role — read-only)
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
           role-to-assume: ${{ vars.DISCOVERY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
@@ -374,7 +374,7 @@ jobs:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
       - name: Configure AWS credentials (network)
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
           role-to-assume: ${{ fromJson(needs.discover-accounts.outputs.network_matrix).include[0].role_arn }}
           aws-region: ${{ env.AWS_REGION }}
@@ -534,7 +534,7 @@ jobs:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
       - name: Configure AWS credentials (${{ matrix.account }})
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
           role-to-assume: ${{ matrix.role_arn }}
           aws-region: ${{ env.AWS_REGION }}
