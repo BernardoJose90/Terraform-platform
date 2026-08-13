@@ -68,7 +68,7 @@ jobs:
     needs:
       - detect-changes
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Skipping (no Terraform changes)
         if: needs.detect-changes.outputs.tf_changed != 'true'
@@ -76,7 +76,7 @@ jobs:
 
       - name: Setup Terraform
         if: needs.detect-changes.outputs.tf_changed == 'true'
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
       #
@@ -112,7 +112,7 @@ jobs:
     needs:
       - detect-changes
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Skipping (no Terraform changes)
         if: needs.detect-changes.outputs.tf_changed != 'true'
@@ -138,7 +138,7 @@ jobs:
     # So, only run these steps when Terraform files have changed.
       - name: Upload Checkov SARIF report
         if: always() && needs.detect-changes.outputs.tf_changed == 'true'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: checkov-report
           path: results.sarif
@@ -147,7 +147,7 @@ jobs:
 
       - name: Upload SARIF to GitHub Security tab
         if: always() && needs.detect-changes.outputs.tf_changed == 'true'
-        uses: github/codeql-action/upload-sarif@v3
+        uses: github/codeql-action/upload-sarif@faaa5d804fc648d0fdb28822a8e36cf7d0a6132c # v4.37.7
         with:
           sarif_file: results.sarif
           category: checkov
@@ -183,7 +183,7 @@ jobs:
       changed_accounts: ${{ steps.filter.outputs.changed_accounts }}
       has_changes: ${{ steps.filter.outputs.has_changes }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
 
@@ -372,10 +372,10 @@ jobs:
       matrix: ${{ fromJson(needs.discover-accounts.outputs.matrix) }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
@@ -454,7 +454,7 @@ jobs:
       # and failed the whole plan job.
       - name: Post plan as PR comment (Success)
         if: github.event_name == 'pull_request' && steps.plan.outputs.plan_exit_code == '0'
-        uses: actions/github-script@v7
+        uses: actions/github-script@d746ffe35508b1917358783b479e04febd2b8f71 # v9.0.0
         with:
           script: |
             const fs = require('fs');
@@ -532,7 +532,7 @@ jobs:
 
       - name: Upload plan log artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: plan-${{ matrix.account }}
           path: ${{ matrix.working_directory }}/plan_output.txt
@@ -540,7 +540,7 @@ jobs:
 
       - name: Upload plan file for apply reuse
         if: steps.plan.outputs.plan_exit_code == '0'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: tfplan-${{ matrix.account }}
           path: ${{ matrix.working_directory }}/tfplan.binary
@@ -602,16 +602,16 @@ jobs:
       INFRACOST_API_KEY: ${{ secrets.INFRACOST_API_KEY }}
 
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Download Terraform plan artifact from plan job
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
           name: tfplan-${{ matrix.account }}
           path: ${{ matrix.working_directory }}
 
       - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
@@ -632,7 +632,7 @@ jobs:
         run: terraform show -no-color -json tfplan.binary > plan.json
 
       - name: Setup Infracost
-        uses: infracost/actions/setup@v3
+        uses: infracost/actions/setup@fb736a8f219195d6efdca58682069b16fe1bc280 # v4.2.0
         with:
           api-key: ${{ secrets.INFRACOST_API_KEY }}
           version: latest
@@ -706,7 +706,7 @@ jobs:
 
       - name: Post Infracost comment to PR
         if: always()
-        uses: actions/github-script@v7
+        uses: actions/github-script@d746ffe35508b1917358783b479e04febd2b8f71 # v9.0.0
         with:
           script: |
             const fs = require('fs');
@@ -754,7 +754,7 @@ jobs:
 
       - name: Upload cost report artifact
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: cost-report-${{ matrix.account }}
           path: ${{ matrix.working_directory }}/infracost_output.md
@@ -763,7 +763,7 @@ jobs:
 
       - name: Upload Infracost debug JSON
         if: failure() || steps.infracost.outputs.cost_generated == 'false'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: infracost-debug-${{ matrix.account }}
           path: ${{ matrix.working_directory }}/cost_debug.json

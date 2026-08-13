@@ -1,0 +1,36 @@
+# .github/dependabot.yml
+#
+# Keeps GitHub Actions current without anyone having to read a runner log.
+#
+# Context: every action here is pinned to a commit SHA rather than a tag, so a
+# tag being moved upstream cannot silently change what runs in this pipeline.
+# The cost of that is the pins go stale. Dependabot pays that cost: it
+# understands SHA pins, bumps both the SHA and the trailing "# vX.Y.Z" comment,
+# and opens a PR.
+#
+# That PR goes through the same required checks as any other, so an action bump
+# is reviewed rather than absorbed.
+#
+# grouped on purpose: one PR a week covering everything that moved, rather than
+# nine separate PRs. Nine PRs is how people start rubber-stamping them.
+
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "07:00"
+      timezone: Europe/London
+    commit-message:
+      prefix: ci
+    labels:
+      - dependencies
+      - github-actions
+    # Cap it. If more than a couple are open, they are not being read.
+    open-pull-requests-limit: 3
+    groups:
+      actions:
+        patterns:
+          - "*"
