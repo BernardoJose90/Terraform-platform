@@ -101,7 +101,7 @@ jobs:
   # ──────────────────────────────────────────────────────────────────────────────
   # 2. Security Scan (Checkov)
   # REQUIRED CHECK.
-  # The job always runs so GitHub gets a status.
+  # The job always runs so GitHub gets a status which is printed for us to see what failed etc.
   # The expensive step only runs when it is needed.
   # If it is not needed, the step is skipped but the job still passes.
   # ──────────────────────────────────────────────────────────────────────────────
@@ -121,14 +121,14 @@ jobs:
       - name: Checkov Security Scan - All Accounts
         id: checkov
         if: needs.detect-changes.outputs.tf_changed == 'true'
-        uses: bridgecrewio/checkov-action@master
+        uses: bridgecrewio/checkov-action@358405ddafaa109ad35d3d607bbc7cf933c742d9
         with:
           directory: member-accounts/
-          framework: terraform
+          config_file: .checkov.yaml
           output_format: cli,sarif
           download_external_modules: true
           quiet: false
-          soft_fail: true
+       #  soft_fail: true
 
     # These two steps also need to check if Terraform was changed.
     # Without this check, they would run even when only documentation was changed.
@@ -546,6 +546,37 @@ jobs:
           path: ${{ matrix.working_directory }}/tfplan.binary
           retention-days: 30
 
+# ── Policy scan of the RESOLVED plan ────────────────────────────────────
+      # The security-scan job reads raw HCL, so it cannot see anything that only
+      # exists after evaluation: tfvars values, module outputs, data source
+      # results, count/for_each expansion. This pass reads the plan JSON, where
+      # all of that is materialised, and catches what a source scan structurally
+      # cannot.
+      #
+      # Runs inside this job rather than as its own, deliberately. terraform is
+      # already initialised here, credentials are already assumed, and
+      # tfplan.binary is already on disk. A separate job would repeat checkout,
+      # setup-terraform, an OIDC assume and a terraform init, six times over,
+      # for no extra coverage.
+      #
+      # Placed AFTER the artifact upload on purpose: if this scan fails the job
+      # fails and Plan Summary blocks the merge, but the plan artifact and the
+      # PR comment still exist for you to read.
+      - name: Convert plan to JSON
+        if: steps.plan.outputs.plan_exit_code == '0'
+        working-directory: ${{ matrix.working_directory }}
+        run: terraform show -no-color -json tfplan.binary > plan.json
+
+      - name: Checkov policy scan (resolved plan)
+        if: steps.plan.outputs.plan_exit_code == '0'
+        run: |
+          pip install --quiet checkov==3.3.11
+          checkov \
+            --file "${{ matrix.working_directory }}/plan.json" \
+            --repo-root-for-plan-enrichment "${{ matrix.working_directory }}" \
+            --framework terraform_plan \
+            --config-file .checkov.yaml \
+            --compact --quiet
   # ──────────────────────────────────────────────────────────────────────────────
   # 6. Cost Estimation (Infracost)
   # ──────────────────────────────────────────────────────────────────────────────
