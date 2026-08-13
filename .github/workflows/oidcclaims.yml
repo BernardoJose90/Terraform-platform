@@ -20,7 +20,7 @@ name: OIDC Claim Inspector
 #
 # Safe to run: it requests an ID token and decodes the PAYLOAD only. The
 # payload is not a secret (it is the claim set AWS will read). The token
-# itself is never echoed.
+# itself is never echoed..
 
 on:
   workflow_dispatch:
