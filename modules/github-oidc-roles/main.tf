@@ -60,9 +60,13 @@ data "aws_iam_policy_document" "github_actions_trust_policy" {
       values   = ["sts.amazonaws.com"]
     }
     condition {
-      test     = "StringLike"
+      test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_org}/${var.github_repo}:*"]
+      values = [
+        "repo:${var.github_org}/${var.github_repo}:environment:production-approval",
+        "repo:${var.github_org}/${var.github_repo}:environment:automated",
+        "repo:${var.github_org}/${var.github_repo}:environment:teardown-approval",
+      ]
     }
   }
 }
@@ -280,6 +284,21 @@ resource "aws_iam_role_policy" "terraform_deploy_policy" {
 # Trust policy for the terraform_plan role
 # ======================================================================================
 data "aws_iam_policy_document" "github_oidc_trust_plan" {
+  statement {
+    sid     = "ManagementAccountBreakGlass"
+    effect  = "Allow"
+    actions = ["sts:AssumeRole"]
+    principals {
+      type        = "AWS"
+      identifiers = ["arn:aws:iam::${var.management_account_id}:root"]
+    }
+    condition {
+      test     = "Bool"
+      variable = "aws:MultiFactorAuthPresent"
+      values   = ["true"]
+    }
+  }
+
   statement {
     sid     = "GitHubActionsPlan"
     effect  = "Allow"
