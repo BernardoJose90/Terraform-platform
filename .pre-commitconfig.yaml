@@ -8,7 +8,7 @@
 # auto-formats and commits for you (that deadlocked branch protection); it fails
 # the PR instead. This hook formats on commit so that never happens.
 #
-# Install once, per clone:
+# Install once, per clone: 
 #   brew install pre-commit terraform-docs   # macOS
 #   pre-commit install
 #
