@@ -1,0 +1,87 @@
+name: OIDC Claim Inspector
+
+# TEMPORARY DIAGNOSTIC. Delete this file once the trust policies are narrowed.
+#
+# Before changing an OIDC trust policy you need to know the EXACT `sub` claim
+# each job actually presents to AWS. Guessing it is how people lock their own
+# CI out of every account at once.
+#
+# GitHub changes the shape of `sub` depending on the job, not the workflow:
+#
+#   job with no `environment:`, on pull_request  -> repo:O/R:pull_request
+#   job with no `environment:`, on push/schedule -> repo:O/R:ref:refs/heads/main
+#   job WITH `environment: X`                    -> repo:O/R:environment:X
+#
+# Note the last one contains no ref at all. That surprises people.
+#
+# This workflow prints the real claim for all three shapes. Run it, copy the
+# `sub` values out of the logs, and write the trust policy from what you
+# observed rather than from what you expected.
+#
+# Safe to run: it requests an ID token and decodes the PAYLOAD only. The
+# payload is not a secret (it is the claim set AWS will read). The token
+# itself is never echoed.
+
+on:
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  no-environment:
+    name: "Claim shape: no environment"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Print OIDC subject claim
+        run: |
+          TOKEN=$(curl -sSf \
+            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com" | jq -r .value)
+
+          # JWT uses base64url with no padding; convert the alphabet and
+          # restore padding before decoding.
+          PAYLOAD=$(echo "$TOKEN" | cut -d. -f2 | tr '_-' '/+')
+          while [ $(( ${#PAYLOAD} % 4 )) -ne 0 ]; do PAYLOAD="${PAYLOAD}="; done
+
+          echo "$PAYLOAD" | base64 -d \
+            | jq '{sub, aud, ref, ref_type, environment, event_name, workflow}'
+
+  environment-production:
+    name: "Claim shape: environment production-approval"
+    runs-on: ubuntu-latest
+    environment: production-approval
+    steps:
+      - name: Print OIDC subject claim
+        run: |
+          TOKEN=$(curl -sSf \
+            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com" | jq -r .value)
+
+          # JWT uses base64url with no padding; convert the alphabet and
+          # restore padding before decoding.
+          PAYLOAD=$(echo "$TOKEN" | cut -d. -f2 | tr '_-' '/+')
+          while [ $(( ${#PAYLOAD} % 4 )) -ne 0 ]; do PAYLOAD="${PAYLOAD}="; done
+
+          echo "$PAYLOAD" | base64 -d \
+            | jq '{sub, aud, ref, environment, event_name}'
+
+  environment-automated:
+    name: "Claim shape: environment automated"
+    runs-on: ubuntu-latest
+    environment: automated
+    steps:
+      - name: Print OIDC subject claim
+        run: |
+          TOKEN=$(curl -sSf \
+            -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+            "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=sts.amazonaws.com" | jq -r .value)
+
+          # JWT uses base64url with no padding; convert the alphabet and
+          # restore padding before decoding.
+          PAYLOAD=$(echo "$TOKEN" | cut -d. -f2 | tr '_-' '/+')
+          while [ $(( ${#PAYLOAD} % 4 )) -ne 0 ]; do PAYLOAD="${PAYLOAD}="; done
+
+          echo "$PAYLOAD" | base64 -d \
+            | jq '{sub, aud, ref, environment, event_name}'
