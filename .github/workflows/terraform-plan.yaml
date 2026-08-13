@@ -147,7 +147,7 @@ jobs:
 
       - name: Upload SARIF to GitHub Security tab
         if: always() && needs.detect-changes.outputs.tf_changed == 'true'
-        uses: github/codeql-action/upload-sarif@faaa5d804fc648d0fdb28822a8e36cf7d0a6132c # v4.37.7
+        uses: github/codeql-action/upload-sarif@ff2f1c621b7f889edc0d3c761ac2e6a3f8cdb0dd # v4.37.7
         with:
           sarif_file: results.sarif
           category: checkov
@@ -289,7 +289,7 @@ jobs:
       account_count: ${{ steps.build-matrix.outputs.account_count }}
     steps:
       - name: Configure AWS credentials (discovery role — read-only)
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.DISCOVERY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
@@ -380,7 +380,7 @@ jobs:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
       - name: Configure AWS credentials (${{ matrix.account }})
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ matrix.role_arn }}
           aws-region: ${{ env.AWS_REGION }}
@@ -454,7 +454,7 @@ jobs:
       # and failed the whole plan job.
       - name: Post plan as PR comment (Success)
         if: github.event_name == 'pull_request' && steps.plan.outputs.plan_exit_code == '0'
-        uses: actions/github-script@d746ffe35508b1917358783b479e04febd2b8f71 # v9.0.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const fs = require('fs');
@@ -616,7 +616,7 @@ jobs:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
       - name: Configure AWS credentials (${{ matrix.account }})
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ matrix.role_arn }}
           aws-region: ${{ env.AWS_REGION }}
@@ -706,7 +706,7 @@ jobs:
 
       - name: Post Infracost comment to PR
         if: always()
-        uses: actions/github-script@d746ffe35508b1917358783b479e04febd2b8f71 # v9.0.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const fs = require('fs');
