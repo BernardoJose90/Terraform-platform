@@ -1,0 +1,116 @@
+# Checkov configuration.
+#
+# Baseline when this file was written: 177 passed, 17 failed.
+#
+# Every skip below is an accepted risk with a stated reason, not a way to make
+# the build green. `soft_fail` has been removed from the workflow, so anything
+# NOT listed here fails the merge.
+#
+# Rule for adding to this file: if you cannot write a sentence explaining why
+# the finding does not apply, or why the risk is accepted and what the
+# production-grade answer would be, fix the code instead.
+
+framework:
+  - terraform
+
+skip-check:
+  # ───────────────────────────────────────────────────────────────────────────
+  # Does not apply
+  # ───────────────────────────────────────────────────────────────────────────
+
+  # CKV_TF_1 — "Ensure Terraform module sources use a commit hash".
+  # Every module here is a LOCAL path (../../modules/vpc). There is no remote
+  # source to pin: the module is versioned by the same commit as its caller.
+  # The check targets registry and git sources. False positive here. 2 findings.
+  - CKV_TF_1
+
+  # CKV2_AWS_34 — "AWS SSM Parameter should be Encrypted".
+  # The 5 flagged parameters hold Transit Gateway IDs, TGW route table IDs and
+  # a RAM share ARN, published by the network account for the spokes to read.
+  # These are AWS resource identifiers, not secrets: knowing a tgw-id grants
+  # nothing without IAM permission against it. Moving to SecureString would
+  # require a customer-managed KMS key with a cross-account key policy grant to
+  # every spoke, which is real operational surface for no confidentiality gain.
+  # Accepted. 5 findings.
+  - CKV2_AWS_34
+
+  # CKV_AWS_274 — "Disallow IAM roles, users and groups from using the AWS
+  # AdministratorAccess policy".
+  # The flagged resource is the deliberate break-glass admin permission set in
+  # IAM Identity Center (security/sso.tf). A landing zone needs exactly one
+  # path to full access for account recovery, and this one is verified working:
+  # it is the tested route for repairing a TerraformDeploy trust policy if a CI
+  # change locks the pipeline out. Named permission set, assumed through SSO,
+  # every use logged in CloudTrail. Accepted. 1 finding.
+  - CKV_AWS_274
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Real finding, accepted, with the production answer written down
+  # ───────────────────────────────────────────────────────────────────────────
+
+  # CKV_AWS_331 — "Ensure Transit Gateways do not automatically accept VPC
+  # attachment requests".
+  #
+  # modules/tgw/main.tf sets auto_accept_shared_attachments = "enable", so any
+  # account the TGW is shared with can attach a VPC without an approval step.
+  #
+  # What bounds it here: the RAM share sets allow_external_principals = false
+  # and names exactly two principals, the production and development account
+  # IDs (member-accounts/network/main.tf, share_with_principals). So the set of
+  # accounts that can auto-attach is two accounts I own, both of which are
+  # supposed to be attached. It is not "anyone in the organisation".
+  #
+  # Why it is not simply turned off: disabling auto-accept requires an
+  # aws_ec2_transit_gateway_vpc_attachment_accepter in the network account for
+  # each spoke, and the apply order runs network BEFORE the spokes — so the
+  # accepter would need an attachment that does not exist yet. Closing this
+  # properly means either a second network apply pass or moving acceptance out
+  # of the spoke apply entirely. That is a design change, not a config flag,
+  # and it would break the networking_enabled teardown/rebuild flow as it
+  # stands today.
+  #
+  # Production answer: disable auto-accept, publish each spoke's attachment ID
+  # to SSM the way the TGW ID is published today, and add an accepter pass in
+  # the network account that reads it. Then attachment acceptance becomes a
+  # reviewed change rather than an automatic one.
+  #
+  # Accepted for now, deliberately, with the above written down. 1 finding.
+  - CKV_AWS_331
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Real finding, accepted, tracked
+  # ───────────────────────────────────────────────────────────────────────────
+  #
+  # The 8 checks below all fire on ONE resource:
+  #   modules/github-oidc-roles -> aws_iam_policy_document.permissions
+  # the TerraformDeploy role's permission policy.
+  #
+  # They are correct. That policy grants ec2:* on "*" and broad iam:* actions
+  # on "*", because a Terraform role that provisions VPCs, Transit Gateways,
+  # subnets and instance profiles genuinely needs most of EC2, and scoping IAM
+  # actions by resource ARN is impossible when the role is what creates those
+  # ARNs in the first place.
+  #
+  # This is a real over-privilege, not a false positive. Do not describe it as
+  # one.
+  #
+  # What bounds it today:
+  #   - one role per account, not one shared role
+  #   - S3 state access scoped to that account's own key prefix
+  #   - the trust policy only accepts an OIDC subject naming one of three
+  #     GitHub Environments, each of which is restricted to the main branch and
+  #     two of which require a human reviewer
+  #
+  # Production answer: an IAM permissions boundary on the role plus an SCP
+  # denying anything outside the expected service set, so the role cannot
+  # exceed the boundary even if its inline policy stays broad.
+  #
+  # Not built yet. Tracked, not forgotten.
+  - CKV_AWS_107  # credentials exposure
+  - CKV_AWS_109  # permissions management without constraints
+  - CKV_AWS_110  # privilege escalation
+  - CKV_AWS_111  # write access without constraints
+  - CKV_AWS_289  # permissions management without constraints
+  - CKV_AWS_290  # write access without constraints
+  - CKV_AWS_355  # "*" as a resource for restrictable actions
+  - CKV_AWS_356  # "*" as a resource for restrictable actions
