@@ -1,25 +1,31 @@
 name: Terraform Apply
 
-# Runs on merge to main. The account list, working directory, deploy role,
-# and approval tier are all discovered at runtime from the SSM account
-# manifest AND filtered by which account folders actually changed.
-# Adding a new account never requires editing this file.
+# Runs when changes are merged to main.
+# Accounts, directories, roles, and approval tiers are discovered at runtime
+# from SSM and only changed account folders are included.
+# Adding a new account does not require changing this workflow.
 #
-# Where possible, this workflow applies the EXACT plan that was reviewed on
-# the merged pull request (produced by terraform-plan.yaml), rather than
-# recomputing a new plan at apply time. This closes the gap where a
-# reviewer approves one plan but a different one — computed against
-# possibly-drifted state — is what actually gets applied. If no matching
-# reviewed plan can be found (e.g. workflow_dispatch, or a direct push to
-# main without a PR), it falls back to computing a fresh plan and applying
-# that.
+# When possible, apply the EXACT Terraform plan that was reviewed in the PR.
+# This prevents applying a different plan based on state that may have changed
+# since the review.
 #
-# Finding that reviewed plan means resolving THIS push's commit (a brand
-# new merge/squash/rebase commit, per whichever merge method was used) back
-# to the PR whose terraform-plan.yaml run actually produced the artifact —
-# see resolve-plan-run below. A direct SHA match never works: none of
-# GitHub's three merge methods produce a commit on main whose SHA equals
-# the one the PR's plan run actually ran against.
+# If the reviewed plan cannot be found:
+#
+#   1-push to main + production -> REFUSE and fail
+#   2-push to main + non-production -> create a fresh plan
+#   3-workflow_dispatch -> create a fresh plan
+#
+# Production must refuse when the reviewed plan is missing. Otherwise, a
+# missing/expired artifact or failed PR lookup could cause an unreviewed plan
+# to be applied, defeating the purpose of reviewed plans.
+#
+# Manual runs are different because someone explicitly requested the apply,
+# so creating a fresh plan is acceptable.
+#
+# To find the reviewed plan, we trace the current main commit back to the PR
+# that produced the plan artifact. We cannot match github.sha directly because
+# merge, squash, and rebase merges create a new commit on main with a different
+# SHA from the commit used by the PR's Terraform plan.
 
 on:
   push:
@@ -35,9 +41,7 @@ permissions:
   id-token: write
   contents: read
   actions: read
-  # Needed by resolve-plan-run's PR lookup (listPullRequestsAssociatedWithCommit),
-  # which resolves this push's merge/squash/rebase commit back to the PR whose
-  # plan run actually has the artifact — see that job for why.
+
   pull-requests: read
 
 env:
@@ -63,13 +67,6 @@ jobs:
       - name: Quick Format Check
         run: terraform fmt -check -recursive
 
-  # ──────────────────────────────────────────────────────────────────────────────
-  # 2. Security Scan (Checkov) - Commented out
-  # ──────────────────────────────────────────────────────────────────────────────
-  # security-scan:
-  #   name: Security Scan (Checkov)
-  #   runs-on: ubuntu-latest
-  #   ...
 
   # ──────────────────────────────────────────────────────────────────────────────
   # 3. Detect which account folders changed
@@ -91,6 +88,28 @@ jobs:
       - name: Detect changed account folders
         id: filter
         run: |
+          # github.event.before is the commit main was on BEFORE this push,
+          # which is the only correct base for a push event.
+          #
+          # HEAD~1 (what this used to be) is only right when the push contains
+          # exactly one commit. Rebase-merge a three-commit PR and main gains
+          # three commits in a single push: HEAD~1 sees only the last one, so
+          # any account touched by the first two is silently never applied.
+          # That is the same class of silent-partial-deploy failure the
+          # modules/ "treat everything as changed" rule below exists to avoid.
+          #
+          # The fallbacks cover workflow_dispatch (no `before`), the first push
+          # to a branch (all-zeroes SHA), and force pushes where `before` no
+          # longer exists in history.
+          BASE="${{ github.event.before }}"
+          if [ -z "$BASE" ] \
+            || [ "$BASE" = "0000000000000000000000000000000000000000" ] \
+            || ! git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            echo "No usable github.event.before; falling back to HEAD~1"
+            BASE=$(git rev-parse HEAD~1)
+          fi
+          echo "Diffing $BASE..HEAD"
+
           # modules/ is checked FIRST and separately. A shared module has no
           # single owning account, and any account that consumes it can be
           # affected — without a dependency graph mapping module -> accounts,
@@ -99,7 +118,7 @@ jobs:
           # module-only change costs a few extra minutes re-applying every
           # account, versus silently never applying to the accounts that
           # actually depend on it (the failure mode this replaces).
-          CHANGED_MODULE_FILES=$(git diff --name-only HEAD~1 HEAD -- modules/ || echo "")
+          CHANGED_MODULE_FILES=$(git diff --name-only "$BASE" HEAD -- modules/ || echo "")
 
           if [ -n "$CHANGED_MODULE_FILES" ]; then
             echo "Changed files under modules/:"
@@ -111,7 +130,7 @@ jobs:
           fi
 
           # Get list of changed files in member-accounts/
-          CHANGED_FILES=$(git diff --name-only HEAD~1 HEAD -- member-accounts/ || echo "")
+          CHANGED_FILES=$(git diff --name-only "$BASE" HEAD -- member-accounts/ || echo "")
 
           if [ -z "$CHANGED_FILES" ]; then
             echo "No changes detected in member-accounts/ or modules/"
@@ -184,6 +203,11 @@ jobs:
           # bypasses the IN($changed_list[]) filter entirely, so every
           # discovered account is included instead of just the ones with a
           # direct member-accounts/ change.
+          #
+          # Note the // "production-approval" default on environment: an
+          # account with no tier parameter in SSM gets the STRICTEST tier, not
+          # the loosest. The unreviewed-apply refusal below keys off exactly
+          # that value, so a misconfigured account fails safe.
           FILTERED=$(jq -c -n --argjson accounts "$ACCOUNTS" --argjson tiers "$TIERS" --arg changed "$CHANGED_ACCOUNTS" '
             ($changed | split(",")) as $changed_list |
             ($tiers | map({(.Name | split("/") | last): .Value}) | add) as $tier_map |
@@ -238,29 +262,27 @@ jobs:
     needs:
       - discover-accounts
     if: needs.discover-accounts.outputs.account_count != '0' && needs.discover-accounts.outputs.account_count != ''
-    # No job-level `outputs:` here on purpose: this is a matrix job, and
-    # GitHub Actions collapses a matrix job's outputs to whichever instance
-    # finished last, not one value per account. The apply jobs re-check
-    # locally per account instead of trusting an output from here — see
-    # their "Check reviewed plan actually downloaded" step.
+      # Don't use job-level outputs here because this is a matrix job.
+      # GitHub Actions only keeps the output from the last matrix instance to finish,
+      # so it can't safely provide one output per account.
+      #
+      # Instead, each apply job checks its own account locally. See the
+      # "Check reviewed plan actually downloaded" step.
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.discover-accounts.outputs.matrix) }}
     steps:
       - uses: actions/checkout@v6
 
-      # A direct commit-SHA match against github.sha never works here: this
-      # workflow runs on `push` to main, where github.sha is a brand-new
-      # merge/squash/rebase commit that never equals the SHA terraform-plan.yaml
-      # actually ran against (the PR branch's own head commit). Resolving the
-      # associated PR first, and downloading by PR number instead, is what
-      # makes this correct for all three of GitHub's merge methods — the
-      # download step below then uses the PR's head SHA internally.
+      # This workflow runs on `push` to main, so github.sha is the new merge/squash/
+      # rebase commit. It won't match the PR commit that the Terraform plan used.
       #
-      # A commit with no associated PR (workflow_dispatch, a direct push) is
-      # expected and fine: pr_number comes back empty, and the download step's
-      # own commit: fallback below correctly finds nothing, so the workflow
-      # falls through to computing a fresh plan as designed.
+      # Instead, we find the PR associated with this commit and download the plan
+      # using the PR number. This works with all GitHub merge methods.
+      #
+      # If there is no PR (for example, a manual run or direct push), pr_number is
+      # empty. The download step then finds no plan and the apply jobs fall back to
+      # refusing the apply or creating a fresh plan.
       - name: Resolve PR number for this commit
         id: resolve-pr
         uses: actions/github-script@v7
@@ -302,40 +324,32 @@ jobs:
             ls -la "${{ matrix.working_directory }}/tfplan.binary"
           else
             echo "plan_exists=false" >> $GITHUB_OUTPUT
-            echo "ℹ️ No reviewed plan found for ${{ matrix.account }} — will use fresh plan"
+            echo "ℹ️ No reviewed plan found for ${{ matrix.account }}"
           fi
 
+      # retention-days raised from 5 to 30. Now that a missing artifact is a
+      # hard failure on production-tier pushes rather than a silent fresh
+      # plan, artifact expiry becomes a real operational trip hazard: a PR
+      # opened before a week off would expire its own plan and block its own
+      # merge. Keep this in sync with the two upload steps in
+      # terraform-plan.yaml, which also need raising to 30.
       - name: Upload plan artifact (if found)
         if: steps.check.outputs.plan_exists == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: tfplan-${{ matrix.account }}
           path: ${{ matrix.working_directory }}/tfplan.binary
-          retention-days: 5
+          retention-days: 30
 
   # ──────────────────────────────────────────────────────────────────────────────
-  # 6a. Apply network FIRST, alone — spoke accounts (production, development,
-  #     ...) read SSM parameters and assume a role that only exist once
-  #     network has applied and published them (see network/main.tf's own
-  #     "apply order" comment). Without this split, a shared modules/ change
-  #     that puts network and a spoke in the SAME run's matrix would let
-  #     GitHub Actions run them concurrently (matrix instances have no
-  #     inherent ordering) and race — spoke's apply hitting network state
-  #     that isn't there yet.
+  # 6a. Apply network FIRST — spoke accounts depend on it for SSM parameters
+  #     and IAM roles, so network must finish before spoke accounts start.
   #
-  # Deliberately NOT a matrix job, unlike apply below — network_count is
-  # always exactly 0 or 1 (there's only ever one "network" account), so a
-  # plain if:-gated job is enough. This was a matrix job originally, gated
-  # on a zero-or-one-element network_matrix, and it broke apply in
-  # production: the downstream job's if: read needs.apply-network.result
-  # expecting 'skipped' when network wasn't in the run, but a matrix job
-  # with zero generated instances doesn't behave like a normal skipped job
-  # — verified locally with act, a zero-instance matrix job reported
-  # result 'success' with none of its steps ever running, which is not
-  # what either the original code or a plain if:false job produces. A
-  # plain (non-matrix) job's if:false reliably reports 'skipped' — this is
-  # the well-documented, low-risk case, confirmed with the same local
-  # test — so apply-network no longer uses strategy.matrix at all.
+  # This is a normal job, not a matrix, because there is only one network account.
+  #
+  # A zero-instance matrix reports "success" instead of "skipped". That breaks
+  # the downstream check of needs.apply-network.result.
+  # A normal job with if:false correctly reports "skipped", so use that instead.
   # ──────────────────────────────────────────────────────────────────────────────
   apply-network:
     name: Terraform Apply - network
@@ -371,12 +385,13 @@ jobs:
         working-directory: member-accounts/network
         run: terraform init -input=false
 
-      # needs.resolve-plan-run.outputs.plan_exists is NOT usable here:
-      # resolve-plan-run is itself a matrix job, and GitHub Actions collapses
-      # a matrix job's outputs to whichever instance happened to finish
-      # last — not one value per account. Downloading unconditionally and
-      # checking the file locally, exactly like resolve-plan-run itself
-      # does, is the only correct way to know about network's own plan.
+    # Don't use needs.resolve-plan-run.outputs.plan_exists here.
+    # resolve-plan-run is a matrix job, so GitHub only keeps the output from
+    # whichever matrix instance finishes last — not one output per account.
+    #
+    # Instead, always try to download the plan and check for the file locally.
+    # This is the same approach used by resolve-plan-run and correctly checks
+    # whether the network plan exists.
       - name: Download reviewed plan from resolve job
         id: download-reviewed
         continue-on-error: true
@@ -395,6 +410,28 @@ jobs:
             echo "found=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # Network is always refused on pushes if the reviewed plan is missing.
+      # Unlike spoke accounts, there is no tier-based exception.
+      #
+      # Spokes depend on the network account's SSM parameters and IAM roles, so an
+      # unreviewed network change could affect the entire repo. Therefore, an
+      # unreviewed network plan must never be applied automatically on a push.e.
+      - name: Refuse unreviewed apply (network)
+        if: steps.reviewed.outputs.found != 'true' && github.event_name == 'push'
+        run: |
+          echo "::error::No reviewed plan found for network on a push to main."
+          echo ""
+          echo "This is not a normal condition. It means one of:"
+          echo "  - the plan artifact expired (retention is 30 days)"
+          echo "  - the artifact download failed or was rate limited"
+          echo "  - this commit could not be resolved back to a merged PR"
+          echo ""
+          echo "Refusing to compute and apply an unreviewed plan to the network"
+          echo "account. Open a fresh PR so terraform-plan produces a reviewable"
+          echo "plan, or run this workflow via workflow_dispatch if you have"
+          echo "deliberately decided a fresh plan is correct."
+          exit 1
+
       - name: Terraform Apply (reviewed plan)
         if: steps.reviewed.outputs.found == 'true'
         working-directory: member-accounts/network
@@ -404,12 +441,17 @@ jobs:
           echo ""
           terraform apply -input=false -lock-timeout=120s tfplan.binary 2>&1 | tee apply_output.txt
 
+      # This is only reached by workflow_dispatch.
+      # All pushes are blocked above if there is no reviewed plan.
+      #
+      # A manual run is different because a human explicitly requested the apply
+      # without a reviewed plan, so a fresh plan is allowed.
       - name: Terraform Apply (fresh plan — fallback)
-        if: steps.reviewed.outputs.found != 'true'
+        if: steps.reviewed.outputs.found != 'true' && github.event_name != 'push'
         working-directory: member-accounts/network
         run: |
-          echo "⚠️ No reviewed plan found for network (this run wasn't triggered by a merged PR)."
-          echo "🚀 Computing a fresh plan and applying it for network"
+          echo "⚠️ No reviewed plan for network. This run is a manual workflow_dispatch,"
+          echo "   so a fresh plan is being computed and applied deliberately."
           echo "📂 Working directory: member-accounts/network"
           echo ""
           terraform plan -no-color -input=false -lock-timeout=60s -out=tfplan.binary
@@ -450,18 +492,18 @@ jobs:
           name: apply-network
           path: member-accounts/network/apply_output.txt
           retention-days: 7
+          if-no-files-found: ignore
 
   # ──────────────────────────────────────────────────────────────────────────────
-  # 6b. Apply every other changed account. Waits on apply-network so it never
-  #     races network. !failure() && !cancelled() (rather than string-
-  #     matching needs.apply-network.result) is what GitHub's own docs
-  #     recommend for "proceed unless something upstream actually failed" —
-  #     verified locally with act: it correctly proceeds after an upstream
-  #     job skips itself (if:false) and correctly blocks after an upstream
-  #     job genuinely fails, without needing to know result's exact string
-  #     value either way. If network WAS in this run and failed, every
-  #     other account's apply is skipped too, rather than applying against
-  #     a network state known to be broken/incomplete.
+  # 6b. Apply every other changed account after network finishes.
+  #     This prevents spoke accounts from racing network.
+  #
+  # !failure() && !cancelled() means "continue unless an upstream job failed
+  # or was cancelled". It also allows the job to continue when network was
+  # skipped because it wasn't needed.
+  #
+  # If network was needed but failed, all other account applies are skipped
+  # to avoid applying against an incomplete or broken network state.
   # ──────────────────────────────────────────────────────────────────────────────
   apply:
     name: Terraform Apply - ${{ matrix.account }}
@@ -503,14 +545,13 @@ jobs:
         working-directory: ${{ matrix.working_directory }}
         run: terraform init -input=false
 
-      # needs.resolve-plan-run.outputs.plan_exists is NOT usable here:
-      # resolve-plan-run is itself a matrix job, and GitHub Actions collapses
-      # a matrix job's outputs to whichever instance happened to finish
-      # last — not one value per account. Every account in THIS matrix would
-      # end up reading the same (usually wrong) shared value instead of its
-      # own. Downloading unconditionally and checking the file locally,
-      # exactly like resolve-plan-run itself does, is the only correct way
-      # for each account to know about its own reviewed plan.
+      # Don't use needs.resolve-plan-run.outputs.plan_exists here.
+      # resolve-plan-run is a matrix job, so GitHub only keeps the output from the
+      # matrix instance that finishes last. It does not provide one value per account.
+      #
+      # That means every account could read the same, incorrect value.
+      # Instead, each account downloads its plan and checks the file locally.
+      # This is the only reliable way for each account to verify its own reviewed plan.
       - name: Download reviewed plan from resolve job
         id: download-reviewed
         continue-on-error: true
@@ -529,6 +570,29 @@ jobs:
             echo "found=false" >> "$GITHUB_OUTPUT"
           fi
 
+      # The tier comes from matrix.environment.
+      # If an account has no tier set in SSM, discover-accounts defaults it to
+      # "production-approval".
+      #
+      # This means a new or misconfigured account is treated as production and
+      # refused if its reviewed plan is missing, instead of falling back to a
+      # fresh plan. This is fail-safe.
+      - name: Refuse unreviewed apply (${{ matrix.account }})
+        if: steps.reviewed.outputs.found != 'true' && github.event_name == 'push' && matrix.environment == 'production-approval'
+        run: |
+          echo "::error::No reviewed plan found for ${{ matrix.account }} on a push to main."
+          echo ""
+          echo "This is not a normal condition. It means one of:"
+          echo "  - the plan artifact expired (retention is 30 days)"
+          echo "  - the artifact download failed or was rate limited"
+          echo "  - this commit could not be resolved back to a merged PR"
+          echo ""
+          echo "Refusing to compute and apply an unreviewed plan to a"
+          echo "production-tier account. Open a fresh PR so terraform-plan"
+          echo "produces a reviewable plan, or run this workflow via"
+          echo "workflow_dispatch if a fresh plan is what you actually want."
+          exit 1
+
       - name: Terraform Apply (reviewed plan)
         if: steps.reviewed.outputs.found == 'true'
         working-directory: ${{ matrix.working_directory }}
@@ -539,14 +603,15 @@ jobs:
           echo ""
           terraform apply -input=false -lock-timeout=120s tfplan.binary 2>&1 | tee apply_output.txt
 
+      # This runs for manual workflow_dispatch runs, or for non-production accounts
+      # on a push. Production pushes are blocked by the refusal above.
       - name: Terraform Apply (fresh plan — fallback)
-        if: steps.reviewed.outputs.found != 'true'
+        if: steps.reviewed.outputs.found != 'true' && !(github.event_name == 'push' && matrix.environment == 'production-approval')
         working-directory: ${{ matrix.working_directory }}
         run: |
-          echo "⚠️ No reviewed plan found for ${{ matrix.account }} (this run wasn't triggered by a merged PR)."
-          echo "🚀 Computing a fresh plan and applying it for ${{ matrix.account }} (ID: ${{ matrix.account_id }})"
+          echo "⚠️ No reviewed plan for ${{ matrix.account }} (tier: ${{ matrix.environment }})."
+          echo "🚀 Computing a fresh plan and applying it — permitted for this tier/event."
           echo "📂 Working directory: ${{ matrix.working_directory }}"
-          echo "🏷️ Environment: ${{ matrix.environment }}"
           echo ""
           terraform plan -no-color -input=false -lock-timeout=60s -out=tfplan.binary
           terraform apply -input=false -lock-timeout=120s tfplan.binary 2>&1 | tee apply_output.txt
@@ -579,7 +644,6 @@ jobs:
           echo "  Environment: ${{ matrix.environment }}"
           echo "  Region: ${{ env.AWS_REGION }}"
 
-
       - name: Apply Failure Notification
         if: failure()
         run: |
@@ -594,6 +658,7 @@ jobs:
           name: apply-${{ matrix.account }}
           path: ${{ matrix.working_directory }}/apply_output.txt
           retention-days: 7
+          if-no-files-found: ignore
 
   # ──────────────────────────────────────────────────────────────────────────────
   # 7. Summary
@@ -615,5 +680,29 @@ jobs:
           echo ""
           echo "Accounts applied: ${{ needs.discover-accounts.outputs.account_count }}"
           echo ""
-          echo "Matrix:"
-          echo '${{ needs.discover-accounts.outputs.matrix }}' | jq '.include[] | {account: .account, environment: .environment}'
+          # Guard the jq. A push that passes paths-ignore but touches nothing
+          # under member-accounts/ or modules/ (scripts/, assets/, a root file)
+          # leaves has_changes false, so discover-accounts is skipped and this
+          # output is an empty string. Piping "" into jq exits non-zero, which
+          # turned this whole run red and emailed you about a push that
+          # correctly did nothing.
+          MATRIX='${{ needs.discover-accounts.outputs.matrix }}'
+          if [ -n "$MATRIX" ]; then
+            echo "Matrix:"
+            echo "$MATRIX" | jq '.include[] | {account: .account, environment: .environment}'
+          else
+            echo "No apply matrix (nothing under member-accounts/ or modules/ changed)."
+          fi
+          echo ""
+          echo "apply-network: ${{ needs.apply-network.result }}"
+          echo "apply:         ${{ needs.apply.result }}"
+
+      # Without this, the summary would always be green and wouldn't be useful as a required status check.
+      # Only a real "failure" blocks the merge. "Skipped" is a normal outcome.
+      - name: Fail if any apply failed
+        run: |
+          if [ "${{ needs.apply-network.result }}" = "failure" ] || [ "${{ needs.apply.result }}" = "failure" ]; then
+            echo "❌ At least one account failed to apply."
+            exit 1
+          fi
+          echo "✅ Every account that needed an apply completed."
