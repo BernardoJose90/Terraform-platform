@@ -1,21 +1,50 @@
 name: Drift Detection
 
+# Answers one question every morning: does live AWS still match what this repo
+# says it should be?
+#
+# Runs a refresh-only plan per account. Refresh-only never writes state and
+# never changes infrastructure, so this is safe to run unattended.
+#
+# On drift it does three things, in this order:
+#   1. Opens (or updates) a PR on a unchanged drift/<account> branch(drift/production,drift/network
+#      etc) carrying the report, so the drift has to be closed by a human decision and there is a
+#      record of that decision.
+#   2. Posts to Slack, only if SLACK_WEBHOOK_URL is configured.
+#   3. Fails the job. This is deliberately LAST, so the PR exists before the
+#      job goes red, and it is what makes GitHub's built-in "scheduled workflow
+#      failed" email fire.
+#
+# The failure in step 3 is the notification of last resort: it works even if
+# Slack is down and even if the PR step breaks.
+
 on:
   schedule:
-    # Runs at 2:00 AM UTC daily
+    # 02:00 UTC daily
     - cron: '0 2 * * *'
-  workflow_dispatch:  # Allow manual trigger
+  workflow_dispatch:
 
 permissions:
-  id-token: write
-  contents: read
+  id-token: write        # OIDC into each account's TerraformPlan role
+  contents: write        # push the drift/<account> branch
+  pull-requests: write   # open and comment on the drift PR
+
+# One drift run at a time. A manual dispatch while the scheduled run is in
+# flight would otherwise race on the same drift/<account> branches.
+concurrency:
+  group: drift-detection
+  cancel-in-progress: false
 
 env:
   TERRAFORM_VERSION: "1.11.4"
   AWS_REGION: "eu-west-2"
 
 jobs:
-  # 1. Detect which accounts exist (reuse your existing SSM discovery)
+  # ──────────────────────────────────────────────────────────────────────────────
+  # 1. Discover every member account from the SSM manifest. Same pattern as
+  #    terraform-plan.yaml, minus the changed-files filter: drift can appear in
+  #    an account nobody has touched, so every account is checked every night.
+  # ──────────────────────────────────────────────────────────────────────────────
   discover-accounts:
     name: Discover Accounts
     runs-on: ubuntu-latest
@@ -24,12 +53,13 @@ jobs:
       matrix: ${{ steps.build-matrix.outputs.matrix }}
       account_count: ${{ steps.build-matrix.outputs.account_count }}
     steps:
-      - name: Configure AWS credentials
+      - name: Configure AWS credentials (discovery role, read-only)
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.DISCOVERY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: gha-drift-discovery
+          retry-max-attempts: 3
 
       - name: Build matrix from SSM
         id: build-matrix
@@ -54,10 +84,15 @@ jobs:
               ]
             }')
 
-          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
-          echo "account_count=$(echo $MATRIX | jq '.include | length')" >> "$GITHUB_OUTPUT"
+          ACCOUNT_COUNT=$(echo "$MATRIX" | jq '.include | length')
 
-  # 2. Check for drift in each account
+          echo "matrix=$MATRIX" >> "$GITHUB_OUTPUT"
+          echo "account_count=$ACCOUNT_COUNT" >> "$GITHUB_OUTPUT"
+          echo "Discovered accounts: $ACCOUNT_COUNT"
+
+  # ──────────────────────────────────────────────────────────────────────────────
+  # 2. One refresh-only plan per account.
+  # ──────────────────────────────────────────────────────────────────────────────
   drift-check:
     name: Check Drift - ${{ matrix.account }}
     needs: discover-accounts
@@ -68,53 +103,88 @@ jobs:
       fail-fast: false
       matrix: ${{ fromJson(needs.discover-accounts.outputs.matrix) }}
 
+    # Job level, not step level: a step's own `if:` cannot read env that the
+    # same step declares. This is what lets the Slack step skip cleanly when
+    # the webhook secret is not configured.
+    env:
+      SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
 
       - name: Setup Terraform
         uses: hashicorp/setup-terraform@v3
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
-      - name: Configure AWS credentials
+      - name: Configure AWS credentials (${{ matrix.account }})
         uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ matrix.role_arn }}
           aws-region: ${{ env.AWS_REGION }}
           role-session-name: gha-drift-${{ matrix.account }}
+          retry-max-attempts: 3
 
       - name: Terraform Init
         working-directory: ${{ matrix.working_directory }}
-        run: terraform init -input=false
+        run: terraform init -input=false -lockfile=readonly
 
-      - name: Terraform Plan (Check for Drift)
+      # -detailed-exitcode is the whole point. Without it terraform plan exits 0
+      # whether the diff is empty or not, and nothing downstream can tell the
+      # difference. With it: 0 = clean, 1 = terraform errored, 2 = drift.
+      #
+      # -lock=false because refresh-only never persists state, so a lock buys
+      # nothing here and only risks a 2am failure if a manual apply happens to
+      # be holding it. The TerraformPlan role does have PutObject on its own
+      # state prefix, so this is a deliberate choice, not a permissions gap.
+      - name: Terraform Plan (refresh-only drift check)
         id: plan
         working-directory: ${{ matrix.working_directory }}
-        continue-on-error: true
+        
         run: |
-          # -refresh-only checks for drift without modifying state
-          terraform plan -no-color -input=false -lock-timeout=60s -refresh-only 2>&1 | tee drift_output.txt
+          set +e
+          terraform plan -no-color -input=false -lock=false \
+            -refresh-only -detailed-exitcode 2>&1 | tee drift_output.txt
           exit_code=${PIPESTATUS[0]}
+          set -e
+
           echo "drift_exit_code=$exit_code" >> "$GITHUB_OUTPUT"
+          echo "Exit code $exit_code  (0 = clean, 1 = terraform error, 2 = drift)"
 
-          echo ""
-          echo "─────────────────────────────────────────────────────────────"
-          echo "📋 Drift Check exit code: $exit_code"
-          echo "─────────────────────────────────────────────────────────────"
-          echo ""
+          if [ "$exit_code" -eq 1 ]; then
+            echo "::error::terraform plan itself failed for ${{ matrix.account }}. This is not drift, it is a broken plan."
+            exit 1
+          fi
 
-      - name: Check for Drift
-        if: steps.plan.outputs.drift_exit_code != '0'
+          if [ "$exit_code" -eq 0 ]; then
+            echo "### Clean: \`${{ matrix.account }}\`" >> "$GITHUB_STEP_SUMMARY"
+          fi
+
+      # Pull the resource addresses out of the plan text. Terraform prints
+      # "  # aws_x.y has changed" / "has been deleted" for each drifted object.
+      - name: Summarise drift
+        id: summary
+        if: steps.plan.outputs.drift_exit_code == '2'
+        working-directory: ${{ matrix.working_directory }}
         run: |
-          echo "⚠️ DRIFT DETECTED in ${{ matrix.account }} (ID: ${{ matrix.account_id }})"
-          echo ""
-          echo "🔧 Manual intervention required:"
-          echo "   1. Review the drift output above"
-          echo "   2. Determine if the change is intentional"
-          echo "   3. If NOT intentional, re-run 'terraform apply' to fix"
-          echo "   4. If intentional, update your Terraform code to match"
-          echo ""
-          echo "⚠️ This is a WARNING only — no changes were applied."
+          CHANGED=$(grep -E '^[[:space:]]*# .* (has changed|has been deleted)' drift_output.txt \
+            | sed 's/^[[:space:]]*# //' || true)
+          COUNT=$(printf '%s' "$CHANGED" | grep -c . || true)
+
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          {
+            echo "resources<<DRIFT_EOF"
+            echo "$CHANGED"
+            echo "DRIFT_EOF"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Drift: \`${{ matrix.account }}\` ($COUNT resource(s))"
+            echo ""
+            echo '```'
+            echo "$CHANGED"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload drift report
         if: always()
@@ -122,11 +192,134 @@ jobs:
         with:
           name: drift-report-${{ matrix.account }}
           path: ${{ matrix.working_directory }}/drift_output.txt
-          retention-days: 7
+          retention-days: 30
+          if-no-files-found: warn
 
-      - name: Notify on Drift Detection (Slack/Teams)
-        if: steps.plan.outputs.drift_exit_code != '0'
+      # A stable branch per account (drift/production, not drift/production-20260813)
+      # so repeated drift updates ONE pull request instead of opening a new one
+      # every night. Force-push rebases the report onto current main each run.
+      #
+      # Every ${{ }} value used by the script is passed through env rather than
+      # interpolated into the shell text: interpolating attacker-influenced
+      # strings straight into a run block is the standard Actions script
+      # injection hole, and resource addresses come from AWS, not from us.
+      - name: Open or update drift PR
+        if: steps.plan.outputs.drift_exit_code == '2'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          ACCOUNT: ${{ matrix.account }}
+          WORKDIR: ${{ matrix.working_directory }}
+          DRIFT_COUNT: ${{ steps.summary.outputs.count }}
+          DRIFT_RESOURCES: ${{ steps.summary.outputs.resources }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          # Optional: Add Slack/Teams notification
-          echo "🔔 Would send notification: Drift detected in ${{ matrix.account }}"
-          
+          BRANCH="drift/${ACCOUNT}"
+
+          # Idempotent: fails harmlessly if the label already exists.
+          gh label create drift \
+            --color d93f0b \
+            --description "Live infrastructure has drifted from Terraform" 2>/dev/null || true
+
+          mkdir -p .drift
+          {
+            echo "# Drift report: ${ACCOUNT}"
+            echo
+            echo "Generated $(date -u +'%Y-%m-%d %H:%M UTC') by run ${RUN_URL}"
+            echo
+            echo '```'
+            head -c 200000 "${WORKDIR}/drift_output.txt"
+            echo '```'
+          } > ".drift/${ACCOUNT}.md"
+
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git checkout -B "$BRANCH"
+          git add -f ".drift/${ACCOUNT}.md"
+          git commit -m "drift: ${ACCOUNT} ($(date -u +%Y-%m-%d))"
+          git push -f origin "$BRANCH"
+
+          {
+            echo "Refresh-only plan for \`${ACCOUNT}\` is **not empty**. Live AWS no longer matches this repo."
+            echo
+            echo "**Drifted resources (${DRIFT_COUNT}):**"
+            echo
+            echo '```'
+            echo "${DRIFT_RESOURCES}"
+            echo '```'
+            echo
+            echo "Full report: \`.drift/${ACCOUNT}.md\` on this branch. Workflow run: ${RUN_URL}"
+            echo
+            echo "**Pick one:**"
+            echo
+            echo "1. **Revert.** The change was not intended. Close this PR without merging and let the next apply put it back."
+            echo "2. **Adopt.** The change was intended. Push the matching Terraform for \`${WORKDIR}\` onto this branch, then merge."
+            echo
+            echo "Do not merge this as-is. On its own it only adds a report file."
+          } > /tmp/pr_body.md
+
+          EXISTING=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [ -n "$EXISTING" ]; then
+            gh pr comment "$EXISTING" --body \
+              "Still drifting as of $(date -u +'%Y-%m-%d'): ${DRIFT_COUNT} resource(s). Run: ${RUN_URL}"
+            echo "Updated existing PR #${EXISTING}"
+          else
+            gh pr create \
+              --head "$BRANCH" \
+              --base main \
+              --title "drift: ${ACCOUNT} (${DRIFT_COUNT} resources)" \
+              --body-file /tmp/pr_body.md \
+              --label drift
+          fi
+
+      # Skipped automatically when the webhook secret is not set, so this file
+      # works unchanged whether or not Slack is wired up.
+      - name: Notify Slack
+        if: steps.plan.outputs.drift_exit_code == '2' && env.SLACK_WEBHOOK_URL != ''
+        env:
+          ACCOUNT: ${{ matrix.account }}
+          DRIFT_COUNT: ${{ steps.summary.outputs.count }}
+          DRIFT_RESOURCES: ${{ steps.summary.outputs.resources }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          # -f so an HTTP 403/404 from a rotated webhook fails the step loudly
+          # instead of returning success and silently sending nothing.
+          curl -fsS -X POST "$SLACK_WEBHOOK_URL" \
+            -H 'Content-Type: application/json' \
+            --data "$(jq -n \
+              --arg acct "$ACCOUNT" \
+              --arg count "$DRIFT_COUNT" \
+              --arg url "$RUN_URL" \
+              --arg body "$DRIFT_RESOURCES" \
+              '{text: ("*Drift detected* in `" + $acct + "` (" + $count + " resource(s))\nA PR has been opened. <" + $url + "|View run>\n```\n" + $body + "\n```")}')"
+
+      # LAST on purpose. Everything above must have run before the job goes red.
+      # This failure is what triggers GitHub's built-in scheduled-workflow-failed
+      # email, and it is the signal that survives Slack and the PR step breaking.
+      - name: Fail the job on drift
+        if: steps.plan.outputs.drift_exit_code == '2'
+        run: |
+          echo "::error::Drift detected in ${{ matrix.account }} (${{ steps.summary.outputs.count }} resource(s)). See the drift/${{ matrix.account }} pull request."
+          exit 1
+
+  # ──────────────────────────────────────────────────────────────────────────────
+  # 3. One stable check name regardless of which accounts are in the matrix.
+  #    Useful as a dashboard row and as somewhere to hang future reporting.
+  # ──────────────────────────────────────────────────────────────────────────────
+  summary:
+    name: Drift Summary
+    needs:
+      - discover-accounts
+      - drift-check
+    runs-on: ubuntu-latest
+    if: always()
+    steps:
+      - name: Report
+        run: |
+          echo "Accounts checked: ${{ needs.discover-accounts.outputs.account_count }}"
+          echo "drift-check result: ${{ needs.drift-check.result }}"
+
+          if [ "${{ needs.drift-check.result }}" = "failure" ]; then
+            echo "## Drift detected in at least one account" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "## All accounts clean" >> "$GITHUB_STEP_SUMMARY"
