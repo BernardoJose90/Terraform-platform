@@ -1,6 +1,8 @@
 # Checkov configuration.
 #
-# Baseline when this file was written: 177 passed, 17 failed.
+# Baseline: 263 passed, 4 failed in CI with external modules downloaded.
+# (A local run without external-module download shows fewer of both; always
+#  trust the CI number, it scans more.)
 #
 # Every skip below is an accepted risk with a stated reason, not a way to make
 # the build green. `soft_fail` has been removed from the workflow, so anything
@@ -114,3 +116,36 @@ skip-check:
   - CKV_AWS_290  # write access without constraints
   - CKV_AWS_355  # "*" as a resource for restrictable actions
   - CKV_AWS_356  # "*" as a resource for restrictable actions
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Tool limitation: count-expansion inside a nested external module
+  # ───────────────────────────────────────────────────────────────────────────
+  #
+  # Both checks below are graph checks. Both fail on resources that carry a
+  # count index inside terraform-aws-modules/terraform-aws-vpc, and both are
+  # wrong. The tell is in the CI output itself: the SAME check PASSES for the
+  # un-indexed instance and FAILS for the [0]/[1] instances of the identical
+  # resource. Checkov's source-mode graph cannot follow an edge through count
+  # expansion in a nested module, so it sees an orphan.
+  #
+  # CKV2_AWS_19 — "Ensure that all EIP addresses allocated to a VPC are attached
+  # to EC2 instances". Fails on module.egress_vpc.module.vpc.aws_eip.nat[0] and
+  # [1]. These are NAT gateway EIPs and they are attached, to the two NAT
+  # gateways the egress VPC creates one per AZ. The production VPC's single,
+  # un-indexed aws_eip.nat PASSES the same check.
+  #
+  # CKV2_AWS_12 — "Ensure the default security group of every VPC restricts all
+  # traffic". Verified false at source: at the pinned commit (v6.6.1) the module
+  # defaults manage_default_security_group = true with
+  # default_security_group_ingress = [] and default_security_group_egress = [],
+  # so aws_default_security_group.this[0] is created with zero rules. That is
+  # exactly what this check asks for. Our wrapper in modules/vpc/main.tf does
+  # not override any of those three, so the defaults apply.
+  #
+  # Neither is skipped because the risk is accepted. Both are skipped because
+  # the SOURCE scan cannot resolve them. The plan-JSON scan in terraform-plan's
+  # plan job reads fully expanded resources, so it evaluates both correctly and
+  # is the pass that actually covers this ground. If you ever remove that pass,
+  # remove these two skips and deal with the noise.
+  - CKV2_AWS_19
+  - CKV2_AWS_12
