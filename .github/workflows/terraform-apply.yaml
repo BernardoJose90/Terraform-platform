@@ -174,7 +174,7 @@ jobs:
       other_count: ${{ steps.build-matrix.outputs.other_count }}
     steps:
       - name: Configure AWS credentials (discovery role — read-only)
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.DISCOVERY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
@@ -285,7 +285,7 @@ jobs:
       # refusing the apply or creating a fresh plan.
       - name: Resolve PR number for this commit
         id: resolve-pr
-        uses: actions/github-script@d746ffe35508b1917358783b479e04febd2b8f71 # v9.0.0
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const { data: prs } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
@@ -374,7 +374,7 @@ jobs:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
       - name: Configure AWS credentials (network)
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ fromJson(needs.discover-accounts.outputs.network_matrix).include[0].role_arn }}
           aws-region: ${{ env.AWS_REGION }}
@@ -534,7 +534,7 @@ jobs:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
       - name: Configure AWS credentials (${{ matrix.account }})
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ matrix.role_arn }}
           aws-region: ${{ env.AWS_REGION }}

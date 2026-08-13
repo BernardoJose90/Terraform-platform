@@ -94,7 +94,7 @@ jobs:
       tier3_matrix: ${{ steps.build.outputs.tier3_matrix }}
     steps:
       - name: Configure AWS credentials (discovery role — read-only)
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ vars.DISCOVERY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
@@ -162,7 +162,7 @@ jobs:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
       - name: Configure AWS credentials (${{ matrix.account }})
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ matrix.role_arn }}
           aws-region: ${{ env.AWS_REGION }}
@@ -257,7 +257,7 @@ jobs:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
       - name: Configure AWS credentials (${{ matrix.account }})
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ matrix.role_arn }}
           aws-region: ${{ env.AWS_REGION }}
@@ -355,7 +355,7 @@ jobs:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
       - name: Configure AWS credentials (${{ matrix.account }})
-        uses: aws-actions/configure-aws-credentials@v4
+        uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ matrix.role_arn }}
           aws-region: ${{ env.AWS_REGION }}
