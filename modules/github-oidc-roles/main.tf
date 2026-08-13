@@ -220,7 +220,7 @@ data "aws_iam_policy_document" "permissions" {
   # ListBucket is a bucket-level action (its resource is the bucket ARN, never an
   # object path), so it can't be scoped by a prefix on the resource ARN like the
   # statement above. s3:prefix is the only way to restrict which prefix a
-  # ListBucket call can see.
+  # ListBucket call can see
   statement {
     sid       = "ListOwnPrefixOnly"
     effect    = "Allow"
