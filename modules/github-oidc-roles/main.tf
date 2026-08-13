@@ -315,12 +315,15 @@ data "aws_iam_policy_document" "github_oidc_trust_plan" {
     condition {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_org}/${var.github_repo}:*"]
+      values = [
+              "repo:${var.github_org}/${var.github_repo}:pull_request",
+              "repo:${var.github_org}/${var.github_repo}:ref:refs/heads/main",
+            ]
     }
   }
 }
 
-# Read-only role for the terraform plan workflow: can read resources, not modify them.
+# Read-only role for the terraform plan workflow: can read resources, not modify them
 resource "aws_iam_role" "terraform_plan" {
   name                 = "TerraformPlan"
   assume_role_policy   = data.aws_iam_policy_document.github_oidc_trust_plan.json
