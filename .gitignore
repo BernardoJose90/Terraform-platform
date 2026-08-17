@@ -11,6 +11,13 @@
 # everyone running `terraform init` — this one SHOULD be committed.
 !**/.terraform.lock.hcl
 
+# ...except under modules/: every module here is a LOCAL child module (no
+# backend block, never `terraform init`'d as its own root), so it never
+# legitimately gets its own lock file. One only shows up if someone cd's in
+# and runs init directly for a one-off test; that's stray, not something CI
+# relies on, so it stays out of git instead of getting committed by accident.
+modules/*/.terraform.lock.hcl
+
 # Terraform state files — these contain secrets/resource attributes in
 # plaintext and must never be in git, even if you're using an S3 backend
 # for the "real" state (local .tfstate can still get created accidentally,

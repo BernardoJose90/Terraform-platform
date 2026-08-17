@@ -1,8 +1,23 @@
-#####################################################################
+#############################################################################################################
 # Account: Production
-# Email  : james.jose109099+aws-prod@gmail.com
-# Purpose: Live workload hosting
-#####################################################################
+# Purpose: Live workload hosting for public resources and internal-only services (EKS, RDS, internal ALB)
+#  1-containes a TerraformDeploy role for GitHub OIDC, scoped to this account only (no cross-account access)
+#  2-contains a VPC module for the production VPC, private-only (no IGW/NAT, egress is centralized in the network account)
+#  2-contains a TGW attachment module for the production VPC, attached to the prod_spoke TGW route table in the network account
+#  3-contains a TGW route table association and propagation for the production VPC
+#  4-contains a default route out of the private subnets to the TGW
+#  5-contains a purpose-specific private subnets module for EKS, RDS, internal ALB, and general-purpose private resources, with selective TGW routing
+#  6-All cross-account access to the network account is done via a scoped role (TgwSpokeWiringProduction) that can only touch prod_spoke and main TGW route tables, never dev_spoke.
+#  7-All TGW IDs and route table IDs are read from SSM parameters published by the network account, no remote state access is needed.
+#  8-All resources are gated on var.networking_enabled, so the account can be deployed without networking if desired (e.g., for IAM-only changes).
+#  9-All resources are tagged with var.tags, which should include "Environment" = "production" and other relevant tags.
+#  10-All modules are sourced from ../../modules, which should be the shared modules directory in the repo.
+#  11-All providers are configured with the correct region and allowed_account_ids, and assume roles where needed for cross-account access.
+#  12-All moved blocks are included to rename modules and resources without causing Terraform to destroy and recreate them.
+#  13-All lifecycle preconditions are included to ensure that the number of private route tables matches the number of AZs, to avoid misconfiguration.
+#  14-All resources are using nonsensitive() for SSM parameter values to avoid exposing sensitive data in the plan output.
+#  15-All modules and resources are using count or for_each to conditionally create resources based on var.networking_enabled, to allow for flexible deployment scenarios.
+#############################################################################################################
 
 terraform {
   required_version = "~> 1.11.0"

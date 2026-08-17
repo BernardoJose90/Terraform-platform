@@ -1,6 +1,5 @@
 ###############################################################################
 # Account: Security
-# Email  : james.jose109099+aws-security@gmail.com
 # Purpose: GuardDuty delegated admin, Security Hub, IAM Access Analyzer
 ###############################################################################
 
@@ -9,7 +8,7 @@ terraform {
   required_providers {
     aws = {
       source  = "hashicorp/aws"
-      version = "~> 5.0"
+      version = "~> 6.0"
     }
   }
   backend "s3" {
