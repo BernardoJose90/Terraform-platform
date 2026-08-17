@@ -11,7 +11,7 @@ terraform {
   # >= 1.9 is REQUIRED, not cosmetic. The validation blocks in variables.tf reference
   # other variables (cross-object validation), which was introduced in Terraform 1.9.
   # On older versions those blocks fail with "Invalid reference in variable validation".
-  required_version = ">= 1.9"
+  required_version = "~> 1.11.0"
 
   required_providers {
     aws = {
