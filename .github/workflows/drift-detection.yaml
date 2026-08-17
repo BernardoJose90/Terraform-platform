@@ -110,14 +110,19 @@ jobs:
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
 
     steps:
+          # downloads our repo files onto the bare runner machine. 
+          # A stable version of the checkout action is pinned to avoid breakage from upstream changes.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Terraform
+          # Installs the terraform command-line tool onto the GitHub-hosted runner.
+          # A stable version of the setup-terraform action is pinned to avoid breakage from upstream changes.
         uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
       - name: Configure AWS credentials (${{ matrix.account }})
+          # logs the pipeline into our AWS account (via the GitHub OIDC) to make AWS API calls.
         uses: aws-actions/configure-aws-credentials@v6
         with:
           role-to-assume: ${{ matrix.role_arn }}
@@ -188,6 +193,7 @@ jobs:
 
       - name: Upload drift report
         if: always()
+        # A stable version of the upload-artifact action(saves a file the job produced) is pinned to avoid breakage from upstream changes. See
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: drift-report-${{ matrix.account }}
