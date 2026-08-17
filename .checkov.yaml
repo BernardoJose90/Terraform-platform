@@ -1,6 +1,9 @@
 # Checkov configuration.
 #
-# Baseline: 263 passed, 4 failed in CI with external modules downloaded.
+# Baseline as of the last full accounting (2026-08-17): 263 passed, 4 failed
+# in CI with external modules downloaded. All 4 are now covered below
+# (CKV_AWS_286, CKV_AWS_287, CKV_AWS_61), so the next CI run should show 0
+# failed — update this line with the real number once that run completes.
 # (A local run without external-module download shows fewer of both; always
 #  trust the CI number, it scans more.)
 #
@@ -116,6 +119,54 @@ skip-check:
   - CKV_AWS_290  # write access without constraints
   - CKV_AWS_355  # "*" as a resource for restrictable actions
   - CKV_AWS_356  # "*" as a resource for restrictable actions
+
+  # CKV_AWS_286 / CKV_AWS_287 — "Ensure IAM policies does not allow privilege
+  # escalation" / "...credentials exposure". Same titles, same resource
+  # (aws_iam_role_policy.terraform_deploy_policy in github-oidc-roles), same
+  # underlying cloudsplaining detection as CKV_AWS_110/CKV_AWS_107 above —
+  # verified against Checkov's own source: both pairs call the identical
+  # cloudsplaining scanner, just registered under different check IDs for the
+  # "terraform_plan" (resolved-plan) framework vs. the "terraform" (source)
+  # framework. The source-mode scan (bridgecrewio/checkov-action, "Checkov
+  # Security Scan - All Accounts" job) only ever surfaces 107/110; the
+  # resolved-plan scan (terraform-plan.yaml's "Checkov policy scan (resolved
+  # plan)" step, framework: terraform_plan) surfaces 286/287 instead for the
+  # exact same finding. Not a new risk, not a false positive — it is the
+  # CKV_AWS_107/110 finding above, seen twice because two scan passes cover
+  # the same resource. Same acceptance, same production answer (permissions
+  # boundary + SCP, not built yet). 4 findings (2 accounts x 2 checks would
+  # be more; in practice this fires once per account per check).
+  - CKV_AWS_286  # privilege escalation (terraform_plan framework)
+  - CKV_AWS_287  # credentials exposure (terraform_plan framework)
+
+  # CKV_AWS_61 — "Ensure AWS IAM policy does not allow assume role permission
+  # across all services". Fires on aws_iam_role.terraform_deploy and
+  # aws_iam_role.terraform_plan in github-oidc-roles (main.tf:259-275 and
+  # 327-341), on every account, every time.
+  #
+  # Verified against Checkov's own source (IAMRoleAllowAssumeFromAccount.py):
+  # this check fails specifically when an Allow statement's Principal.AWS
+  # matches a 12-digit account ID or an "arn:aws:iam::<account>:root" ARN. The
+  # trigger is the ManagementAccountBreakGlass statement both trust policies
+  # share, which trusts arn:aws:iam::${var.management_account_id}:root. That
+  # is a real match, not a tool bug or a misparse of the OIDC/Federated
+  # statement sitting next to it.
+  #
+  # What bounds it: the statement is gated by a condition requiring
+  # aws:MultiFactorAuthPresent = true, so trusting account-root does not by
+  # itself let anyone in the management account assume the role — they still
+  # need their own IAM permission to assume it AND a live MFA session. This is
+  # the same break-glass shape already accepted for CKV_AWS_274 above (one
+  # deliberate full-access recovery path, gated, logged in CloudTrail): here
+  # it is the recovery path for a TerraformDeploy/TerraformPlan trust policy
+  # itself getting misconfigured and locking CI out, not for account admin.
+  #
+  # Production answer: scope the break-glass principal to a specific role in
+  # the management account (e.g. a dedicated BreakGlassOperator role) instead
+  # of :root, so the check passes on the ARN shape without weakening the MFA
+  # gate. Not done yet because that role does not exist in the management
+  # account today. Accepted for now. 2 findings (one per role, every account).
+  - CKV_AWS_61
 
   # ───────────────────────────────────────────────────────────────────────────
   # Tool limitation: count-expansion inside a nested external module
