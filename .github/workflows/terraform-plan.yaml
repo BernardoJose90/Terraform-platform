@@ -121,7 +121,7 @@ jobs:
       - name: Checkov Security Scan - All Accounts
         id: checkov
         if: needs.detect-changes.outputs.tf_changed == 'true'
-        uses: bridgecrewio/checkov-action@358405ddafaa109ad35d3d607bbc7cf933c742d9
+        uses: bridgecrewio/checkov-action@1246d92f57abae29d5db5f9aeeed2a9813e52d7d
         with:
           directory: member-accounts/
           config_file: .checkov.yaml
