@@ -4,9 +4,9 @@ name: Terraform Plan
 # This workflow only checks what Terraform would change. It does NOT make any changes.
 
 # The list of AWS accounts is automatically loaded from SSM.
-# We only check the account folders that were changed in the PR.
-# To add a new account, you only need to create its folder and add its SSM parameter.
-# You do not need to change this workflow.
+# it checks the account folders that were changed in the PR.
+# To add a new account, we only need to create its folder and add its SSM parameter.
+# we do not need to change this workflow.
 
 # Terraform creates a plan file (tfplan.binary) for each account.
 # The plan is saved and uploaded as an artifact.
@@ -529,7 +529,7 @@ jobs:
                 body,
               });
             }
-
+      # upload the plan output and the binary plan file as artifacts for later reuse in the apply workflow
       - name: Upload plan log artifact
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
