@@ -24,10 +24,9 @@ on:
     - cron: '0 2 * * *'
   workflow_dispatch:
 
-permissions:
-  id-token: write        # OIDC into each account's TerraformPlan role
-  contents: write        # push the drift/<account> branch
-  pull-requests: write   # open and comment on the drift PR
+# No workflow-level permissions block on purpose: each job below declares
+# only what it actually uses, so a step added to discover-accounts or summary
+# later doesn't silently inherit write access it never asked for.
 
 # One drift run at a time. A manual dispatch while the scheduled run is in
 # flight would otherwise race on the same drift/<account> branches.
@@ -49,6 +48,9 @@ jobs:
     name: Discover Accounts
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    # Read-only: only needs to assume the discovery role over OIDC.
+    permissions:
+      id-token: write
     outputs:
       matrix: ${{ steps.build-matrix.outputs.matrix }}
       account_count: ${{ steps.build-matrix.outputs.account_count }}
@@ -99,8 +101,19 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     if: needs.discover-accounts.outputs.account_count != '0' && needs.discover-accounts.outputs.account_count != ''
+    # The only job that writes anything: assumes each account's TerraformPlan
+    # role over OIDC, pushes the drift/<account> branch, and opens/comments
+    # on the drift PR.
+    permissions:
+      id-token: write
+      contents: write
+      pull-requests: write
     strategy:
       fail-fast: false
+      # Cap concurrent account checks so a growing account count doesn't
+      # throw dozens of simultaneous AWS API calls at once and start
+      # tripping rate limits on the 2am run.
+      max-parallel: 10
       matrix: ${{ fromJson(needs.discover-accounts.outputs.matrix) }}
 
     # Job level, not step level: a step's own `if:` cannot read env that the
@@ -329,6 +342,9 @@ jobs:
       - drift-check
     runs-on: ubuntu-latest
     if: always()
+    # Only reads job outputs and writes to the step summary - neither needs
+    # any GITHUB_TOKEN permission, so grant none.
+    permissions: {}
     steps:
       - name: Report
         run: |

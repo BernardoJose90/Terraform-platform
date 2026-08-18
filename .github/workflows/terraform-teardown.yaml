@@ -1,32 +1,21 @@
 name: Terraform Teardown
 
-# Manual, deliberate, full-workload teardown via CI. workflow_dispatch ONLY —
-# this must never run on push, and there is no "on: push" trigger here at all.
+# Manual teardown of the whole workload, run by hand from the Actions tab
+# (workflow_dispatch) only — it never runs on a push.
 #
-# This is the CI counterpart to scripts/teardown.sh, but a DELIBERATELY
-# separate implementation, not that script invoked non-interactively:
-# scripts/teardown.sh requires an interactive terminal to type the
-# confirmation phrase (see its own comments for why), which a GitHub Actions
-# runner can never provide. So this workflow re-implements the same tiering,
-# the same exclusions, and the same plan-then-apply-then-verify shape
-# directly in CI steps, with its own confirmation gate suited to
-# workflow_dispatch (a required input, validated in the very first job).
+# This is the CI version of scripts/teardown.sh. It's a separate copy, not
+# that script called from CI, because the script needs a real terminal to
+# type its confirmation phrase, which a CI runner doesn't have. So this file
+# has its own confirmation input instead, but does the same thing: same
+# tiers, same exclusions, same plan -> apply -> verify steps.
 #
-# KEEP THESE TWO FILES IN SYNC. If the tiers, the exclusion patterns, or the
-# ordering reasoning change in one, change the other — search both for
-# "EXCLUDE_PATTERN" and "TIER" if you're auditing for drift between them.
+# KEEP IN SYNC WITH scripts/teardown.sh. If you change a tier or an
+# exclusion here, change it there too (search both for "EXCLUDE_PATTERN"
+# and "TIER").
 #
-# See scripts/teardown.sh's header comment for the full reasoning behind:
-#   - why spokes (production, development) must be destroyed before network
-#   - why -target is used instead of -exclude (which doesn't exist in this
-#     repo's pinned Terraform version)
-#   - why module.tgw_spoke_wiring_production/development (network) and
-#     security's IAM Identity Center resources are excluded beyond just
-#     module.github-oidc-roles
-#   - why security's SSO account assignments are excluded too, as a
-#     judgment call, despite not being prevent_destroy-protected
-#
-# The README also documents this — see "Teardown" section.
+# For the WHY behind the tiers and exclusions (destroy order, protected
+# resources, etc.), see scripts/teardown.sh's header comment and the
+# README's "Teardown" section — not repeated here.
 
 on:
   workflow_dispatch:
@@ -94,7 +83,7 @@ jobs:
       tier3_matrix: ${{ steps.build.outputs.tier3_matrix }}
     steps:
       - name: Configure AWS credentials (discovery role — read-only)
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
           role-to-assume: ${{ vars.DISCOVERY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
@@ -162,7 +151,7 @@ jobs:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
       - name: Configure AWS credentials (${{ matrix.account }})
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
           role-to-assume: ${{ matrix.role_arn }}
           aws-region: ${{ env.AWS_REGION }}
@@ -257,7 +246,7 @@ jobs:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
       - name: Configure AWS credentials (${{ matrix.account }})
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
           role-to-assume: ${{ matrix.role_arn }}
           aws-region: ${{ env.AWS_REGION }}
@@ -355,7 +344,7 @@ jobs:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
       - name: Configure AWS credentials (${{ matrix.account }})
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
           role-to-assume: ${{ matrix.role_arn }}
           aws-region: ${{ env.AWS_REGION }}
