@@ -54,7 +54,7 @@ jobs:
       account_count: ${{ steps.build-matrix.outputs.account_count }}
     steps:
       - name: Configure AWS credentials (discovery role, read-only)
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
           role-to-assume: ${{ vars.DISCOVERY_ROLE_ARN }}
           aws-region: ${{ env.AWS_REGION }}
@@ -123,7 +123,7 @@ jobs:
 
       - name: Configure AWS credentials (${{ matrix.account }})
           # logs the pipeline into our AWS account (via the GitHub OIDC) to make AWS API calls.
-        uses: aws-actions/configure-aws-credentials@v6
+        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
           role-to-assume: ${{ matrix.role_arn }}
           aws-region: ${{ env.AWS_REGION }}
@@ -226,15 +226,26 @@ jobs:
             --color d93f0b \
             --description "Live infrastructure has drifted from Terraform" 2>/dev/null || true
 
+          # Resource addresses only, never the raw plan output: refresh-only
+          # plan text can contain real attribute values (Terraform only masks
+          # a field if that field's schema marks it sensitive), and this file
+          # gets committed into git history via the PR below. The full plan
+          # with values already exists as the drift-report-${ACCOUNT} workflow
+          # artifact (30-day retention, access-controlled) for anyone who
+          # needs it - it does not need a second, permanent copy in git.
           mkdir -p .drift
           {
             echo "# Drift report: ${ACCOUNT}"
             echo
             echo "Generated $(date -u +'%Y-%m-%d %H:%M UTC') by run ${RUN_URL}"
             echo
+            echo "**Drifted resources (${DRIFT_COUNT}):**"
+            echo
             echo '```'
-            head -c 200000 "${WORKDIR}/drift_output.txt"
+            echo "${DRIFT_RESOURCES}"
             echo '```'
+            echo
+            echo "Resource addresses only, no attribute values. For the full plan output, download the \`drift-report-${ACCOUNT}\` artifact from run ${RUN_URL} (kept 30 days)."
           } > ".drift/${ACCOUNT}.md"
 
           git config user.name  "github-actions[bot]"
