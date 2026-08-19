@@ -418,6 +418,4 @@ Solution: Ensure your `terraform.tfvars` file exists and sets the account's requ
 
 ## 📄 License
 
-This project is licensed under the MIT License.
-
-> ⚠️ No `LICENSE` file exists in the repo yet — add one if this claim needs to be enforceable.
+This project is licensed under the [MIT License](LICENSE).
