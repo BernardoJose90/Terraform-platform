@@ -69,7 +69,7 @@ jobs:
 
 
   # ──────────────────────────────────────────────────────────────────────────────
-  # 3. Detect which account folders changed
+  # 2. Detect which account folders changed
   # ──────────────────────────────────────────────────────────────────────────────
   detect-changes:
     name: Detect Changed Accounts
@@ -154,7 +154,7 @@ jobs:
           echo "has_changes=true" >> "$GITHUB_OUTPUT"
 
   # ──────────────────────────────────────────────────────────────────────────────
-  # 4. Discover accounts from SSM AND filter by changed accounts
+  # 3. Discover accounts from SSM AND filter by changed accounts
   # ──────────────────────────────────────────────────────────────────────────────
   discover-accounts:
     name: Discover & Filter Accounts
@@ -253,7 +253,7 @@ jobs:
           echo "⚠️ No accounts match the changed files. Skipping apply."
 
   # ──────────────────────────────────────────────────────────────────────────────
-  # 5. Resolve Plan (download reviewed plan if available)
+  # 4. Resolve Plan (download reviewed plan if available)
   # ──────────────────────────────────────────────────────────────────────────────
   resolve-plan-run:
     name: Locate and download reviewed plan
@@ -342,7 +342,7 @@ jobs:
           retention-days: 30
 
   # ──────────────────────────────────────────────────────────────────────────────
-  # 6a. Apply network FIRST — spoke accounts depend on it for SSM parameters
+  # 5. Apply network FIRST — spoke accounts depend on it for SSM parameters
   #     and IAM roles, so network must finish before spoke accounts start.
   #
   # This is a normal job, not a matrix, because there is only one network account.
@@ -495,7 +495,7 @@ jobs:
           if-no-files-found: ignore
 
   # ──────────────────────────────────────────────────────────────────────────────
-  # 6b. Apply every other changed account after network finishes.
+  # 6. Apply every other changed account after network finishes.
   #     This prevents spoke accounts from racing network.
   #
   # !failure() && !cancelled() means "continue unless an upstream job failed
