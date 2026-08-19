@@ -66,6 +66,7 @@ data "aws_iam_policy_document" "github_actions_trust_policy" {
         "repo:${var.github_org}/${var.github_repo}:environment:production-approval",
         "repo:${var.github_org}/${var.github_repo}:environment:automated",
         "repo:${var.github_org}/${var.github_repo}:environment:teardown-approval",
+        "repo:${var.github_org}/${var.github_repo}:environment:management-approval"
       ]
     }
   }
