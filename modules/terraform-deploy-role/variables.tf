@@ -47,3 +47,20 @@ variable "github_environment" {
   EOT
   type        = string
 }
+
+variable "permissions_boundary_arn" {
+  description = <<-EOT
+    Optional ARN of an IAM permissions boundary to attach to the
+    TerraformDeploy role. This module's own `permissions` policy above is
+    shared across every account that calls this module and is written wide
+    (ec2:*, unconstrained iam:CreateRole/AttachRolePolicy, VPN logging) for
+    accounts that actually run that kind of infrastructure. A boundary caps
+    what's *usable* for one specific caller without narrowing the shared
+    policy itself, so accounts that do need the wide grant are unaffected.
+    Leave unset (the default) for no boundary — the role's effective
+    permissions are then exactly what `permissions` above grants, unchanged
+    from before this variable existed.
+  EOT
+  type        = string
+  default     = null
+}
