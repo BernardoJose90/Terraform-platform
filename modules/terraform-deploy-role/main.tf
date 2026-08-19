@@ -28,18 +28,15 @@ data "aws_iam_policy_document" "trust" {
       values   = ["sts.amazonaws.com"]
     }
     condition {
-      test     = "StringLike"
+      test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      # ref-based entry stays first and unconditional so any caller that
-      # doesn't set github_environment keeps working exactly as before.
-      # The environment-based entry is only added when github_environment is
-      # set, because a job with `environment:` on it sends ONLY that subject
-      # format — never falls back to the ref-based one — so without this the
-      # role would reject every login from such a job (see variables.tf).
-      values = compact([
-        "repo:${var.github_org}/${var.github_repo}:ref:refs/heads/main",
-        var.github_environment != "" ? "repo:${var.github_org}/${var.github_repo}:environment:${var.github_environment}" : "",
-      ])
+      # Environment-only, exact match. The ref-based fallback was dropped:
+      # every caller of this role now goes through the github_environment
+      # approval gate on every login, so the branch-based entry no longer
+      # protected anything real — it only widened who could log in without
+      # clearing that gate. StringEquals (not StringLike) since there's no
+      # wildcard need once this is a single, exact value.
+      values = ["repo:${var.github_org}/${var.github_repo}:environment:${var.github_environment}"]
     }
   }
 }

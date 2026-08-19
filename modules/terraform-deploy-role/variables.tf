@@ -35,14 +35,15 @@ variable "account_name" {
 
 variable "github_environment" {
   description = <<-EOT
-    Optional GitHub Environment name used by the CI job that assumes this role.
-    When a workflow job specifies `environment:`, GitHub Actions changes the
-    OIDC token's `sub` claim from "repo:ORG/REPO:ref:refs/heads/main" to
-    "repo:ORG/REPO:environment:NAME" instead of using the ref-based format —
-    it does not send both. Leave empty (the default) if the calling job has no
-    `environment:` key; the ref-based condition alone is enough. Set this if it
-    does, so the trust policy accepts the subject the job will actually send.
+    Required. Name of the GitHub Environment the CI job assumes this role
+    from (e.g. "management-approval"). The trust policy only accepts the
+    environment-scoped OIDC subject, "repo:ORG/REPO:environment:NAME" — there
+    is no ref-based fallback, so every job that assumes this role must go
+    through this environment's protection rules (required reviewers). Leaving
+    this empty produces a trust policy that matches no possible login and
+    permanently locks the role out — this is intentional fail-closed
+    behaviour, not a bug: it's safer for a misconfigured caller to be unable
+    to log in at all than to silently fall back to a weaker, unreviewed path.
   EOT
   type        = string
-  default     = ""
 }
