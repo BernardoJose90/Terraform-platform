@@ -2,7 +2,7 @@
 
 > A production-ready, multi-account AWS infrastructure managed with Terraform, featuring centralized identity management, cross-account IAM roles, and isolated VPC environments.
 
-![Terraform](https://img.shields.io/badge/Terraform-1.10%2B-623CE4?style=flat&logo=terraform)
+![Terraform](https://img.shields.io/badge/Terraform-1.11.4-623CE4?style=flat&logo=terraform)
 ![AWS](https://img.shields.io/badge/AWS-EU--West--2-FF9900?style=flat&logo=amazon-aws)
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![Status](https://img.shields.io/badge/Status-Production_Ready-brightgreen)
@@ -31,24 +31,26 @@
 
 ## 🎯 Overview
 
-This repository contains Terraform configurations for managing a **multi-account (management and member accounts)** with:
+This repository contains Terraform configurations for the **six member accounts** of a multi-account AWS Organization — the management account, AWS Organizations setup, and org-wide SCPs live in the companion [Terraform-Org](https://github.com/BernardoJose90/Terraform-Org) repo, which this repo depends on for account IDs (via SSM) and the OIDC trust foundation.
 
-- ✅ **Centralized Identity Management** using AWS IAM Identity Center (SSO)
-- ✅ **Cross-Account Deployment Roles** for secure infrastructure provisioning
-- ✅ **Isolated VPC Networks** with private subnets for each environment
-- ✅ **Single S3 State Bucket** with isolated state files per account
-- ✅ **SSM Parameter Store** for sharing account IDs between repositories
+- ✅ **No long-lived AWS credentials** — every account is reached via GitHub OIDC, no IAM access keys anywhere in CI
+- ✅ **Delegated Identity Management** — IAM Identity Center (SSO) is administered from the `security` account (AWS's recommended delegated-admin pattern, not the management account itself)
+- ✅ **Cross-Account Deployment Roles** — a shared `github-oidc-roles` module gives every account its own scoped `TerraformDeploy`/`TerraformPlan` roles
+- ✅ **Isolated VPC Networks** with a hub-and-spoke Transit Gateway topology (`network` as hub, `production`/`development` as spokes)
+- ✅ **Single S3 State Bucket** with isolated state files per account, each role scoped to only its own prefix
+- ✅ **SSM Parameter Store** for sharing account IDs and TGW info across accounts and repos
 - ✅ **Modular Design** for reusability and maintainability
 
 ### ✨ Key Features
 
 | Feature | Description |
 |---------|-------------|
-| 🔐 **Centralized SSO** | Manage users, groups, and permissions from a single account |
-| 🔑 **Least Privilege** | Administrators have read-only access to production by default |
-| 🔄 **Cross-Account Roles** | Secure role assumption from management account |
-| 📦 **Modular Infrastructure** | Reusable modules for VPC and IAM roles |
-| 🗂️ **State Isolation** | Each account has its own isolated Terraform state |
+| 🔐 **Delegated SSO** | Users, groups, and permission sets managed from the `security` account |
+| 🔑 **Least Privilege** | Environment-scoped OIDC trust, optional IAM permissions boundaries, MFA-gated break-glass |
+| 🔄 **Cross-Account Roles** | Scoped `TerraformDeploy`/`TerraformPlan` roles per account, assumed only via GitHub Actions OIDC |
+| 📦 **Modular Infrastructure** | Reusable modules for VPC, TGW, IAM/OIDC roles, and EKS |
+| 🗂️ **State Isolation** | Each account's role can only touch its own prefix in the shared state bucket |
+| 🛡️ **CI-Enforced Guardrails** | Checkov scanning, required approvals on production/teardown, branch protection on `main` |
 
 
 ---
@@ -63,13 +65,14 @@ This repository contains Terraform configurations for managing a **multi-account
 
 | Account | Purpose | VPC CIDR | Region | Status |
 |---------|---------|----------|--------|--------|
-| **Management** | SSO, IAM, Organization management | N/A | eu-west-2 | ✅ Configured |
-| **Security** | GuardDuty, Security Hub, IAM Analyzer | N/A | eu-west-2 | ✅ Configured |
-| **Security Analytics** | AI-driven security analysis | N/A | eu-west-2 | ✅ Configured |
-| **Network** | Shared networking (TGW, Route53) | `10.0.0.0/16` | eu-west-2 | ✅ Configured |
-| **Monitoring** | CloudWatch, dashboards, alarms | N/A | eu-west-2 | ✅ Configured |
-| **Production** | Live production workloads | `10.1.0.0/16` | eu-west-2 | ✅ Configured |
-| **Development** | Development and testing | `10.2.0.0/16` | eu-west-2 | ✅ Configured |
+| **Security** | IAM Identity Center (SSO), GuardDuty, Security Hub | N/A — no VPC | eu-west-2 | ✅ Configured |
+| **Security Analytics** | AI-driven security analysis | N/A — no VPC | eu-west-2 | ✅ Configured |
+| **Network** | TGW hub, egress VPC, spoke wiring | `10.10.0.0/16` | eu-west-2 | ✅ Configured |
+| **Monitoring** | CloudWatch, dashboards, alarms | N/A — no VPC | eu-west-2 | ✅ Configured |
+| **Production** | Live production workloads (VPC, EKS/RDS/ALB subnets, TGW spoke) | `10.20.0.0/16` | eu-west-2 | ✅ Configured |
+| **Development** | Development and testing (VPC, TGW spoke) | `10.30.0.0/16` | eu-west-2 | ✅ Configured |
+
+> The **management account** (AWS Organizations, org-wide SCPs, account creation) is provisioned separately by the [Terraform-Org](https://github.com/BernardoJose90/Terraform-Org) repo, not this one.
 
 ---
 
@@ -77,31 +80,33 @@ This repository contains Terraform configurations for managing a **multi-account
 
 ```
 Terraform-platform/
-├── 📂 management-account/ # Centralized SSO & Identity
-│ ├── main.tf # SSO users, groups, permission sets
-│ ├── variables.tf # Region configuration
-│ └── iam.tf # IAM policies for SSM access
+├── 📂 member-accounts/            # All 6 member accounts
+│ ├── 📂 security/                 # SSO (sso.tf), GuardDuty, Security Hub
+│ ├── 📂 security_analytics/       # AI-driven security analysis
+│ ├── 📂 network/                  # TGW hub, egress VPC, spoke wiring roles
+│ ├── 📂 monitoring/                # CloudWatch, dashboards, alarms
+│ ├── 📂 production/                # VPC, EKS/RDS/ALB subnets, TGW spoke attachment
+│ └── 📂 development/               # VPC, TGW spoke attachment
+│   Each account's main.tf calls module "github-oidc-roles" for its
+│   TerraformDeploy/TerraformPlan roles, plus whatever else that account owns.
 │
-├── 📂 member-accounts/ # All 6 member accounts
-│ ├── 📂 security/ # Security account
-│ │ ├── main.tf # Deploy role + future resources
-│ │ └── variables.tf
-│ ├── 📂 security-analytics/ # Security analytics account
-│ ├── 📂 network/ # Network account with VPC
-│ ├── 📂 monitoring/ # Monitoring account
-│ ├── 📂 production/ # Production account with VPC
-│ └── 📂 development/ # Development account with VPC
+├── 📂 modules/                    # Reusable Terraform modules
+│ ├── 📂 github-oidc-roles/        # OIDC trust policy + deploy/plan roles (every account)
+│ ├── 📂 vpc/                      # VPC with private subnets
+│ ├── 📂 tgw/                      # Transit Gateway (network account)
+│ ├── 📂 tgw-attachment/           # Spoke VPC → TGW attachment
+│ ├── 📂 tgw-static-routes/        # Static routes on the TGW route table
+│ ├── 📂 tgw-spoke-wiring-role/    # Cross-account role network uses to wire a spoke
+│ ├── 📂 prod-purpose-subnets/     # Purpose-tagged subnets (EKS/RDS/ALB) for production
+│ ├── 📂 iam/                      # Shared IAM helpers
+│ └── 📂 eks/                      # EKS cluster module — not yet called by any account
 │
-├── 📂 modules/ # Reusable Terraform modules
-│ ├── 📂 terraform-deploy-role/ # Cross-account IAM role
-│ │ ├── main.tf # Trust policy & permissions
-│ │ └── variables.tf
-│ └── 📂 vpc/ # VPC with private subnets
-│ ├── main.tf
-│ └── variables.tf
-│
-├── 📄 README.md # This file
-└── 📄 .gitignore # Git ignore file
+├── 📂 scripts/                    # teardown.sh (interactive full teardown)
+├── 📂 docs/                       # teardown.md and other reference docs
+├── 📂 .github/workflows/          # terraform-plan / terraform-apply / terraform-teardown / drift-detection
+├── 📄 providers.tf                # One aliased aws provider per account (root-level)
+├── 📄 README.md                   # This file
+└── 📄 .gitignore
 ```
 
 ---
@@ -114,17 +119,17 @@ Before you begin, ensure you have:
 
 | Tool | Version | Installation |
 |------|---------|--------------|
-| **Terraform** | >= 1.10.0 | [Install Terraform](https://developer.hashicorp.com/terraform/downloads) |
+| **Terraform** | 1.11.4 (pinned in `.terraform-version`) | [Install Terraform](https://developer.hashicorp.com/terraform/downloads) |
 | **AWS CLI** | >= 2.0 | [Install AWS CLI](https://aws.amazon.com/cli/) |
 | **Git** | Latest | [Install Git](https://git-scm.com/downloads) |
 
 ### AWS Requirements
 
-- ✅ AWS Organization with management account access
-- ✅ AWS IAM Identity Center enabled
+- ✅ The [Terraform-Org](https://github.com/BernardoJose90/Terraform-Org) repo already applied — it creates the member accounts themselves, the SSM parameters this repo reads account IDs from, and the org-wide SCPs
+- ✅ AWS IAM Identity Center enabled, delegated to the `security` account
 - ✅ S3 bucket for Terraform state: `james-terraform-state-2026`
-- ✅ SSM Parameter Store access for account IDs
-- ✅ Appropriate IAM permissions in management account
+- ✅ SSM Parameter Store access for account IDs and TGW info
+- ✅ For local runs: AWS SSO profiles matching the aliases in root [providers.tf](providers.tf) (`management`, `development`, `security`, `network`, `production`, `monitoring`, `security-analytics`). CI instead assumes each account's `TerraformDeploy`/`TerraformPlan` role via GitHub OIDC — no long-lived credentials either way.
 
 ---
 
@@ -133,25 +138,20 @@ Before you begin, ensure you have:
 ### 1. Clone the Repository
 
 ```bash
-git clone https://github.com/your-org/Terraform-platform.git
+git clone https://github.com/BernardoJose90/Terraform-platform.git
 cd Terraform-platform
 ```
 
 ### 2. Login to AWS Using SSO
 
 ```bash
-aws sso login
+aws sso login --profile production   # or whichever account you're working in
 ```
 
 ### 3. Initialize Terraform
 
 ```bash
-# Initialize management account
-cd management-account
-terraform init
-
-# Initialize member accounts
-cd ../member-accounts/security
+cd member-accounts/security
 terraform init
 ```
 
@@ -163,87 +163,52 @@ terraform init
 
 You MUST deploy in this order:
 
-1. **AWS Organizations** (creates accounts + SSM parameters)
-2. **Management Account** (sets up SSO permissions)
-3. **Member Accounts** (creates deployment roles + resources)
+1. **[Terraform-Org](https://github.com/BernardoJose90/Terraform-Org)** — creates the AWS accounts themselves, org-wide SCPs, and the SSM parameters this repo reads account IDs from
+2. **`security`** — provisions IAM Identity Center (SSO users/groups/permission sets) before anyone needs SSO access to the rest
+3. **`network`** — the TGW hub must exist before either spoke can attach to it
+4. **`production` / `development`** — TGW spokes; each reads `network`'s TGW ID via a data source, so `network` must already be applied
+5. **`monitoring` / `security_analytics`** — no dependency on the others, deploy any time after `security`
 
-### Step 1: Deploy Management Account First
+In CI, this ordering is enforced automatically: `terraform-plan.yaml`/`terraform-apply.yaml` discover changed account folders from the PR diff and fan out a matrix job per account, and `terraform-teardown.yaml` runs the reverse order strictly tiered (see [Teardown](#teardown)).
 
-```bash
-cd management-account
-
-# Plan changes
-terraform plan
-
-# Apply changes
-terraform apply
-
-# Verify SSO setup
-aws ssoadmin list-instances --region eu-west-2
-```
-
-### Step 2: Deploy Member Accounts
+### Manual / local apply, in order
 
 ```bash
-# Deploy each member account
-cd ../member-accounts/security
-terraform init
-terraform apply
+cd member-accounts/security
+terraform init && terraform apply
 
 cd ../network
-terraform init
-terraform apply
+terraform init && terraform apply
 
 cd ../production
-terraform init
-terraform apply
+terraform init && terraform apply
 
 cd ../development
-terraform init
-terraform apply
+terraform init && terraform apply
 
 cd ../monitoring
-terraform init
-terraform apply
+terraform init && terraform apply
 
-cd ../security-analytics
-terraform init
-terraform apply
-```
-
-### Quick Deploy All Member Accounts
-
-```bash
-#!/bin/bash
-cd ../member-accounts
-
-for account in security security-analytics network monitoring production development; do
-    echo "🚀 Deploying $account..."
-    cd $account
-    terraform init
-    terraform apply -auto-approve
-    cd ..
-done
-
-echo "🎉 All member accounts deployed!"
+cd ../security_analytics
+terraform init && terraform apply
 ```
 
 ---
 
 ## 🗂️ State Management
 
-All Terraform state is stored in a central S3 bucket in the Management account:
+All Terraform state for this repo's accounts lives in one shared S3 bucket, `james-terraform-state-2026` — the management account's own state (and AWS Organizations') is in the same bucket but managed by the separate [Terraform-Org](https://github.com/BernardoJose90/Terraform-Org) repo:
 
 | Account | State File Path |
 |---------|-----------------|
-| Management | `management/terraform.tfstate` |
 | Security | `security/terraform.tfstate` |
 | Security Analytics | `security-analytics/terraform.tfstate` |
 | Network | `network/terraform.tfstate` |
 | Monitoring | `monitoring/terraform.tfstate` |
 | Production | `production/terraform.tfstate` |
 | Development | `development/terraform.tfstate` |
-| AWS Organizations | `org/terraform.tfstate` |
+
+Each account's `TerraformDeploy`/`TerraformPlan` role can only read/write its own prefix above (`s3:GetObject`/`PutObject`/`DeleteObject` scoped to `${prefix}/*`, `s3:ListBucket` scoped by `s3:prefix` condition) — no account's CI can touch another account's state file, even though they share one bucket.
 
 ### State Locking
 
@@ -259,49 +224,16 @@ backend "s3" {
 
 ## 🔄 CI/CD Pipeline
 
-### GitHub Actions Example
+Four workflows in [.github/workflows/](.github/workflows/), all authenticating via GitHub OIDC — no IAM access keys anywhere:
 
-Create `.github/workflows/deploy.yml`:
+| Workflow | Trigger | What it does |
+|---|---|---|
+| `terraform-plan.yaml` | PR opened/updated against `main` | Discovers changed account folders from the PR diff (accounts come from SSM at runtime — adding a new account needs no workflow change), runs `Validate & Format`, Checkov (`Security Scan`, uploaded as SARIF to the Security tab), and a `plan` per changed account. The plan file is uploaded as an artifact. |
+| `terraform-apply.yaml` | Push to `main` (i.e. a PR merge) | Re-applies the **exact same plan artifact** reviewed in the PR, traced back through the merge commit — never a freshly-computed plan, so what was reviewed is what ships. A production apply refuses to run if that reviewed plan can't be found, rather than silently planning fresh. Each account applies behind its own GitHub Environment approval gate (`production-approval` by default, per-account tier from SSM). |
+| `terraform-teardown.yaml` | `workflow_dispatch` only | Full `terraform destroy` in strict dependency order — see [Teardown](#teardown). Requires typing `destroy-workloads` as a confirm input. |
+| `drift-detection.yaml` | Scheduled, daily | Refresh-only plan per account (never mutates anything). On drift: opens/updates a PR on a `drift/<account>` branch, posts to Slack if configured, then fails the job as a last-resort notification. |
 
-```yaml
-name: Deploy Terraform
-
-on:
-  push:
-    branches: [main]
-  workflow_dispatch:
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    permissions:
-      id-token: write
-      contents: read
-    
-    strategy:
-      matrix:
-        account: [management, security, network, production, development, monitoring, security-analytics]
-    
-    steps:
-      - uses: actions/checkout@v4
-      
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@v3
-        with:
-          terraform_version: 1.10.0
-      
-      - name: Configure AWS
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: arn:aws:iam::145678291484:role/TerraformDeploy
-          aws-region: eu-west-2
-      
-      - name: Terraform Deploy
-        working-directory: ${{ matrix.account == 'management' && 'management-account' || format('member-accounts/{0}', matrix.account) }}
-        run: |
-          terraform init
-          terraform apply -auto-approve
-```
+`main` is protected by a GitHub ruleset (`protect-main`) requiring `Validate & Format`, `Security Scan (Checkov)`, and `Plan Summary` to pass, plus an open PR, before merge.
 
 ---
 
@@ -393,22 +325,23 @@ warning rather than hiding it.
 
 ### ✅ Implemented
 
-- **Principle of Least Privilege** - Administrators have read-only by default for production
-- **Cross-Account Roles** - Management account trusts only itself to assume roles
-- **State Encryption** - All Terraform state files are encrypted at rest
-- **State Locking** - Prevent concurrent modifications
-- **SSM Parameter Store** - Secure sharing of account IDs
-- **Groups over Users** - Permissions managed via groups, not individuals
+- **No long-lived credentials** — every account is reached via GitHub OIDC (`sts:AssumeRoleWithWebIdentity`), scoped to specific GitHub Environment subjects, no IAM access keys
+- **Optional permissions boundaries** — `permissions_boundary_arn` on `github-oidc-roles` lets any one account cap its effective permissions below the shared module policy, without narrowing it for every other account
+- **MFA-gated break-glass** — the management account can always assume any deploy role directly, but only with `aws:MultiFactorAuthPresent`
+- **State isolation** — each account's role is scoped to only its own prefix in the shared state bucket, enforced by IAM condition, not just convention
+- **Branch protection** — `main` requires Checkov + validation + plan checks and an open PR before merge (`protect-main` ruleset)
+- **Automated security scanning** — Checkov on every PR, results surfaced as SARIF in the GitHub Security tab
+- **GitHub secret scanning + push protection** enabled
+- **Approval gates on risk** — production and teardown applies sit behind required-reviewer GitHub Environments
+- **Drift detection** — daily refresh-only plans catch out-of-band changes automatically, not just at the next PR
+- **SCPs at the org level** — enforced by [Terraform-Org](https://github.com/BernardoJose90/Terraform-Org), e.g. region restriction
+- **Groups over Users** — SSO permissions managed via groups, not individuals
 
-### 📋 Additional Recommendations
+### 📋 Still Open
 
-- Enable MFA for all AWS accounts
-- Use AWS Secrets Manager for sensitive values
-- Implement SCPs (Service Control Policies) at organization level
-- Enable CloudTrail for audit logging
-- Set up AWS Config for compliance monitoring
-- Regular Security Reviews - Schedule periodic security audits
-- Rotate Credentials - Regularly rotate IAM keys and roles
+- **Repo visibility** — currently public; planned to go private once the project is stable
+- **Dependabot security updates** — currently disabled (secret scanning is on; dependency auto-PRs are not)
+- **Automated Terraform tests** — no `.tftest.hcl` yet encoding intent (e.g. "the OIDC trust policy must never accept a ref-based fallback") as a check CI runs, rather than relying on a reviewer catching a regression by eye
 
 ---
 
@@ -463,12 +396,12 @@ aws s3 mb s3://james-terraform-state-2026 --region eu-west-2
 **5. Terraform Asks for Variables**
 
 ```
-var.account_emails
-  Unique root email address for each member account.
+var.account_name
+  Short name for this account, e.g. "security", "production" — used only for tagging.
   Enter a value:
 ```
 
-Solution: Ensure your `terraform.tfvars` file exists with all required variables
+Solution: Ensure your `terraform.tfvars` file exists and sets the account's required variables (at minimum `account_name` and `state_key_prefix` for every account calling `github-oidc-roles`)
 
 ---
 
@@ -476,15 +409,15 @@ Solution: Ensure your `terraform.tfvars` file exists with all required variables
 
 ### How to Contribute
 
-1. Fork the repository
-2. Create a feature branch (`git checkout -b feature/amazing-feature`)
-3. Commit changes (`git commit -m 'Add some amazing feature'`)
-4. Push to branch (`git push origin feature/amazing-feature`)
-5. Open a Pull Request
+1. Branch off `main` (`git checkout -b feat/your-change`)
+2. Commit changes
+3. Push and open a Pull Request against `main`
+4. `Validate & Format`, `Security Scan (Checkov)`, and a per-account `Plan` must pass — `main` is protected and won't merge without them
 
 ---
 
 ## 📄 License
 
 This project is licensed under the MIT License.
-# trigger
+
+> ⚠️ No `LICENSE` file exists in the repo yet — add one if this claim needs to be enforceable.
