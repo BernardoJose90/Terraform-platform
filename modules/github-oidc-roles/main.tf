@@ -261,6 +261,9 @@ resource "aws_iam_role" "terraform_deploy" {
   name                 = var.role_name
   assume_role_policy   = data.aws_iam_policy_document.github_actions_trust_policy.json
   max_session_duration = 3600
+  # See variables.tf — null (the default) means no boundary, unchanged
+  # behavior for every caller that doesn't set this.
+  permissions_boundary = var.permissions_boundary_arn
 
   tags = {
     ManagedBy   = "Terraform"
