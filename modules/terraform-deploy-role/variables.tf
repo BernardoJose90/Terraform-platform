@@ -32,3 +32,17 @@ variable "account_name" {
   description = "Short name for this account, e.g. \"security\", \"production\" — used only for tagging."
   type        = string
 }
+
+variable "github_environment" {
+  description = <<-EOT
+    Optional GitHub Environment name used by the CI job that assumes this role.
+    When a workflow job specifies `environment:`, GitHub Actions changes the
+    OIDC token's `sub` claim from "repo:ORG/REPO:ref:refs/heads/main" to
+    "repo:ORG/REPO:environment:NAME" instead of using the ref-based format —
+    it does not send both. Leave empty (the default) if the calling job has no
+    `environment:` key; the ref-based condition alone is enough. Set this if it
+    does, so the trust policy accepts the subject the job will actually send.
+  EOT
+  type        = string
+  default     = ""
+}

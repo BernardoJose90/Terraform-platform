@@ -30,7 +30,16 @@ data "aws_iam_policy_document" "trust" {
     condition {
       test     = "StringLike"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:${var.github_org}/${var.github_repo}:ref:refs/heads/main"]
+      # ref-based entry stays first and unconditional so any caller that
+      # doesn't set github_environment keeps working exactly as before.
+      # The environment-based entry is only added when github_environment is
+      # set, because a job with `environment:` on it sends ONLY that subject
+      # format — never falls back to the ref-based one — so without this the
+      # role would reject every login from such a job (see variables.tf).
+      values = compact([
+        "repo:${var.github_org}/${var.github_repo}:ref:refs/heads/main",
+        var.github_environment != "" ? "repo:${var.github_org}/${var.github_repo}:environment:${var.github_environment}" : "",
+      ])
     }
   }
 }
