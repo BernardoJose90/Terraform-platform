@@ -121,9 +121,48 @@ data "aws_iam_policy_document" "permissions" {
       "iam:GetPolicyVersion",
       "iam:ListPolicyVersions",
       "iam:CreatePolicyVersion",
-      "iam:DeletePolicyVersion"
+      "iam:DeletePolicyVersion",
+      # Same lesson as ssm:AddTagsToResource / logs:TagResource above, this
+      # time on the standalone managed policy modules/vpc's upstream module
+      # creates for flow-log delivery (aws_iam_policy.vpc_flow_log_cloudwatch):
+      # CreatePolicy with tags needs its own Tag action too, and reading tags
+      # back on refresh is a separate call for managed policies (unlike
+      # roles, where GetRole returns tags inline).
+      "iam:TagPolicy",
+      "iam:UntagPolicy",
+      "iam:ListPolicyTags"
     ]
     resources = ["*"]
+  }
+
+  # iam:PassRole is deliberately its OWN statement, never folded into
+  # ManageInstanceRoles above: managing a role's lifecycle and being allowed
+  # to hand that role to another AWS service to assume are two different
+  # permissions in AWS's model, on purpose — folding them together would
+  # mean anything this role can create, it can also silently hand off for
+  # another service to use.
+  #
+  # Needed because aws_flow_log.this (modules/vpc's upstream module) passes
+  # the flow-log delivery role's ARN to EC2's CreateFlowLogs API — passing a
+  # role to a service always needs iam:PassRole on the CALLER, separate from
+  # whatever permissions the role itself carries. resources = ["*"] because
+  # the role name is a Terraform-generated suffix, no fixed ARN to scope to
+  # (same reasoning as ManageInstanceRoles). Bounded instead by
+  # iam:PassedToService: this grants "pass a role to the VPC Flow Logs
+  # service", not "pass any role to any service" — the standard AWS-
+  # recommended way to keep PassRole from being a blank check even when the
+  # resource can't be scoped by ARN.
+  statement {
+    sid       = "PassFlowLogDeliveryRole"
+    effect    = "Allow"
+    actions   = ["iam:PassRole"]
+    resources = ["*"]
+
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PassedToService"
+      values   = ["vpc-flow-logs.amazonaws.com"]
+    }
   }
 
   # KMS key + alias for VPC flow log CloudWatch log group encryption
