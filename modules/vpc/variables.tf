@@ -137,3 +137,36 @@ variable "igw_tags" {
   type        = map(string)
   default     = {}
 }
+
+# ======================================================================================
+# VPC Flow Logs. On by default for every caller — CloudWatch Logs destination, with the
+# upstream module creating both the log group and the IAM role that delivers to it.
+# ======================================================================================
+variable "enable_flow_log" {
+  description = "Enable VPC Flow Logs for this VPC. On by default so every account using this module gets flow logs without opting in."
+  type        = bool
+  default     = true
+}
+
+variable "flow_log_traffic_type" {
+  description = "Type of traffic to capture: ACCEPT, REJECT, or ALL."
+  type        = string
+  default     = "ALL"
+
+  validation {
+    condition     = contains(["ACCEPT", "REJECT", "ALL"], var.flow_log_traffic_type)
+    error_message = "flow_log_traffic_type must be one of: ACCEPT, REJECT, ALL."
+  }
+}
+
+variable "flow_log_cloudwatch_log_group_retention_in_days" {
+  description = "Retention for the auto-created CloudWatch log group that flow logs are delivered to."
+  type        = number
+  default     = 90
+}
+
+variable "flow_log_max_aggregation_interval" {
+  description = "Max interval (seconds) at which flow log records are aggregated: 60 or 600."
+  type        = number
+  default     = 600
+}

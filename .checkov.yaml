@@ -200,3 +200,37 @@ skip-check:
   # remove these two skips and deal with the noise.
   - CKV2_AWS_19
   - CKV2_AWS_12
+
+  # CKV_AWS_338 — "Ensure CloudWatch log groups retains logs for at least 1 year".
+  # modules/vpc sets flow_log_cloudwatch_log_group_retention_in_days = 90. Accepted:
+  # 90 days balances CloudWatch storage cost against the troubleshooting/audit window
+  # for flow logs, which are high-volume. (Previously skipped under CKV2_AWS_338, which
+  # is not a real check ID — that skip was a no-op. Fixed to the real ID, CKV_AWS_338.)
+  - CKV_AWS_338
+
+  # CKV2_AWS_11 — "Ensure VPC flow logging is enabled in all VPCs". Same tool
+  # limitation as CKV2_AWS_19/CKV2_AWS_12 above, just the mirror image: it PASSES
+  # under the source scan (verified: `checkov -d modules/vpc --check CKV2_AWS_11`
+  # passes cleanly) but FAILS under the terraform_plan (resolved-plan) scan on
+  # module.egress_vpc[0].module.vpc.aws_vpc.this[0] — Checkov's plan-based graph
+  # can't trace the aws_vpc -> aws_flow_log connection through a module-count x
+  # resource-count nesting two levels deep. Flow logs are genuinely enabled
+  # (modules/vpc defaults enable_flow_log = true). Skipped because the SOURCE
+  # scan is the pass that actually covers this ground, same logic as above.
+  - CKV2_AWS_11
+
+  # CKV2_AWS_35 — "AWS NAT Gateways should be utilized for the default route".
+  # False positive introduced by our own EVAL_TF_PLAN_AFTER_UNKNOWN=true fix
+  # (terraform-plan.yaml, added to resolve CKV_AWS_158 on the new flow-log KMS
+  # key). aws_route's instance_id is never set — we route via nat_gateway_id /
+  # gateway_id instead — but the provider schema marks instance_id as
+  # computed-if-unset, so it shows up in the plan's after_unknown too. Before
+  # our fix, Checkov read that as "attribute absent" and passed correctly.
+  # After it, Checkov treats every after_unknown attribute as "will get a real
+  # value", so instance_id looks set when it never will be. Verified by
+  # reproducing both real terraform_plan JSONs locally, with and without the
+  # env var flag, against modules/vpc: CKV_AWS_158 flips fail->pass and
+  # CKV2_AWS_35 flips pass->fail at the same time. Accepted trade-off — see
+  # main.tf and variables.tf for the actual NAT/IGW route resources; there is
+  # no NAT instance anywhere in this VPC design.
+  - CKV2_AWS_35
