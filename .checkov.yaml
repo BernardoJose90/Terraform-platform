@@ -202,4 +202,4 @@ skip-check:
   - CKV2_AWS_12
 
   # Ensure CloudWatch log groups retains logs for at least 1 year skipped because the risk is accepted we have it set for only 90days
-  - CKV2_AWS_12
+  - CKV2_AWS_338
