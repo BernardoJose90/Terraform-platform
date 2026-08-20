@@ -58,7 +58,7 @@ module "vpc" {
   enable_flow_log                                 = var.enable_flow_log
   create_flow_log_cloudwatch_log_group            = var.enable_flow_log
   create_flow_log_cloudwatch_iam_role             = var.enable_flow_log
-  flow_log_destination_type                       = "cloud-watch-VPC-logs"
+  flow_log_destination_type                       = "cloud-watch-logs"
   flow_log_traffic_type                           = var.flow_log_traffic_type
   flow_log_max_aggregation_interval               = var.flow_log_max_aggregation_interval
   flow_log_cloudwatch_log_group_retention_in_days = var.flow_log_cloudwatch_log_group_retention_in_days
