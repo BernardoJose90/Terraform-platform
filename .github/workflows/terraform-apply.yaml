@@ -439,7 +439,14 @@ jobs:
           echo "🚀 Applying the exact plan reviewed on the merged PR for network"
           echo "📂 Working directory: member-accounts/network"
           echo ""
+          # PIPESTATUS[0] (not the pipeline's own exit code, which is tee's — always 0)
+          # so a real apply failure actually fails this step. Without this, "terraform
+          # apply | tee" always reports success regardless of whether apply errored:
+          # confirmed happening on a real run where the log showed
+          # "Error: ... Terraform exited with code 1" but the job still reported
+          # conclusion "success" in the GitHub API.
           terraform apply -input=false -lock-timeout=120s tfplan.binary 2>&1 | tee apply_output.txt
+          exit "${PIPESTATUS[0]}"
 
       # This is only reached by workflow_dispatch.
       # All pushes are blocked above if there is no reviewed plan.
@@ -455,7 +462,14 @@ jobs:
           echo "📂 Working directory: member-accounts/network"
           echo ""
           terraform plan -no-color -input=false -lock-timeout=60s -out=tfplan.binary
+          # PIPESTATUS[0] (not the pipeline's own exit code, which is tee's — always 0)
+          # so a real apply failure actually fails this step. Without this, "terraform
+          # apply | tee" always reports success regardless of whether apply errored:
+          # confirmed happening on a real run where the log showed
+          # "Error: ... Terraform exited with code 1" but the job still reported
+          # conclusion "success" in the GitHub API.
           terraform apply -input=false -lock-timeout=120s tfplan.binary 2>&1 | tee apply_output.txt
+          exit "${PIPESTATUS[0]}"
 
       - name: Report apply outcome
         working-directory: member-accounts/network
@@ -601,7 +615,14 @@ jobs:
           echo "📂 Working directory: ${{ matrix.working_directory }}"
           echo "🏷️ Environment: ${{ matrix.environment }}"
           echo ""
+          # PIPESTATUS[0] (not the pipeline's own exit code, which is tee's — always 0)
+          # so a real apply failure actually fails this step. Without this, "terraform
+          # apply | tee" always reports success regardless of whether apply errored:
+          # confirmed happening on a real run where the log showed
+          # "Error: ... Terraform exited with code 1" but the job still reported
+          # conclusion "success" in the GitHub API.
           terraform apply -input=false -lock-timeout=120s tfplan.binary 2>&1 | tee apply_output.txt
+          exit "${PIPESTATUS[0]}"
 
       # This runs for manual workflow_dispatch runs, or for non-production accounts
       # on a push. Production pushes are blocked by the refusal above.
@@ -614,7 +635,14 @@ jobs:
           echo "📂 Working directory: ${{ matrix.working_directory }}"
           echo ""
           terraform plan -no-color -input=false -lock-timeout=60s -out=tfplan.binary
+          # PIPESTATUS[0] (not the pipeline's own exit code, which is tee's — always 0)
+          # so a real apply failure actually fails this step. Without this, "terraform
+          # apply | tee" always reports success regardless of whether apply errored:
+          # confirmed happening on a real run where the log showed
+          # "Error: ... Terraform exited with code 1" but the job still reported
+          # conclusion "success" in the GitHub API.
           terraform apply -input=false -lock-timeout=120s tfplan.binary 2>&1 | tee apply_output.txt
+          exit "${PIPESTATUS[0]}"
 
       - name: Report apply outcome
         working-directory: ${{ matrix.working_directory }}

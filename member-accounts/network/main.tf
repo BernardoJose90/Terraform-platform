@@ -19,6 +19,13 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 6.0"
     }
+    # Only used for the time_sleep guard below, working around IAM's eventual
+    # consistency when this account's own deploy-role permissions and a
+    # resource that needs them are applied in the same run.
+    time = {
+      source  = "hashicorp/time"
+      version = "~> 0.11"
+    }
   }
   backend "s3" {
     bucket       = "james-terraform-state-2026"
@@ -110,6 +117,22 @@ module "github-oidc-roles" {
   role_name             = "TerraformDeploy"
 }
 
+# module.github-oidc-roles manages this same account's own TerraformDeploy
+# role permissions (data.aws_iam_policy_document.permissions in that module).
+# When a permissions change and a resource that needs it (e.g. the flow-log
+# KMS key below) land in the same apply, Terraform has no dependency edge
+# between them and applies both in parallel — the IAM policy update reports
+# "Modifications complete" in under a second, but IAM's authorization layer
+# is eventually consistent and can lag a few seconds behind that. Hit for
+# real: a KMS CreateKey call failed with AccessDeniedException moments after
+# the exact permission it needed had already been added, in the same apply.
+# This makes every module below explicitly wait past that propagation
+# window rather than relying on timing.
+resource "time_sleep" "wait_for_deploy_role_permissions" {
+  depends_on      = [module.github-oidc-roles]
+  create_duration = "15s"
+}
+
 # -----------------------------------------------------------------------
 # Egress VPC (10.10.0.0/16)
 #   private_subnets = TGW attachment subnets (sub-tgw-egress-a/b)
@@ -122,6 +145,9 @@ module "egress_vpc" {
   count = var.networking_enabled ? 1 : 0
 
   source = "../../modules/vpc"
+
+  # See time_sleep.wait_for_deploy_role_permissions above.
+  depends_on = [time_sleep.wait_for_deploy_role_permissions]
 
   name = "egress-vpc"
   cidr = var.cidr
