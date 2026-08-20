@@ -126,6 +126,50 @@ data "aws_iam_policy_document" "permissions" {
     resources = ["*"]
   }
 
+  # KMS key + alias for VPC flow log CloudWatch log group encryption
+  # (modules/vpc/main.tf: aws_kms_key.flow_log, aws_kms_alias.flow_log).
+  # Discovered missing when a real apply failed on kms:TagResource: CreateKey
+  # with tags is actually two permission checks in one API call, and only
+  # kms:CreateKey existed.
+  #
+  # Deliberately NOT kms:* — every action below is one modules/vpc's
+  # aws_kms_key/aws_kms_alias resources actually call across their full
+  # create/read/update/delete lifecycle, nothing more. In particular this
+  # role never needs to USE the key (kms:Decrypt/Encrypt/GenerateDataKey*),
+  # only manage its existence, and it never needs kms:CreateGrant — granting
+  # that on resources = ["*"] would let this role hand out decrypt/sign
+  # rights on every KMS key in the account, not just this one, which is a
+  # documented KMS privilege-escalation path (AWS's own KMS best-practices
+  # guide warns against exactly this). resources = ["*"] is still required
+  # here (same reasoning as ManageInstanceRoles above): CreateKey/CreateAlias
+  # must run before the key/alias exist to have an ARN to scope to.
+  statement {
+    sid    = "FlowLogKmsKey"
+    effect = "Allow"
+    actions = [
+      "kms:CreateKey",
+      "kms:DescribeKey",
+      "kms:GetKeyPolicy",
+      "kms:PutKeyPolicy",
+      "kms:GetKeyRotationStatus",
+      "kms:EnableKeyRotation",
+      "kms:DisableKeyRotation",
+      "kms:EnableKey",
+      "kms:DisableKey",
+      "kms:UpdateKeyDescription",
+      "kms:ScheduleKeyDeletion",
+      "kms:CancelKeyDeletion",
+      "kms:TagResource",
+      "kms:UntagResource",
+      "kms:ListResourceTags",
+      "kms:CreateAlias",
+      "kms:DeleteAlias",
+      "kms:UpdateAlias",
+      "kms:ListAliases",
+    ]
+    resources = ["*"]
+  }
+
   statement {
     sid    = "VpnLogging"
     effect = "Allow"
