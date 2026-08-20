@@ -171,14 +171,26 @@ data "aws_iam_policy_document" "permissions" {
   }
 
   statement {
-    sid    = "VpnLogging"
+    # Originally VPN-only; also covers the VPC flow log CloudWatch group now
+    # (modules/vpc/main.tf's flow_log_destination_type = "cloud-watch-logs"),
+    # since both are just "a CloudWatch log group this account's Terraform
+    # creates" with no meaningful difference in the permissions needed.
+    sid    = "CloudWatchLogGroups"
     effect = "Allow"
     actions = [
       "logs:CreateLogGroup",
       "logs:CreateLogStream",
       "logs:PutLogEvents",
       "logs:DescribeLogGroups",
-      "logs:DeleteLogGroup"
+      "logs:DeleteLogGroup",
+      # Same lesson as ssm:AddTagsToResource above: CreateLogGroup with tags is
+      # two permission checks in one API call, and only CreateLogGroup existed.
+      # Hit for real: "AccessDeniedException: ... not authorized to perform
+      # CreateLogGroup with Tags. An additional permission logs:TagResource is
+      # required" on the flow-log group's aws_cloudwatch_log_group.flow_log.
+      "logs:TagResource",
+      "logs:UntagResource",
+      "logs:ListTagsForResource"
     ]
     resources = ["*"]
   }
