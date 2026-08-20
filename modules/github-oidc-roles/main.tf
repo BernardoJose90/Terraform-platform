@@ -108,6 +108,13 @@ data "aws_iam_policy_document" "permissions" {
       "iam:GetInstanceProfile",
       "iam:AddRoleToInstanceProfile",
       "iam:RemoveRoleFromInstanceProfile",
+      # Not a create/delete action on its own — the AWS provider calls this
+      # as a safety check before iam:DeleteRole actually runs, to confirm
+      # nothing is still attached. Deleting a role without it fails even
+      # though DeleteRole itself is already granted below. Hit for real on
+      # a teardown: every other flow-log resource destroyed cleanly, then
+      # the delivery role's own deletion failed on this exact call.
+      "iam:ListInstanceProfilesForRole",
 
       # OIDC and policy management
       "iam:GetOpenIDConnectProvider",
