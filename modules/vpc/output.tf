@@ -68,3 +68,8 @@ output "flow_log_cloudwatch_iam_role_arn" {
   description = "ARN of the IAM role used to deliver flow logs to CloudWatch."
   value       = module.vpc.vpc_flow_log_cloudwatch_iam_role_arn
 }
+
+output "flow_log_kms_key_arn" {
+  description = "ARN of the CMK encrypting the flow log CloudWatch log group. Null when enable_flow_log = false."
+  value       = try(aws_kms_key.flow_log[0].arn, null)
+}
