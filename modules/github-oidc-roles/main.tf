@@ -190,7 +190,19 @@ data "aws_iam_policy_document" "permissions" {
       # required" on the flow-log group's aws_cloudwatch_log_group.flow_log.
       "logs:TagResource",
       "logs:UntagResource",
-      "logs:ListTagsForResource"
+      "logs:ListTagsForResource",
+      # aws_cloudwatch_log_group.flow_log sets retention_in_days and
+      # kms_key_id, each a SEPARATE API call from CreateLogGroup itself, and
+      # each needing its own permission the same way TagResource did. Adding
+      # the full set now rather than one AccessDenied at a time:
+      #   - retention_in_days -> PutRetentionPolicy (set) / DeleteRetentionPolicy
+      #     (only if retention_in_days is ever removed/set to null)
+      #   - kms_key_id        -> AssociateKmsKey (set) / DisassociateKmsKey
+      #     (only if kms_key_id is ever removed)
+      "logs:PutRetentionPolicy",
+      "logs:DeleteRetentionPolicy",
+      "logs:AssociateKmsKey",
+      "logs:DisassociateKmsKey"
     ]
     resources = ["*"]
   }
