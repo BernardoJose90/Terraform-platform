@@ -131,6 +131,19 @@ module "github-oidc-roles" {
 resource "time_sleep" "wait_for_deploy_role_permissions" {
   depends_on      = [module.github-oidc-roles]
   create_duration = "15s"
+
+  # Without this, the wait only ever happens the FIRST time this resource is
+  # created — later applies that change the permissions document again (a
+  # new action, a new statement) don't touch time_sleep at all, so there's
+  # no wait before the next thing that needs the new permission. Hit for
+  # real: the KMS fix's own apply waited and succeeded, but the very next
+  # apply — adding logs:TagResource for the flow-log CloudWatch group —
+  # changed the policy again and had NO wait at all, and failed the same way.
+  # Keying off the policy's own hash forces time_sleep to be destroyed and
+  # recreated (re-running its wait) on every permissions change, forever.
+  triggers = {
+    permissions_policy_hash = module.github-oidc-roles.permissions_policy_hash
+  }
 }
 
 # -----------------------------------------------------------------------
