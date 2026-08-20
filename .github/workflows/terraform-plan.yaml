@@ -569,6 +569,16 @@ jobs:
 
       - name: Checkov policy scan (resolved plan)
         if: steps.plan.outputs.plan_exit_code == '0'
+        env:
+          # Without this, Checkov reads only the plan's `after` values. A resource
+          # created in the same plan as something it depends on (e.g. a CloudWatch
+          # log group's kms_key_id pointing at a KMS key being created alongside it)
+          # has that value as `(known after apply)` — `after` is null, so
+          # value-presence checks like CKV_AWS_158 see "not set" and fail, even
+          # though the HCL genuinely sets it. This tells Checkov to treat
+          # `(known after apply)` as "will have a value" instead of "has no value".
+          # Checkov source: checkov/terraform/plan_parser.py, _eval_after_unknown().
+          EVAL_TF_PLAN_AFTER_UNKNOWN: "true"
         run: |
           pip install --quiet checkov==3.3.11
           checkov \
