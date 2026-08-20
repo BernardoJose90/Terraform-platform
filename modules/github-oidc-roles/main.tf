@@ -491,3 +491,13 @@ output "role_name" {
 output "plan_role_arn" {
   value = aws_iam_role.terraform_plan.arn
 }
+
+# Changes on every edit to the permissions document (a new statement, a new
+# action, anything) and never otherwise. Callers use this as a time_sleep
+# trigger so a fresh IAM-propagation wait happens on every permissions
+# change, not just the first time the sleep resource itself is created —
+# see member-accounts/*/main.tf's time_sleep.wait_for_deploy_role_permissions
+# and its "why" comment for the incident this covers.
+output "permissions_policy_hash" {
+  value = md5(data.aws_iam_policy_document.permissions.json)
+}
