@@ -52,6 +52,17 @@ module "vpc" {
   public_subnet_names  = var.public_subnet_names
   igw_tags             = var.igw_tags
 
+  # VPC Flow Logs -> CloudWatch Logs. On by default (var.enable_flow_log) so every
+  # account using this module gets flow logs without having to ask for them; the
+  # upstream module creates both the log group and the IAM role that writes to it.
+  enable_flow_log                                 = var.enable_flow_log
+  create_flow_log_cloudwatch_log_group            = var.enable_flow_log
+  create_flow_log_cloudwatch_iam_role             = var.enable_flow_log
+  flow_log_destination_type                       = "cloud-watch-logs"
+  flow_log_traffic_type                           = var.flow_log_traffic_type
+  flow_log_max_aggregation_interval               = var.flow_log_max_aggregation_interval
+  flow_log_cloudwatch_log_group_retention_in_days = var.flow_log_cloudwatch_log_group_retention_in_days
+
   tags = var.tags
 
 }

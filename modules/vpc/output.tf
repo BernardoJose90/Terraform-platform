@@ -50,3 +50,21 @@ output "natgw_ids" {
   description = "NAT Gateway IDs, one per AZ, same order as var.azs. Empty for spoke VPCs (enable_nat_gateway = false)."
   value       = module.vpc.natgw_ids
 }
+
+# ======================================================================================
+# VPC Flow Logs. Null when enable_flow_log = false.
+# ======================================================================================
+output "flow_log_id" {
+  description = "ID of the VPC Flow Log resource."
+  value       = module.vpc.vpc_flow_log_id
+}
+
+output "flow_log_cloudwatch_log_group_arn" {
+  description = "ARN of the CloudWatch log group flow logs are delivered to."
+  value       = module.vpc.vpc_flow_log_destination_arn
+}
+
+output "flow_log_cloudwatch_iam_role_arn" {
+  description = "ARN of the IAM role used to deliver flow logs to CloudWatch."
+  value       = module.vpc.vpc_flow_log_cloudwatch_iam_role_arn
+}
