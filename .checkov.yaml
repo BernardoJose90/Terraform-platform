@@ -201,6 +201,15 @@ skip-check:
   - CKV2_AWS_19
   - CKV2_AWS_12
 
-  # Ensure CloudWatch log groups retains logs for at least 1 year skipped because the risk is accepted we have it set for only 90days
-  - CKV2_AWS_338
+  # CKV_AWS_338 — "Ensure CloudWatch log groups retains logs for at least 1 year".
+  # modules/vpc sets flow_log_cloudwatch_log_group_retention_in_days = 90. Accepted:
+  # 90 days balances CloudWatch storage cost against the troubleshooting/audit window
+  # for flow logs, which are high-volume. (Previously skipped under CKV2_AWS_338, which
+  # is not a real check ID — that skip was a no-op. Fixed to the real ID, CKV_AWS_338.)
   - CKV_AWS_338
+
+  # CKV2_AWS_11 — "Ensure VPC flow logging is enabled in all VPCs" — intentionally NOT
+  # skipped. modules/vpc now wires enable_flow_log = true by default (see main.tf), so
+  # this check passes for real; verified locally with `checkov --check CKV2_AWS_11`.
+  # Do not re-add this skip — if it starts failing again, that means flow logs
+  # regressed somewhere, which is exactly what this check should catch.
