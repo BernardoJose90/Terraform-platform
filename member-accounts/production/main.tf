@@ -29,13 +29,6 @@ terraform {
       # instead of silently floating on whatever ">= 5.83.0" resolves to.
       version = "~> 6.0"
     }
-    # Only used for the time_sleep guard below, working around IAM's eventual
-    # consistency when this account's own deploy-role permissions and a
-    # resource that needs them are applied in the same run.
-    time = {
-      source  = "hashicorp/time"
-      version = "~> 0.11"
-    }
   }
   backend "s3" {
     bucket       = "james-terraform-state-2026"
@@ -121,35 +114,6 @@ module "github-oidc-roles" {
   ]
 }
 
-# module.github-oidc-roles manages this same account's own TerraformDeploy
-# role permissions (data.aws_iam_policy_document.permissions in that module).
-# When a permissions change and a resource that needs it (e.g. the flow-log
-# KMS key below) land in the same apply, Terraform has no dependency edge
-# between them and applies both in parallel — the IAM policy update reports
-# "Modifications complete" in under a second, but IAM's authorization layer
-# is eventually consistent and can lag a few seconds behind that. Hit for
-# real here: a KMS CreateKey call failed with AccessDeniedException moments
-# after the exact permission it needed had already been added, in the same
-# apply. This makes every module below explicitly wait past that
-# propagation window rather than relying on timing.
-resource "time_sleep" "wait_for_deploy_role_permissions" {
-  depends_on      = [module.github-oidc-roles]
-  create_duration = "15s"
-
-  # Without this, the wait only ever happens the FIRST time this resource is
-  # created — later applies that change the permissions document again (a
-  # new action, a new statement) don't touch time_sleep at all, so there's
-  # no wait before the next thing that needs the new permission. Hit for
-  # real: the KMS fix's own apply waited and succeeded, but the very next
-  # apply — adding logs:TagResource for the flow-log CloudWatch group —
-  # changed the policy again and had NO wait at all, and failed the same way.
-  # Keying off the policy's own hash forces time_sleep to be destroyed and
-  # recreated (re-running its wait) on every permissions change, forever.
-  triggers = {
-    permissions_policy_hash = module.github-oidc-roles.permissions_policy_hash
-  }
-}
-
 # ============================================================
 # PRODUCTION VPC (spoke, private-only). Egress is centralized in the
 # network account, so this VPC has no NAT/IGW of its own; the vpc module
@@ -159,22 +123,21 @@ resource "time_sleep" "wait_for_deploy_role_permissions" {
 module "vpc" {
   count = var.networking_enabled ? 1 : 0
 
-  # See time_sleep.wait_for_deploy_role_permissions above.
+  # No time_sleep/depends_on here anymore. module.github-oidc-roles manages
+  # this same account's own TerraformDeploy role permissions, and IAM is
+  # eventually consistent — a permissions change and a resource that needs
+  # it can land in the same apply and race, since AWS's SDK explicitly
+  # treats AccessDeniedException as non-retryable at the API layer (per
+  # AWS's own SDK reference docs) and Terraform has no dependency edge
+  # between separate resources by default.
   #
-  # A direct depends_on on module.github-oidc-roles was tried here too, on
-  # the theory that time_sleep's own "already recreated once" escape hatch
-  # was letting a real pending policy update get skipped. It wasn't: the
-  # apply that included it failed the exact same way, with no policy-update
-  # line, before ever proving the extra edge did anything. The actual
-  # failure (this account's own stuck teardown, resolved separately) turned
-  # out to be unrelated to this dependency at all — depends_on can't reorder
-  # the destroy of a resource whose parent module instance is being
-  # entirely removed from configuration (count 1 -> 0), regardless of what
-  # it points at. Kept to just time_sleep, which IS the confirmed-working
-  # piece: see its triggers block for why the wait re-fires on every
-  # permissions change, not just the first.
-  depends_on = [time_sleep.wait_for_deploy_role_permissions]
-
+  # Previously handled with a time_sleep that paused every apply touching
+  # permissions, whether or not a race was actually happening. Replaced
+  # with a retry-on-failure step in .github/workflows/terraform-apply.yaml:
+  # zero cost on the (overwhelmingly common) case where nothing races, and
+  # it recovers from the actual failure directly instead of gambling on a
+  # fixed wait being long enough. See that workflow's apply steps for the
+  # retry logic and why AccessDeniedException specifically is safe to retry.
   source = "../../modules/vpc"
 
   name = "production-vpc"
