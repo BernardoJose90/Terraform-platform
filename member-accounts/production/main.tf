@@ -159,8 +159,21 @@ resource "time_sleep" "wait_for_deploy_role_permissions" {
 module "vpc" {
   count = var.networking_enabled ? 1 : 0
 
-  # See time_sleep.wait_for_deploy_role_permissions above.
-  depends_on = [time_sleep.wait_for_deploy_role_permissions]
+  # Depends on BOTH, not just the sleep: time_sleep only blocks anything
+  # when IT has a pending action, and its trigger is a hash of current CODE,
+  # not of whether the real AWS policy actually matches it yet. If time_sleep
+  # already recreated once (e.g. in an earlier apply where the actual policy
+  # PutRolePolicy for some other change failed or hadn't run yet), later
+  # applies see "trigger unchanged" and skip waiting entirely — even while
+  # module.github-oidc-roles still has a real pending policy change sitting
+  # right next to it. Hit for real: a fresh plan clearly showed
+  # aws_iam_role_policy.terraform_deploy_policy "will be updated in-place",
+  # but the apply went straight to destroying a role needing that exact
+  # permission, with no policy-update line ever appearing first. Depending on
+  # the module directly is unconditional — it forces ALL of that module's
+  # pending actions to finish first, every time, with no matched-hash escape
+  # hatch.
+  depends_on = [module.github-oidc-roles, time_sleep.wait_for_deploy_role_permissions]
 
   source = "../../modules/vpc"
 
