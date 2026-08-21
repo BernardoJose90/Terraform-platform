@@ -109,7 +109,26 @@ jobs:
 
       - name: Detect changed account folders
         id: filter
+        env:
+          TARGET_RESOURCES: ${{ github.event.inputs.target_resources }}
+          TARGET_ACCOUNT: ${{ github.event.inputs.target_account }}
         run: |
+          # An emergency targeted apply has no code diff by definition — that's
+          # the whole point, it's fixing something the reviewed plan already
+          # correctly staged, not shipping a new change. Every job downstream
+          # of this one gates on has_changes == 'true', so without this
+          # short-circuit a targeted dispatch would get silently skipped by
+          # the SAME diff-detection this input exists to bypass. Confirmed
+          # happening: a real targeted dispatch run completed "success" with
+          # every actual job skipped, discover-accounts included, because
+          # there was nothing for the normal git-diff logic to find.
+          if [ -n "$TARGET_RESOURCES" ] && [ -n "$TARGET_ACCOUNT" ]; then
+            echo "Targeted emergency apply requested for $TARGET_ACCOUNT — skipping diff detection"
+            echo "changed_accounts=$TARGET_ACCOUNT" >> "$GITHUB_OUTPUT"
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           # github.event.before is the commit main was on BEFORE this push,
           # which is the only correct base for a push event.
           #
