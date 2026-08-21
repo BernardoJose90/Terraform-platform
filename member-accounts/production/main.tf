@@ -1,22 +1,14 @@
 #############################################################################################################
 # Account: Production
-# Purpose: Live workload hosting for public resources and internal-only services (EKS, RDS, internal ALB)
-#  1-containes a TerraformDeploy role for GitHub OIDC, scoped to this account only (no cross-account access)
-#  2-contains a VPC module for the production VPC, private-only (no IGW/NAT, egress is centralized in the network account)
-#  2-contains a TGW attachment module for the production VPC, attached to the prod_spoke TGW route table in the network account
-#  3-contains a TGW route table association and propagation for the production VPC
-#  4-contains a default route out of the private subnets to the TGW
-#  5-contains a purpose-specific private subnets module for EKS, RDS, internal ALB, and general-purpose private resources, with selective TGW routing
-#  6-All cross-account access to the network account is done via a scoped role (TgwSpokeWiringProduction) that can only touch prod_spoke and main TGW route tables, never dev_spoke.
-#  7-All TGW IDs and route table IDs are read from SSM parameters published by the network account, no remote state access is needed.
-#  8-All resources are gated on var.networking_enabled, so the account can be deployed without networking if desired (e.g., for IAM-only changes).
-#  9-All resources are tagged with var.tags, which should include "Environment" = "production" and other relevant tags.
-#  10-All modules are sourced from ../../modules, which should be the shared modules directory in the repo.
-#  11-All providers are configured with the correct region and allowed_account_ids, and assume roles where needed for cross-account access.
-#  12-All moved blocks are included to rename modules and resources without causing Terraform to destroy and recreate them.
-#  13-All lifecycle preconditions are included to ensure that the number of private route tables matches the number of AZs, to avoid misconfiguration.
-#  14-All resources are using nonsensitive() for SSM parameter values to avoid exposing sensitive data in the plan output.
-#  15-All modules and resources are using count or for_each to conditionally create resources based on var.networking_enabled, to allow for flexible deployment scenarios.
+# Runs the live app — EKS, RDS, an internal ALB. This VPC is private
+# only, with no direct internet gateway or NAT of its own: all outbound
+# traffic goes out through the network account's setup instead, over the
+# Transit Gateway (TGW). To reach the network account, this account
+# assumes a role (TgwSpokeWiringProduction) that can only touch its own
+# route table plus one shared "main" table — never development's. TGW
+# details come from SSM parameters the network account publishes, not
+# from reading its Terraform state directly. Everything in this file can
+# be switched off with var.networking_enabled.
 #############################################################################################################
 
 terraform {
@@ -65,9 +57,9 @@ provider "aws" {
   allowed_account_ids = [data.aws_ssm_parameter.production_account_id.value]
 }
 
-# Assumes a role in the network account scoped to prod_spoke + main only
-# (modules/tgw-spoke-wiring-role); this account can never touch
-# tgw-dev-spoke-rt. 
+# Assumes a role in the network account that's locked to just this
+# account's own route table plus "main" (modules/tgw-spoke-wiring-role) —
+# this account can never touch development's route table.
 provider "aws" {
   alias  = "network"
   region = var.aws_region
@@ -76,9 +68,9 @@ provider "aws" {
   }
 }
 
-# Published by the network account. Read via the aws.network role instead
-# of terraform_remote_state, so this account's plan role never needs S3
-# read access to the network account's full state file.
+# Published by the network account, and read using the aws.network role
+# above instead of reading network's Terraform state file directly — so
+# this account's read-only plan role never needs access to that state.
 data "aws_ssm_parameter" "tgw_id" {
   provider = aws.network
   name     = "/transit-gateway/id"
@@ -89,9 +81,9 @@ data "aws_ssm_parameter" "prod_spoke_route_table_id" {
   name     = "/transit-gateway/route_table_ids/prod_spoke"
 }
 
-# The "main" table is the one narrow surface this account shares write
-# access to with development, used only to propagate this VPC's own
-# return route, never to touch dev_spoke.
+# "main" is the one shared table this account and development both get
+# write access to — used only so each can publish its own return route,
+# never to reach into the other's own table.
 data "aws_ssm_parameter" "main_route_table_id" {
   provider = aws.network
   name     = "/transit-gateway/route_table_ids/main"
@@ -115,29 +107,19 @@ module "github-oidc-roles" {
 }
 
 # ============================================================
-# PRODUCTION VPC (spoke, private-only). Egress is centralized in the
-# network account, so this VPC has no NAT/IGW of its own; the vpc module
-# instead adds a 0.0.0.0/0 route to the TGW on every private route table
-# (see modules/vpc/main.tf's tgw_id handling).
+# PRODUCTION VPC — private only, no NAT/internet gateway of its own,
+# since outbound traffic goes through the network account instead. The
+# vpc module handles this by adding a catch-all route to the TGW on
+# every private route table (see modules/vpc/main.tf's tgw_id handling).
 # ============================================================
 module "vpc" {
   count = var.networking_enabled ? 1 : 0
 
-  # No time_sleep/depends_on here anymore. module.github-oidc-roles manages
-  # this same account's own TerraformDeploy role permissions, and IAM is
-  # eventually consistent — a permissions change and a resource that needs
-  # it can land in the same apply and race, since AWS's SDK explicitly
-  # treats AccessDeniedException as non-retryable at the API layer (per
-  # AWS's own SDK reference docs) and Terraform has no dependency edge
-  # between separate resources by default.
-  #
-  # Previously handled with a time_sleep that paused every apply touching
-  # permissions, whether or not a race was actually happening. Replaced
-  # with a retry-on-failure step in .github/workflows/terraform-apply.yaml:
-  # zero cost on the (overwhelmingly common) case where nothing races, and
-  # it recovers from the actual failure directly instead of gambling on a
-  # fixed wait being long enough. See that workflow's apply steps for the
-  # retry logic and why AccessDeniedException specifically is safe to retry.
+  # This VPC and module.github-oidc-roles (which sets up this account's
+  # own CI permissions) can sometimes run at the same time and collide —
+  # AWS doesn't make a permission change visible everywhere instantly.
+  # If that happens, the fix is a retry step in
+  # .github/workflows/terraform-apply.yaml, not something added here.
   source = "../../modules/vpc"
 
   name = "production-vpc"
@@ -146,13 +128,9 @@ module "vpc" {
   azs             = var.azs
   private_subnets = var.private_subnets
 
-  # Explicit rather than left to modules/vpc's default-name fallback (see
-  # its variables.tf), matching how network/main.tf names its own subnets.
-  # Same names the fallback already produces today (name + "-private-" +
-  # az), so this is purely making the naming intentional, not a change —
-  # renaming these later, if ever wanted, is just a tag update, not a
-  # replacement (subnet/route table Name is a tag, not an immutable
-  # attribute).
+  # Explicit rather than left to modules/vpc's default-name fallback —
+  # same names the fallback already produces, just making it intentional.
+  # A rename later is a tag update, not a replacement.
   private_subnet_names = [for az in var.azs : "production-Twg-private-sub-${az}"]
 
   enable_nat_gateway = false
@@ -161,18 +139,19 @@ module "vpc" {
   tags = var.tags
 }
 
-# TGW attachment. Comes up "available" on its own because the TGW has
-# AutoAcceptSharedAttachments = enable; no RAM accepter needed since this
-# account and the network account are in the same AWS Organization with
-# RAM sharing enabled.
+# This connects the VPC to the TGW. It gets approved automatically —
+# the TGW is set to auto-accept connections, and since this account and
+# network are in the same AWS Organization with sharing turned on, there's
+# no manual accept step needed.
 module "tgw_attachment" {
   count = var.networking_enabled ? 1 : 0
 
   source = "../../modules/tgw-attachment"
 
   name = "tgw-attach-prod-spoke"
-  # Safe: this block is itself gated on the same condition as module.vpc,
-  # so when it exists, module.vpc[0] definitely exists too.
+  # This block turns on/off with the exact same condition as module.vpc
+  # above, so whenever it exists, the VPC definitely exists too — safe
+  # to reference module.vpc[0] below.
   tgw_id     = nonsensitive(data.aws_ssm_parameter.tgw_id.value)
   vpc_id     = module.vpc[0].vpc_id
   subnet_ids = module.vpc[0].private_subnet_ids
@@ -181,17 +160,13 @@ module "tgw_attachment" {
 }
 
 # ============================================================
-# TGW route table wiring, spoke-owned. Runs against the network account
-# via the aws.network provider (assumes TgwSpokeWiringProduction, scoped
-# to only prod_spoke + main).
-#
-# Associated with prod_spoke only, the table development's traffic never
-# reaches, so there's no east-west path between the two environments.
-# Propagated into both prod_spoke (so this VPC's own table knows about
-# its own attachment, required for propagation to work at all) and main
-# (so NAT return traffic from the egress VPC has a route back to this
-# VPC). This replaces the old inspected_return static route: propagation
-# into main achieves the same thing without needing a firewall attachment.
+# This wires the VPC into the TGW's routing, run against the network
+# account using the scoped-down role from above. Only linked to this
+# account's own route table (prod_spoke) — there's no direct path
+# between production and development traffic. Also propagated (announced
+# as a valid route) into prod_spoke itself, which the link needs to work
+# at all, and into "main", so return traffic from NAT can find its way
+# back here.
 # ============================================================
 resource "aws_ec2_transit_gateway_route_table_association" "tgw_rtb_association" {
   count = var.networking_enabled ? 1 : 0
@@ -221,20 +196,21 @@ resource "aws_ec2_transit_gateway_route_table_propagation" "main" {
 }
 
 # ============================================================
-# Default route out of the private subnets, via the TGW. Lives here
-# rather than in modules/vpc because a route targeting a TGW is only
-# valid once the VPC is attached, and the attachment depends on
-# modules/vpc, so the module cannot depend on the attachment. depends_on
-# below is the whole point of this block's location.
+# Sends outbound traffic from the private subnets to the TGW. This has
+# to live here rather than inside modules/vpc: a route can't point at
+# the TGW until the VPC is actually connected to it, and that connection
+# is created AFTER modules/vpc runs — so modules/vpc has no way to wait
+# for something that doesn't exist yet when it runs. depends_on below is
+# the entire reason this lives out here instead.
 # ============================================================
 resource "aws_route" "private_to_tgw" {
-  # {} when disabled: module.vpc has zero instances then, so there are no
-  # private_route_table_ids to route from anyway.
+  # Comes out empty when disabled — module.vpc doesn't exist then, so
+  # there's nothing to route from anyway.
   for_each = var.networking_enabled ? { for idx, az in var.azs : az => idx } : {}
 
-  # Safe: for_each is {} exactly when networking_enabled is false, so this
-  # resource has zero instances and module.vpc[0]/module.tgw_attachment[0]
-  # are never evaluated for a nonexistent instance.
+  # Safe to reference module.vpc[0]/module.tgw_attachment[0] here: this
+  # whole resource is empty exactly when networking is off, so it never
+  # actually tries to look at either one when they don't exist.
   route_table_id         = module.vpc[0].private_route_table_ids[each.value]
   destination_cidr_block = "0.0.0.0/0"
   transit_gateway_id     = nonsensitive(data.aws_ssm_parameter.tgw_id.value)
@@ -250,20 +226,15 @@ resource "aws_route" "private_to_tgw" {
 }
 
 # ============================================================
-# Purpose-specific private subnets — EKS worker nodes, RDS, an internal
-# ALB (reached via CloudFront VPC origins), and a general-purpose private
-# tier. Its own module (modules/purpose-subnets) rather than folded into
-# modules/vpc: network/development have no reason to know about
-# production's own application topology, and this repo's own convention
-# is that any structural, parameterized pattern gets its own module —
-# see modules/tgw, modules/tgw-attachment, etc.
+# Subnets for production's own apps — EKS, RDS, an internal ALB, and a
+# general-purpose tier. Kept as its own module rather than folded into
+# modules/vpc, since network and development don't need to know anything
+# about how production's app is laid out. Only eks and resources get a
+# route out to the TGW — rds and alb deliberately don't, since neither a
+# database nor an internal load balancer should ever be initiating
+# outbound traffic on its own.
 #
-# Only eks and resources get an outbound TGW route — rds and alb
-# deliberately don't (a database tier and an internal ALB have no
-# business initiating outbound internet traffic).
-#
-# TEARDOWN FLAG: gated the same as everything else that depends on
-# module.vpc[0]/the TGW ID.
+# TEARDOWN FLAG: turns off with everything else that depends on the VPC.
 # ============================================================
 module "prod_purpose_subnets" {
   count = var.networking_enabled ? 1 : 0
@@ -309,17 +280,18 @@ module "prod_purpose_subnets" {
 
   tags = var.tags
 
-  # A route targeting the TGW is only valid once the attachment exists —
-  # same reasoning as aws_route.private_to_tgw above.
+  # Same reasoning as aws_route.private_to_tgw above: a route to the TGW
+  # only works once the connection actually exists.
   depends_on = [module.tgw_attachment]
 }
 
-# Renames from fix/fixed_modules_and_veriables_name. Without these,
-# Terraform treats the renamed module/resource as new and plans to destroy
-# the existing production subnets, route tables, associations and the TGW
-# route table association, then recreate them — a real outage, not a
-# no-op rename. Remove once applied and state has caught up (see
-# 2495070 for the precedent).
+# These two blocks record a rename from an older branch. Without them,
+# Terraform would think the renamed module/resource is something brand
+# new, and plan to destroy the existing production subnets, route
+# tables, and associations, then recreate them from scratch — a real
+# outage, not a harmless rename. Safe to delete once this has actually
+# been applied and the state file has caught up (see commit 2495070 for
+# an earlier example of the same thing).
 moved {
   from = module.purpose_subnets
   to   = module.prod_purpose_subnets

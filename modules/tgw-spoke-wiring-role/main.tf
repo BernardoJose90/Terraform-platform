@@ -1,11 +1,12 @@
-# Used to build this account's own transit-gateway-attachment ARN prefix
-# for the WireOwnSpokeAttachment statement below.
+# Feeds into building this account's own transit-gateway-attachment ARN
+# prefix, used in the WireOwnSpokeAttachment statement below.
 data "aws_partition" "current" {}
 data "aws_region" "current" {}
 data "aws_caller_identity" "current" {}
 
-# Trusts both the spoke's deploy role (apply) and plan role (read-only plan),
-# so `terraform plan` can resolve the TGW wiring resources too, not just apply.
+# Trusts both the spoke's deploy role and its plan role, not just the
+# deploy role — so that a read-only `terraform plan` can also resolve the
+# TGW wiring resources, not only a real apply.
 data "aws_iam_policy_document" "trust" {
   statement {
     effect  = "Allow"
@@ -27,23 +28,23 @@ resource "aws_iam_role" "this" {
 
   tags = var.tags
 
-  # Matches the protection already on modules/github-oidc-roles' roles:
-  # this is the cross-account trust anchor production/development's own
-  # CI roles assume to wire TGW routing. Losing it isn't just "recreate a
-  # role"; it breaks spoke plans/applies until re-applied by hand from an
-  # admin session, since the very automation that would normally recreate
-  # it depends on it existing.
+  # Same protection as the roles in modules/github-oidc-roles: this is the
+  # role production and development's own CI roles assume across accounts
+  # to wire up their TGW routing. Losing it isn't a quick "just recreate
+  # it" — it breaks every spoke plan and apply until someone fixes it by
+  # hand from an admin session, since the automation that would normally
+  # recreate this role needs this same role to already exist.
   lifecycle {
     prevent_destroy = true
   }
 }
 
-# Scoped to this spoke's own route table plus "main" only: the production
-# role can never touch tgw-dev-spoke-rt and vice versa. This resource-level
-# restriction is the entire security story of letting spokes wire
-# themselves into the hub: a spoke can only ever affect its own route
-# table, plus its own return-path entry in "main", never another
-# environment's table.
+# This is scoped to just this spoke's own route table, plus the shared
+# "main" table — so production's role can never touch dev's route table,
+# and vice versa. That resource-level limit is really the whole security
+# story behind letting spokes wire themselves into the hub: a spoke can
+# only ever touch its own route table and its own return-path entry in
+# "main", never another environment's table.
 data "aws_iam_policy_document" "permissions" {
   statement {
     sid    = "WireOwnSpokeRouteTable"
@@ -61,23 +62,17 @@ data "aws_iam_policy_document" "permissions" {
     resources = var.route_table_arns
   }
 
-  # Associate/Disassociate/Enable/DisablePropagation (and Create/Replace
-  # Route, which target an attachment as the route's destination) are
-  # checked by AWS against BOTH the route table ARN above and the
-  # transit-gateway-attachment ARN passed in the call; granting only the
-  # route table above denies with UnauthorizedOperation on the attachment.
-  #
-  # Can't scope this to "own attachment only" the way route_table_arns
-  # scopes the table: a cross-account TGW VPC attachment has a separate
-  # ARN/tag namespace per account. Tags the spoke account sets (e.g.
-  # Environment=production) land on the spoke's own copy of the
-  # attachment; this statement is evaluated in the network (TGW-owner)
-  # account against its copy, which carries none of the spoke's tags, so
-  # a tag condition here can never match. This is a same-account wildcard
-  # with no further restriction; the actual "can't touch another spoke's
-  # table" boundary is enforced above, by the explicit route_table_arns
-  # allow-list. This statement alone grants nothing without a permitted
-  # route table to pair it with.
+  # AWS checks each of these actions against two ARNs at once: the route
+  # table above, AND the attachment ARN in the same call. Granting only the
+  # table isn't enough — the call still gets denied on the attachment side.
+  # This can't be scoped down to "just this spoke's own attachment" the way
+  # route_table_arns scopes the table, because a spoke's own tags don't
+  # carry over to the network account's copy of the attachment, so a tag
+  # condition here would just never match anything. So this statement is
+  # a same-account wildcard on its own — the actual "can't touch another
+  # spoke" boundary is entirely the route_table_arns allow-list above; on
+  # its own, this grants nothing without a permitted route table to pair it
+  # with.
   statement {
     sid    = "WireOwnSpokeAttachment"
     effect = "Allow"
@@ -96,15 +91,12 @@ data "aws_iam_policy_document" "permissions" {
     sid    = "DescribeTgwState"
     effect = "Allow"
     actions = [
-      # These describe/list actions don't support resource-level
-      # restriction, unlike the route-table-scoped actions above.
-      # GetTransitGatewayRouteTable{Associations,Propagations} are here
-      # for the same reason: the waiter aws_ec2_transit_gateway_route_
-      # table_association/propagation polls after Associate/Enable calls
-      # to confirm "associated"/"enabled" state, and AWS only ever
-      # evaluates them against the account-wide "*" resource, never the
-      # specific route table ARN (confirmed by AccessDenied when scoped
-      # to var.route_table_arns despite the mutating calls succeeding).
+      # None of these five actions support being scoped down to specific
+      # resources — confirmed by testing: scoping them to
+      # var.route_table_arns just returns AccessDenied, even though the
+      # mutating calls above work fine when scoped that way. The two
+      # GetTransitGatewayRouteTable* actions are what Terraform polls
+      # after an Associate/Enable call, to confirm it actually took effect.
       "ec2:DescribeTransitGateways",
       "ec2:DescribeTransitGatewayRouteTables",
       "ec2:DescribeTransitGatewayAttachments",

@@ -8,29 +8,25 @@ resource "aws_ec2_transit_gateway" "tgw" {
   tags                            = merge(var.tags, { Name = var.name })
 }
 
-# Renamed from "this" to "tgw". Without this, Terraform sees the rename as
-# destroy-old/create-new instead of an in-place move, which would tear down
-# and recreate the TGW itself, and everything attached to it in every
-# account.
+# This resource used to be named "this" and got renamed to "tgw". Without
+# this moved block, Terraform would read that rename as "delete the old
+# one, create a new one" instead of an in-place rename — which would tear
+# down the actual Transit Gateway, and everything attached to it in every
+# account, then rebuild it from scratch.
 moved {
   from = aws_ec2_transit_gateway.this
   to   = aws_ec2_transit_gateway.tgw
 }
 
 # ============================================================
-# ROUTE TABLES
-#
-# Each spoke gets its own isolated table: prod's automation can only ever
-# touch prod_spoke, dev's only dev_spoke (see modules/tgw-spoke-wiring-role).
-# Neither propagates into the other's table, so there's no east-west path
-# between prod and dev; each spoke's table carries only a static default
-# route out to the egress attachment for internet access.
-#
-# "main" is the one table both spokes share write access to, but only to
-# propagate their own attachment's return route into it. It's associated
-# with the egress VPC attachment, so it's consulted for NAT return traffic
-# coming back through the egress VPC: a single narrow shared surface for
-# the return path, full isolation everywhere else.
+# ROUTE TABLES. Each spoke gets its own table that only its own automation
+# can touch — production only touches prod_spoke, development only
+# touches dev_spoke (enforced in modules/tgw-spoke-wiring-role) — and
+# routes never propagate between them, so there's no direct path between
+# the two environments. "main" is the one table both spokes are allowed to
+# write to, and only to publish their own return route; it's attached to
+# the egress VPC's connection, so that's what NAT return traffic actually
+# consults. One narrow shared spot, everything else fully isolated.
 # ============================================================
 resource "aws_ec2_transit_gateway_route_table" "main" {
   transit_gateway_id = aws_ec2_transit_gateway.tgw.id

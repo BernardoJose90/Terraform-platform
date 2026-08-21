@@ -1,14 +1,11 @@
-# Local guardrails. Runs on `git commit`, before anything reaches CI.
+# Runs these checks locally on `git commit`, before anything even gets
+# pushed. Same checks the CI pipeline runs, just faster — no waiting on a
+# push and a pipeline run to find out something's wrong. terraform_fmt is
+# the one that matters most here: CI now fails the whole PR on bad
+# formatting instead of quietly fixing it, so this hook is what catches
+# that before it ever reaches CI.
 #
-# Why this exists: every check below already runs in the pipeline, but there it
-# costs a push, a runner, and a wait. Here it costs about two seconds. The
-# pipeline is the gate; this is the fast feedback loop.
-#
-# The terraform_fmt hook matters most right now. terraform-plan.yaml no longer
-# auto-formats and commits for you (that deadlocked branch protection); it fails
-# the PR instead. This hook formats on commit so that never happens.
-#
-# Install once, per clone: 
+# Install once, per clone:
 #   brew install pre-commit terraform-docs   # macOS
 #   pre-commit install
 #
@@ -22,35 +19,37 @@ repos:
       - id: trailing-whitespace
       - id: end-of-file-fixer
       - id: check-merge-conflict
-      # Catches a broken workflow file before it costs you a push and a failed
-      # run. Every workflow in this repo has been hand-edited repeatedly.
+      # Catches a broken workflow YAML file before it costs you a push and a
+      # failed run — worth having since every workflow in this repo gets
+      # hand-edited a lot.
       - id: check-yaml
         args: [--allow-multiple-documents]
-      # Terraform state and plan files must never be committed. .gitignore
-      # already covers them; this is the second lock.
+      # A second safety net against accidentally committing a state or plan
+      # file — .gitignore is the first one.
       - id: check-added-large-files
         args: [--maxkb=500]
 
   - repo: https://github.com/antonbabenko/pre-commit-terraform
     rev: v1.108.1
     hooks:
-      # Same command terraform-apply.yaml's quick-validate runs. If this passes
-      # locally, that job cannot fail.
+      # The exact same command terraform-apply.yaml's quick-validate step
+      # runs. If this passes on your machine, that CI job can't fail.
       - id: terraform_fmt
 
-      # Catches HCL that does not parse or references something undefined,
-      # without needing AWS credentials or a backend.
+      # Catches HCL that doesn't parse, or that references something that
+      # doesn't exist, without needing real AWS credentials or a backend.
       - id: terraform_validate
         args:
           - --init-args=-backend=false
-        exclude: ^modules/  # modules are validated through their callers
+        exclude: ^modules/ # modules get validated through whatever account calls them
 
   - repo: https://github.com/bridgecrewio/checkov.git
     rev: '3.3.11'
     hooks:
       - id: checkov
-        # Same config file the pipeline uses, so a local pass and a CI pass mean
-        # the same thing. One list of accepted findings, one place to edit it.
+        # Points at the same config file the pipeline uses, so a clean run
+        # here and a clean run in CI mean the same thing — one list of
+        # accepted findings, one place to update it.
         args:
           - --config-file
           - .checkov.yaml
@@ -58,6 +57,7 @@ repos:
           - terraform
           - --compact
           - --quiet
-        # Only the member accounts, matching `directory: member-accounts/` in
-        # terraform-plan.yaml. Modules get scanned through their callers.
+        # Only scans member-accounts, matching `directory: member-accounts/`
+        # in terraform-plan.yaml. Modules get covered indirectly, through
+        # whatever account calls them.
         files: ^member-accounts/.*\.tf$

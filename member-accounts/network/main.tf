@@ -1,15 +1,11 @@
 ########################################################################################
 # Account: Network
-# Purpose: Centralised egress VPC + Transit Gateway + NAT for all spoke
-# accounts, plus the shared "main" TGW route table both spokes propagate
-# into for return traffic.
-#
-# This account never reads spoke state. It publishes tgw_id,
-# ram_resource_share_arn, and its route table IDs to SSM, and grants each
-# spoke account a narrowly-scoped role (modules/tgw-spoke-wiring-role) to
-# wire its own TGW association/propagation/return-route directly. Apply
-# order: this account once, then any spoke account, in any order, one
-# apply each. See member-accounts/production|development/main.tf.
+# Egress VPC + Transit Gateway + NAT for all spoke accounts, plus the
+# shared "main" TGW route table both spokes propagate their return route
+# into. Never reads spoke state — publishes tgw_id, ram_resource_share_arn,
+# and route table IDs to SSM, and grants each spoke a narrow role
+# (modules/tgw-spoke-wiring-role) to wire itself in. Apply this account
+# once first, then either spoke, any order.
 #######################################################################################
 
 terraform {
@@ -29,9 +25,6 @@ terraform {
   }
 }
 
-# ----------------------------------------------------------------------
-# Providers
-# ----------------------------------------------------------------------
 provider "aws" {
   alias  = "management"
   region = var.aws_region
@@ -64,25 +57,21 @@ locals {
   # Spoke CIDRs that need a return path through the egress VPC.
   spoke_cidrs = [var.prod_cidr, var.dev_cidr]
 
-  # TEARDOWN FLAG: locals have no count of their own, so a plain
-  # `var.networking_enabled ? module.egress_vpc[0].x : ...` ternary isn't
-  # safe here: Terraform validates both branches regardless of which one
-  # wins, and errors on module.egress_vpc[0] once egress_vpc's count is 0.
-  # one() over the splat is the safe form: it returns null (never errors)
-  # on zero instances, and coalesce() turns that null into a real empty
-  # list so length()/indexing below always has something to operate on.
+  # TEARDOWN FLAG: this can't just be a simple "if networking is on, use
+  # module.egress_vpc[0].x" check — Terraform checks BOTH sides of that
+  # kind of statement even when only one will actually run, and it would
+  # error trying to look at a VPC that doesn't exist. one() sidesteps
+  # that: it just returns nothing (instead of erroring) when the VPC
+  # doesn't exist, and coalesce() turns that "nothing" into an empty list
+  # so the rest of this file always has something to work with.
   egress_public_route_table_ids = coalesce(one(module.egress_vpc[*].public_route_table_ids), [])
 
-  # One route per (public route table x spoke CIDR). for_each keys must
-  # be known at plan time, so these are built from the route table INDEX
-  # and the CIDR string (both static config), with the route table ID
-  # itself kept in the value where apply-time values are allowed. Keying
-  # directly off public_route_table_ids would error with "cannot be
-  # determined until apply".
-  #
-  # Resolves to {} when networking is disabled: egress_public_route_table_ids
-  # is [] then, so range(length([])) is empty and setproduct() has nothing
-  # to multiply, so no explicit var.networking_enabled check is needed here.
+  # One route per (public route table x spoke CIDR). The keys are built
+  # from the route table's position in the list plus the CIDR — both
+  # known before anything is actually created. Using the route table's
+  # real ID as the key instead would fail, since that ID doesn't exist
+  # yet at this point. When networking is off, this naturally comes out
+  # empty, so nothing extra needs to check for that here.
   public_spoke_routes = {
     for pair in setproduct(
       range(length(local.egress_public_route_table_ids)),
@@ -123,21 +112,11 @@ module "egress_vpc" {
 
   source = "../../modules/vpc"
 
-  # No time_sleep/depends_on here anymore. module.github-oidc-roles manages
-  # this same account's own TerraformDeploy role permissions, and IAM is
-  # eventually consistent — a permissions change and a resource that needs
-  # it can land in the same apply and race, since AWS's SDK explicitly
-  # treats AccessDeniedException as non-retryable at the API layer (per
-  # AWS's own SDK reference docs) and Terraform has no dependency edge
-  # between separate resources by default.
-  #
-  # Previously handled with a time_sleep that paused every apply touching
-  # permissions, whether or not a race was actually happening. Replaced
-  # with a retry-on-failure step in .github/workflows/terraform-apply.yaml:
-  # zero cost on the (overwhelmingly common) case where nothing races, and
-  # it recovers from the actual failure directly instead of gambling on a
-  # fixed wait being long enough. See that workflow's apply steps for the
-  # retry logic and why AccessDeniedException specifically is safe to retry.
+  # This VPC and module.github-oidc-roles (which sets up this account's
+  # own CI permissions) can sometimes run at the same time and collide —
+  # AWS doesn't make a permission change visible everywhere instantly.
+  # If that happens, the fix is a retry step in
+  # .github/workflows/terraform-apply.yaml, not something added here.
   name = "egress-vpc"
   cidr = var.cidr
 
@@ -162,15 +141,10 @@ module "egress_vpc" {
 
 # -----------------------------------------------------------------------
 # Exact per-AZ naming for NAT gateways and private (TGW) route tables.
-# modules/vpc can't do this through a variable: the upstream module only
-# takes one flat tags map for these (nat_gateway_tags,
-# private_route_table_tags), which would give both AZs the same name
-# instead of "nat-egress-a" vs "nat-egress-b". aws_ec2_tag overwrites the
-# Name tag on the existing resource after the fact, one per AZ.
-#
-# The public route table doesn't need this (only one, shared by both NAT
-# subnets, so a flat tag is already unambiguous) but is done the same way
-# for consistency.
+# modules/vpc only takes one flat tags map for these, which would give
+# both AZs the same name — aws_ec2_tag overwrites the Name tag per AZ
+# after the fact instead. Public route table doesn't need this (only one,
+# shared) but tagged the same way for consistency.
 # -----------------------------------------------------------------------
 locals {
   # "eu-west-2a" -> "a", "eu-west-2b" -> "b", matching the design doc's
@@ -178,11 +152,10 @@ locals {
   # public_subnets order, which modules/vpc already requires.
   az_suffixes = [for az in var.azs : substr(az, -1, 1)]
 
-  # TEARDOWN FLAG: both key sets are built purely from var.azs (static
-  # config, no module reference), so gating with a plain ternary is safe.
-  # Resolving to {} here is what gives the two aws_ec2_tag resources below
-  # zero instances when disabled, which is what makes indexing
-  # module.egress_vpc[0] inside their bodies safe.
+  # TEARDOWN FLAG: built from var.azs only (no module reference), so a
+  # plain ternary is safe. Resolving to {} when disabled gives the two
+  # aws_ec2_tag resources below zero instances, making their
+  # module.egress_vpc[0] references safe.
   nat_gateway_names = var.networking_enabled ? {
     for idx, suffix in local.az_suffixes : idx => "nat-egress-${suffix}"
   } : {}
@@ -195,9 +168,9 @@ locals {
 resource "aws_ec2_tag" "nat_gateway_name" {
   for_each = local.nat_gateway_names
 
-  # Safe: zero instances whenever networking is disabled (nat_gateway_names
-  # is {} then), so module.egress_vpc[0] is never evaluated for a
-  # nonexistent instance.
+  # Fine to reference module.egress_vpc[0] here: when networking is
+  # disabled, nat_gateway_names is empty, so this resource never actually
+  # runs and never tries to look at a VPC that isn't there.
   resource_id = module.egress_vpc[0].natgw_ids[each.key]
   key         = "Name"
   value       = each.value
@@ -214,38 +187,29 @@ resource "aws_ec2_tag" "private_tgw_route_table_name" {
 resource "aws_ec2_tag" "public_nat_route_table_name" {
   count = var.networking_enabled ? 1 : 0
 
-  # Single shared table, so index [0] is safe (module.vpc guarantees at
-  # least one whenever public_subnets is non-empty, which it is here).
-  # The outer [0] on egress_vpc is safe because this resource is itself
-  # gated on the same condition, immediately above.
+  # There's only ever one shared public route table, so [0] always
+  # exists here. And this whole resource only runs when networking is
+  # enabled (the count line above), so egress_vpc[0] is safe to reference.
   resource_id = module.egress_vpc[0].public_route_table_ids[0]
   key         = "Name"
   value       = "public-nat-egress-rtb"
 }
 
 # -----------------------------------------------------------------------
-# Return path, VPC side.
-#
-# The registry vpc module gives the public route tables "local" plus
-# 0.0.0.0/0 -> IGW and nothing else. When a NAT gateway translates a
-# reply back to a spoke address (10.20.x.x / 10.30.x.x) it consults the
-# route table of the public subnet it lives in, finds no match, and the
-# packet is dropped. Outbound works; return traffic silently disappears
-# ("curl hangs", not a routing error).
-#
-# These routes send spoke-destined traffic back into the TGW, where the
-# "main" route table (see module.tgw below) already has a route to each
-# spoke via propagation.
+# Return path, VPC side. The public route tables only have "local" + IGW
+# by default — a NAT reply to a spoke address (10.20/10.30.x.x) finds no
+# match and gets silently dropped ("curl hangs", not a routing error).
+# These routes send it back into the TGW, where "main" already has a
+# route to each spoke via propagation.
 # -----------------------------------------------------------------------
 resource "aws_route" "public_to_spokes" {
   for_each = local.public_spoke_routes
 
   route_table_id         = each.value.route_table_id
   destination_cidr_block = each.value.cidr
-  # Safe: for_each is {} (see local.public_spoke_routes) whenever
-  # egress_vpc, and therefore tgw (same condition), has zero instances,
-  # so this resource has zero instances too and module.tgw[0] is never
-  # evaluated for a nonexistent instance.
+  # Safe to reference module.tgw[0] here: this whole resource is empty
+  # whenever egress_vpc (and so tgw, gated the same way) doesn't exist,
+  # so it never actually tries to look at a TGW that isn't there.
   transit_gateway_id = module.tgw[0].tgw_id
 
   # The TGW attachment must exist before a route can target the TGW.
@@ -266,8 +230,10 @@ module "tgw" {
   name            = "core-tgw"
   amazon_side_asn = var.amazon_side_asn
 
-  # Account IDs, not secrets, but the SSM parameter data source marks
-  # .value sensitive unconditionally, which for_each disallows.
+  # These are just account IDs, not secrets — but Terraform's SSM data
+  # source always marks .value as sensitive no matter what it actually
+  # holds, and a for_each loop won't accept a sensitive value directly.
+  # nonsensitive() tells Terraform "trust me, this one's fine to show".
   share_with_principals = [
     nonsensitive(data.aws_ssm_parameter.production_account_id.value),
     nonsensitive(data.aws_ssm_parameter.development_account_id.value),
@@ -277,20 +243,15 @@ module "tgw" {
 }
 
 # -----------------------------------------------------------------------
-# TGW attachment for the egress VPC itself (this account owns the TGW, so
-# no RAM acceptance step is needed). Associated with the "main" route
-# table, consulted for everything entering the TGW from the egress VPC,
-# i.e. all NAT return traffic. Both spokes propagate their own attachment
-# into "main" (see member-accounts/production|development/main.tf), so
-# return traffic already has a route to whichever spoke it's headed back
-# to, without prod_spoke or dev_spoke ever being shared between them.
+# This connects the egress VPC itself to the TGW. Since this account owns
+# the TGW, there's no separate accept-the-connection step needed like a
+# spoke account would have. Linked to "main" so NAT return traffic can
+# find its way back to whichever spoke it came from — without ever
+# letting prod_spoke and dev_spoke see each other.
 #
-# TEARDOWN FLAG: not in the original gating list, added deliberately.
-# This attachment is itself billable (~$0.05/hr) and its inputs reference
-# both module.tgw and module.egress_vpc, both gated above; leaving it
-# ungated would either keep paying for it directly or break the plan the
-# moment either of those goes to zero instances. Same reasoning applies
-# to the association resource right after it.
+# TEARDOWN FLAG: this costs real money (~$0.05/hr) and needs module.tgw
+# and egress_vpc to exist, both of which turn off during a teardown — so
+# this (and the line right after it) has to turn off with them too.
 # -----------------------------------------------------------------------
 module "egress_tgw_attachment" {
   count = var.networking_enabled ? 1 : 0
@@ -313,20 +274,16 @@ resource "aws_ec2_transit_gateway_route_table_association" "egress" {
 }
 
 # -----------------------------------------------------------------------
-# Default route out of each spoke's own isolated table straight to the
-# egress attachment, plus an explicit blackhole for the OTHER spoke's
-# CIDR. The blackhole is what actually enforces isolation: without it,
-# 10.30.0.0/16-bound traffic from prod falls through to the 0.0.0.0/0
-# default, reaches the egress VPC, gets NAT'd, and the return-path route
-# (aws_route.public_to_spokes) delivers it straight to dev. Longest-prefix
-# match means the blackhole (an exact /16) always wins over the broader
-# default, so that traffic is dropped at the TGW instead.
+# Each spoke's table gets a catch-all route to the egress attachment,
+# plus a "blackhole" (drop the traffic, don't route it anywhere) for the
+# OTHER spoke's address range. That blackhole is what actually keeps
+# prod and dev apart: without it, traffic meant for the other spoke would
+# just ride the catch-all route out through NAT and come right back in
+# via aws_route.public_to_spokes. Routers always prefer the more specific
+# match, so the blackhole wins over the catch-all every time.
 #
-# TEARDOWN FLAG: not in the original gating list, added deliberately.
-# Both reference module.tgw's route tables and module.egress_tgw_attachment
-# (both gated above); the route tables they'd write into don't exist at
-# all when disabled, so these must be gated too or the plan fails on a
-# reference into an empty module.
+# TEARDOWN FLAG: needs module.tgw and egress_tgw_attachment, both of
+# which turn off during a teardown, so these have to as well.
 # -----------------------------------------------------------------------
 module "routes_prod_spoke" {
   count = var.networking_enabled ? 1 : 0
@@ -357,34 +314,20 @@ module "routes_dev_spoke" {
 }
 
 # -----------------------------------------------------------------------
-# Spoke-owned TGW wiring: publishes what a spoke needs to wire itself in,
-# and grants each spoke a narrowly-scoped role to do that wiring directly
-# against this account's TGW route tables (see aws.network provider alias
-# in member-accounts/production|development/main.tf). Replaces the old
-# terraform_remote_state approach, which made this account's plan depend
-# on spoke state that itself depended on this account's outputs, a cycle
-# that only "worked" via try()/count silently producing zero resources
-# when a spoke hadn't been applied yet.
+# This publishes what a spoke account (production or development) needs
+# to know to connect itself to the TGW, and gives each one a role that
+# can only touch its own route table plus "main" — nothing else. Each
+# spoke does its own wiring directly (see the aws.network provider alias
+# in production/development main.tf), rather than us reading their state.
 #
-# Each role is scoped to its own spoke table plus "main" only, never the
-# other spoke's table, and on "main" can only propagate its own return
-# route, not associate/disassociate/manage the other spoke's presence.
-#
-# TEARDOWN FLAG: the 5 SSM parameters below stay ungated (spokes read
-# them regardless of their own flag), but their value normally comes from
-# module.tgw, which IS gated. A plain ternary can't null the value out
-# when disabled (aws_ssm_parameter requires a non-null string, and a
-# resource can't reference its own prior value).
-#
-# Fix: a "_frozen" data source per parameter, gated to the opposite
-# condition, that reads back whatever the parameter currently holds in
-# AWS. Data sources read before resource changes apply, so on the run
-# that disables this account it captures the value just before module.tgw
-# is destroyed, freezing it instead of erroring. On first-ever apply the
-# frozen source has zero instances, so there's no chicken-and-egg problem.
-#
-# coalesce(one(module.tgw[*].x), one(data...frozen[*].value)) picks
-# whichever side has an instance; one() never errors on zero instances.
+# TEARDOWN FLAG: the SSM parameters below are never turned off, even
+# though they'd normally get their value from module.tgw, which IS
+# turned off during a teardown. A parameter can't just go blank when
+# that happens — it needs SOME value. So each one also has a matching
+# "_frozen" data source that, right before module.tgw is destroyed,
+# reads back whatever value is currently sitting in AWS and keeps using
+# that instead. Whichever one actually exists at the time (the live
+# value or the frozen one) is what gets used.
 # -----------------------------------------------------------------------
 data "aws_ssm_parameter" "tgw_id_frozen" {
   count = var.networking_enabled ? 0 : 1
@@ -455,26 +398,18 @@ locals {
 
   network_account_id = nonsensitive(data.aws_ssm_parameter.network_account_id.value)
 
-  # TEARDOWN FLAG: module.tgw_spoke_wiring_production/development below
-  # are deliberately never gated (see the comment on those modules).
-  # Gating them would try to destroy aws_iam_role.this inside
-  # modules/tgw-spoke-wiring-role, which has prevent_destroy = true, and
-  # the whole apply would hard-fail. Since those modules always exist,
-  # their inputs must always resolve too, so route table ARNs are built
-  # from the SSM parameter resources' own values (always present, frozen
-  # per above when disabled) rather than from module.tgw directly. No
-  # one()/try() gymnastics needed here: aws_ssm_parameter.*.value is a
-  # plain always-present resource attribute.
+  # TEARDOWN FLAG: the two role modules below never turn off, so their
+  # inputs can't turn off either — built from the SSM parameters (always
+  # present, frozen when disabled) rather than module.tgw directly, which
+  # does turn off.
   main_route_table_arn = "arn:aws:ec2:${var.aws_region}:${local.network_account_id}:transit-gateway-route-table/${aws_ssm_parameter.tgw_route_table_id_main.value}"
 }
 
-# TEARDOWN FLAG: intentionally not gated. See local.main_route_table_arn
-# above for why: gating this would attempt to destroy a prevent_destroy
-# protected IAM role. The role (and its trust policy, i.e. who can assume
-# it) survives networking_enabled = false; only its permissions policy
-# ends up pointing at route tables that no longer exist, which is inert
-# (AWS doesn't validate that a policy's Resource ARNs currently exist)
-# rather than broken.
+# TEARDOWN FLAG: this never turns off — see local.main_route_table_arn
+# above for why. The role sticks around when networking is disabled; its
+# permissions just end up pointing at route tables that no longer exist,
+# which does nothing harmful (AWS doesn't check that a policy's targets
+# still exist), rather than actually breaking anything.
 module "tgw_spoke_wiring_production" {
   source = "../../modules/tgw-spoke-wiring-role"
 

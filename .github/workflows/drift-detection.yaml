@@ -1,22 +1,23 @@
 name: Drift Detection
 
-# Answers one question every morning: does live AWS still match what this repo
-# says it should be?
+# Runs every morning and answers one question: does the real infrastructure
+# in AWS still match what this repo says it should look like?
 #
-# Runs a refresh-only plan per account. Refresh-only never writes state and
-# never changes infrastructure, so this is safe to run unattended.
+# It does a "refresh-only" plan for each account — this only checks for
+# differences, it never writes anything or changes real infrastructure, so
+# it's safe to run on its own with nobody watching.
 #
-# On drift it does three things, in this order:
-#   1. Opens (or updates) a PR on a unchanged drift/<account> branch(drift/production,drift/network
-#      etc) carrying the report, so the drift has to be closed by a human decision and there is a
-#      record of that decision.
-#   2. Posts to Slack, only if SLACK_WEBHOOK_URL is configured.
-#   3. Fails the job. This is deliberately LAST, so the PR exists before the
-#      job goes red, and it is what makes GitHub's built-in "scheduled workflow
-#      failed" email fire.
+# If it finds drift, it does three things, in this exact order:
+#   1. Opens (or updates) a PR on a per-account branch (drift/production,
+#      drift/network, etc.) with a report of what changed — so a human has
+#      to look at it and decide what to do, and there's a record of that.
+#   2. Posts a message to Slack, but only if a webhook URL is configured.
+#   3. Fails the job.
 #
-# The failure in step 3 is the notification of last resort: it works even if
-# Slack is down and even if the PR step breaks.
+# Failing the job is deliberately LAST: by the time it happens, the PR
+# already exists, and this failure is what triggers GitHub's own "scheduled
+# workflow failed" email — the backup notification that still works even
+# if Slack is down or the PR step itself breaks.
 
 on:
   schedule:
@@ -24,12 +25,14 @@ on:
     - cron: '0 2 * * *'
   workflow_dispatch:
 
-# No workflow-level permissions block on purpose: each job below declares
-# only what it actually uses, so a step added to discover-accounts or summary
-# later doesn't silently inherit write access it never asked for.
+# There's no top-level permissions block on purpose — each job below asks
+# for exactly what it needs, so a step added later to discover-accounts or
+# summary doesn't quietly end up with write access nobody gave it on
+# purpose.
 
-# One drift run at a time. A manual dispatch while the scheduled run is in
-# flight would otherwise race on the same drift/<account> branches.
+# Only one of these runs at a time. Without this, a manually-triggered run
+# starting while the scheduled one is still going could collide over the
+# same drift/<account> branches.
 concurrency:
   group: drift-detection
   cancel-in-progress: false
@@ -40,9 +43,10 @@ env:
 
 jobs:
   # ──────────────────────────────────────────────────────────────────────────────
-  # 1. Discover every member account from the SSM manifest. Same pattern as
-  #    terraform-plan.yaml, minus the changed-files filter: drift can appear in
-  #    an account nobody has touched, so every account is checked every night.
+  # 1. Find every account, by reading the list stored in SSM. Same idea as
+  #    terraform-plan.yaml, but without filtering down to "only changed
+  #    accounts" — drift can show up in an account nobody's touched
+  #    recently, so this checks every account, every night.
   # ──────────────────────────────────────────────────────────────────────────────
   discover-accounts:
     name: Discover Accounts
@@ -93,7 +97,7 @@ jobs:
           echo "Discovered accounts: $ACCOUNT_COUNT"
 
   # ──────────────────────────────────────────────────────────────────────────────
-  # 2. One refresh-only plan per account.
+  # 2. Run a refresh-only plan for each account, one job per account.
   # ──────────────────────────────────────────────────────────────────────────────
   drift-check:
     name: Check Drift - ${{ matrix.account }}
@@ -101,41 +105,38 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     if: needs.discover-accounts.outputs.account_count != '0' && needs.discover-accounts.outputs.account_count != ''
-    # The only job that writes anything: assumes each account's TerraformPlan
-    # role over OIDC, pushes the drift/<account> branch, and opens/comments
-    # on the drift PR.
+    # This is the only job in the whole workflow that actually writes
+    # anything: it assumes each account's read-only TerraformPlan role,
+    # pushes to the drift/<account> branch, and opens or comments on the
+    # drift PR.
     permissions:
       id-token: write
       contents: write
       pull-requests: write
     strategy:
       fail-fast: false
-      # Cap concurrent account checks so a growing account count doesn't
-      # throw dozens of simultaneous AWS API calls at once and start
-      # tripping rate limits on the 2am run.
+      # Caps how many accounts get checked at once, so as the number of
+      # accounts grows, this doesn't suddenly fire off dozens of AWS calls
+      # simultaneously at 2am and start hitting rate limits.
       max-parallel: 10
       matrix: ${{ fromJson(needs.discover-accounts.outputs.matrix) }}
 
-    # Job level, not step level: a step's own `if:` cannot read env that the
-    # same step declares. This is what lets the Slack step skip cleanly when
-    # the webhook secret is not configured.
+    # This has to live at the job level, not on the step itself — a step's
+    # own `if:` condition can't see an environment variable that the same
+    # step defines. Putting it here is what lets the Slack step below skip
+    # cleanly when no webhook secret is configured, instead of erroring.
     env:
       SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
 
     steps:
-          # downloads our repo files onto the bare runner machine. 
-          # A stable version of the checkout action is pinned to avoid breakage from upstream changes.
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Setup Terraform
-          # Installs the terraform command-line tool onto the GitHub-hosted runner.
-          # A stable version of the setup-terraform action is pinned to avoid breakage from upstream changes.
         uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
         with:
           terraform_version: ${{ env.TERRAFORM_VERSION }}
 
       - name: Configure AWS credentials (${{ matrix.account }})
-          # logs the pipeline into our AWS account (via the GitHub OIDC) to make AWS API calls.
         uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
         with:
           role-to-assume: ${{ matrix.role_arn }}
@@ -147,14 +148,16 @@ jobs:
         working-directory: ${{ matrix.working_directory }}
         run: terraform init -input=false -lockfile=readonly
 
-      # -detailed-exitcode is the whole point. Without it terraform plan exits 0
-      # whether the diff is empty or not, and nothing downstream can tell the
-      # difference. With it: 0 = clean, 1 = terraform errored, 2 = drift.
+      # -detailed-exitcode is what makes this whole check possible. Without
+      # it, terraform plan always exits 0, whether or not there's a diff —
+      # so there'd be no way to tell "clean" from "drifted" afterwards. With
+      # it: 0 means clean, 1 means terraform itself hit an error, 2 means
+      # drift was found.
       #
-      # -lock=false because refresh-only never persists state, so a lock buys
-      # nothing here and only risks a 2am failure if a manual apply happens to
-      # be holding it. The TerraformPlan role does have PutObject on its own
-      # state prefix, so this is a deliberate choice, not a permissions gap.
+      # -lock=false is deliberate, not a gap: a refresh-only plan never
+      # writes to state, so there's nothing a lock would protect here — and
+      # skipping it means a manual apply holding the lock can't cause this
+      # 2am check to fail for no reason.
       - name: Terraform Plan (refresh-only drift check)
         id: plan
         working-directory: ${{ matrix.working_directory }}
@@ -178,8 +181,9 @@ jobs:
             echo "### Clean: \`${{ matrix.account }}\`" >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      # Pull the resource addresses out of the plan text. Terraform prints
-      # "  # aws_x.y has changed" / "has been deleted" for each drifted object.
+      # Pulls just the resource addresses out of the plan text, e.g.
+      # "aws_x.y" from a line like "  # aws_x.y has changed" or
+      # "has been deleted", so the report below stays short and readable.
       - name: Summarise drift
         id: summary
         if: steps.plan.outputs.drift_exit_code == '2'
@@ -206,7 +210,6 @@ jobs:
 
       - name: Upload drift report
         if: always()
-        # A stable version of the upload-artifact action(saves a file the job produced) is pinned to avoid breakage from upstream changes. See
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: drift-report-${{ matrix.account }}
@@ -214,14 +217,16 @@ jobs:
           retention-days: 30
           if-no-files-found: warn
 
-      # A stable branch per account (drift/production, not drift/production-20260813)
-      # so repeated drift updates ONE pull request instead of opening a new one
-      # every night. Force-push rebases the report onto current main each run.
+      # Uses one stable branch name per account (drift/production, not
+      # drift/production-20260813) so each night's run updates the SAME
+      # pull request instead of opening a fresh one every time. The
+      # force-push just rebases tonight's report onto the latest main.
       #
-      # Every ${{ }} value used by the script is passed through env rather than
-      # interpolated into the shell text: interpolating attacker-influenced
-      # strings straight into a run block is the standard Actions script
-      # injection hole, and resource addresses come from AWS, not from us.
+      # Every ${{ }} value the script needs is passed in through env,
+      # rather than typed directly into the shell text below. That's not
+      # just style — pasting a GitHub value straight into a run: block is
+      # the classic way these workflows get script-injected, so this keeps
+      # that path closed, even though these particular values come from AWS.
       - name: Open or update drift PR
         if: steps.plan.outputs.drift_exit_code == '2'
         env:
@@ -234,18 +239,20 @@ jobs:
         run: |
           BRANCH="drift/${ACCOUNT}"
 
-          # Idempotent: fails harmlessly if the label already exists.
+          # Safe to run every time: if the label is already there, this
+          # just fails quietly and moves on.
           gh label create drift \
             --color d93f0b \
             --description "Live infrastructure has drifted from Terraform" 2>/dev/null || true
 
-          # Resource addresses only, never the raw plan output: refresh-only
-          # plan text can contain real attribute values (Terraform only masks
-          # a field if that field's schema marks it sensitive), and this file
-          # gets committed into git history via the PR below. The full plan
-          # with values already exists as the drift-report-${ACCOUNT} workflow
-          # artifact (30-day retention, access-controlled) for anyone who
-          # needs it - it does not need a second, permanent copy in git.
+          # This file only ever gets resource addresses, never the raw plan
+          # output. The full plan text can contain real attribute values —
+          # Terraform only hides a field if its schema explicitly marks it
+          # sensitive — and this file gets committed into git history via
+          # the PR below, which is forever. Anyone who needs the full plan
+          # with real values can pull it from the drift-report-${ACCOUNT}
+          # workflow artifact instead (kept 30 days, access-controlled) —
+          # no need for a second, permanent copy sitting in git.
           mkdir -p .drift
           {
             echo "# Drift report: ${ACCOUNT}"
@@ -301,8 +308,8 @@ jobs:
               --label drift
           fi
 
-      # Skipped automatically when the webhook secret is not set, so this file
-      # works unchanged whether or not Slack is wired up.
+      # If no Slack webhook secret is configured, this step just skips
+      # itself — nothing else in the file needs to change either way.
       - name: Notify Slack
         if: steps.plan.outputs.drift_exit_code == '2' && env.SLACK_WEBHOOK_URL != ''
         env:
@@ -311,8 +318,9 @@ jobs:
           DRIFT_RESOURCES: ${{ steps.summary.outputs.resources }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          # -f so an HTTP 403/404 from a rotated webhook fails the step loudly
-          # instead of returning success and silently sending nothing.
+          # -f makes curl fail the step loudly on a 403/404 (e.g. a rotated
+          # webhook URL) instead of quietly reporting success while nothing
+          # actually got sent.
           curl -fsS -X POST "$SLACK_WEBHOOK_URL" \
             -H 'Content-Type: application/json' \
             --data "$(jq -n \
@@ -322,9 +330,11 @@ jobs:
               --arg body "$DRIFT_RESOURCES" \
               '{text: ("*Drift detected* in `" + $acct + "` (" + $count + " resource(s))\nA PR has been opened. <" + $url + "|View run>\n```\n" + $body + "\n```")}')"
 
-      # LAST on purpose. Everything above must have run before the job goes red.
-      # This failure is what triggers GitHub's built-in scheduled-workflow-failed
-      # email, and it is the signal that survives Slack and the PR step breaking.
+      # Deliberately the LAST step: everything above needs to have already
+      # run before this job is allowed to go red. Turning the job red is
+      # what triggers GitHub's own "scheduled workflow failed" email — the
+      # one signal that still gets through even if Slack or the PR step
+      # above happens to break.
       - name: Fail the job on drift
         if: steps.plan.outputs.drift_exit_code == '2'
         run: |
@@ -332,8 +342,9 @@ jobs:
           exit 1
 
   # ──────────────────────────────────────────────────────────────────────────────
-  # 3. One stable check name regardless of which accounts are in the matrix.
-  #    Useful as a dashboard row and as somewhere to hang future reporting.
+  # 3. One check name that stays the same no matter which accounts are in
+  #    the matrix that night. Gives a stable row to look at on a dashboard,
+  #    and a place to hang more reporting later if needed.
   # ──────────────────────────────────────────────────────────────────────────────
   summary:
     name: Drift Summary
@@ -342,8 +353,8 @@ jobs:
       - drift-check
     runs-on: ubuntu-latest
     if: always()
-    # Only reads job outputs and writes to the step summary - neither needs
-    # any GITHUB_TOKEN permission, so grant none.
+    # This job only reads outputs from the other jobs and writes to the
+    # step summary — it doesn't need any GITHUB_TOKEN permission at all.
     permissions: {}
     steps:
       - name: Report

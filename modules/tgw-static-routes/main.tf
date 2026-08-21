@@ -6,11 +6,12 @@ resource "aws_ec2_transit_gateway_route" "tgw_route" {
   transit_gateway_attachment_id  = each.value
 }
 
-# Needed because a spoke's only route is 0.0.0.0/0 to the egress attachment,
-# with nothing more specific. Without this, traffic to the other spoke's CIDR
-# still matches that default route, reaches the egress VPC, gets NAT'd, and
-# the return-path route delivers it to the other spoke, even though neither
-# spoke's table ever contains a direct route to the other.
+# This is needed because a spoke's only route is a catch-all 0.0.0.0/0 to
+# the egress attachment — nothing more specific than that. Without this
+# blackhole route, traffic to the other spoke's CIDR would still match
+# that catch-all, go out to the egress VPC, get NAT'd, and then the
+# return-path route would deliver it straight to the other spoke — even
+# though neither spoke's table ever had a direct route to the other.
 resource "aws_ec2_transit_gateway_route" "blackhole_route" {
   for_each = toset(var.blackhole_cidrs)
 
@@ -19,11 +20,11 @@ resource "aws_ec2_transit_gateway_route" "blackhole_route" {
   blackhole                      = true
 }
 
-# Renamed from "this"/"blackhole" to "tgw_route"/"blackhole_route". Without
-# these, Terraform sees the renames as destroy-old/create-new instead of an
-# in-place move, which would tear down and recreate every static route in
-# both spoke route tables. for_each keys are unchanged, so each instance
-# maps across automatically.
+# These resources used to be named "this" and "blackhole", renamed to
+# "tgw_route" and "blackhole_route". Without these moved blocks, Terraform
+# would treat the rename as destroy-old/create-new, tearing down and
+# rebuilding every static route in both spoke route tables. The for_each
+# keys didn't change, so each existing instance maps across automatically.
 moved {
   from = aws_ec2_transit_gateway_route.this
   to   = aws_ec2_transit_gateway_route.tgw_route

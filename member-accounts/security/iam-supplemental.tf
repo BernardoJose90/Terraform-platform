@@ -1,23 +1,21 @@
 ###############################################################################
-# Supplemental IAM Identity Center / Identity Store access for TerraformDeploy
+# Extra IAM Identity Center / Identity Store permissions for TerraformDeploy.
 #
-# security account is the delegated administrator for sso.amazonaws.com (registered
-# from the management account's AWS Organizations config; see
-# aws_organizations_delegated_administrator.identity_center there). SSO
-# resource management (permission sets, groups, users, account assignments,
-# see sso.tf in this directory) runs from here instead of the management
-# account based on AWS's own guidance this minimize what has access to the
-# management account rather than widening its automation role.
-# github-oidc-roles' base permission set (module.github-oidc-roles) has no
-# sso-admin/identitystore actions at all, so this fills that in.
+# The security account is registered as the delegated admin for SSO
+# (set up in management's AWS Organizations config), which is why sso.tf
+# runs from here instead of from management — AWS's own guidance is to
+# keep management's own permissions as minimal as possible. The base role
+# from modules/github-oidc-roles doesn't include any SSO or Identity Store
+# actions, so this file adds them on top, just for this account.
 ##############################################################################
 
 resource "aws_iam_role_policy" "terraform_deploy_sso_identity_center_access" {
   name = "SSOIdentityCenterAccess"
   role = module.github-oidc-roles.role_name
 
-  # Losing this doesn't break current access, but breaks CI's ability to
-  # fix or change anything in sso.tf until it's manually restored. This is a safety measure to prevent accidental deletion of the policy, which would require manual intervention to restore.
+  # Losing this policy wouldn't break anyone's existing access — it would
+  # just stop CI from being able to change anything in sso.tf, until
+  # someone restores it by hand.
   lifecycle {
     prevent_destroy = true
   }
@@ -26,10 +24,11 @@ resource "aws_iam_role_policy" "terraform_deploy_sso_identity_center_access" {
     Version = "2012-10-17"
     Statement = [
       {
-        # IAM action namespace for this service is "sso:", not "sso-admin:".
-        # "sso-admin" is only the AWS CLI module / Terraform provider SDK
-        # package name (ssoadmin); every one of these calls is denied under
-        # sso-admin: even though it reads like the right prefix.
+        # These IAM actions all start with "sso:", not "sso-admin:" — even
+        # though "sso-admin" looks like the right prefix at a glance.
+        # "sso-admin" is just the name of the AWS CLI/Terraform provider's
+        # SDK package (ssoadmin); every one of these calls gets denied if
+        # written with that prefix instead.
         Sid    = "SsoAdminPermissionSetsAndAssignments"
         Effect = "Allow"
         Action = [
@@ -39,18 +38,21 @@ resource "aws_iam_role_policy" "terraform_deploy_sso_identity_center_access" {
           "sso:DescribePermissionSet",
           "sso:UpdatePermissionSet",
           "sso:ListPermissionSets",
-          # Tag read/write on permission sets. ListTagsForResource is read
-          # on every plan/apply (tag-reconciliation); TagResource alone
-          # isn't enough for the reverse (a tag removed from var.tags).
+          # Lets it read and write tags on a permission set.
+          # ListTagsForResource gets called on every plan and apply (that's
+          # how Terraform checks tags are still what it expects), and
+          # TagResource alone isn't enough — removing a tag from var.tags
+          # needs UntagResource too.
           "sso:TagResource",
           "sso:UntagResource",
           "sso:ListTagsForResource",
           "sso:AttachManagedPolicyToPermissionSet",
           "sso:DetachManagedPolicyFromPermissionSet",
           "sso:ListManagedPoliciesInPermissionSet",
-          # Re-provisioning: AWS only applies a changed permission set to
-          # already-assigned accounts once it's re-provisioned; Update alone
-          # updates the definition but not what's actually deployed.
+          # Re-provisioning is what actually pushes a changed permission
+          # set out to the accounts it's already assigned to — Update on
+          # its own only changes the definition, not what's actually
+          # deployed anywhere yet.
           "sso:ProvisionPermissionSet",
           "sso:DescribeAccountAssignmentCreationStatus",
           "sso:DescribeAccountAssignmentDeletionStatus",
@@ -77,8 +79,9 @@ resource "aws_iam_role_policy" "terraform_deploy_sso_identity_center_access" {
           "identitystore:ListUsers",
           "identitystore:CreateGroupMembership",
           "identitystore:DeleteGroupMembership",
-          # The provider's Read function calls DescribeGroupMembership, a
-          # separate API from GetGroupMembership/GetGroupMembershipId below
+          # The provider's own read function calls DescribeGroupMembership,
+          # which is a separate API from GetGroupMembership and
+          # GetGroupMembershipId just below it — needs both.
           "identitystore:DescribeGroupMembership",
           "identitystore:GetGroupMembership",
           "identitystore:GetGroupMembershipId",
