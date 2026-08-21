@@ -439,14 +439,57 @@ jobs:
           echo "🚀 Applying the exact plan reviewed on the merged PR for network"
           echo "📂 Working directory: member-accounts/network"
           echo ""
-          # PIPESTATUS[0] (not the pipeline's own exit code, which is tee's — always 0)
-          # so a real apply failure actually fails this step. Without this, "terraform
-          # apply | tee" always reports success regardless of whether apply errored:
-          # confirmed happening on a real run where the log showed
-          # "Error: ... Terraform exited with code 1" but the job still reported
-          # conclusion "success" in the GitHub API.
-          terraform apply -input=false -lock-timeout=120s tfplan.binary 2>&1 | tee apply_output.txt
-          exit "${PIPESTATUS[0]}"
+
+          # Retries on IAM eventual consistency (AccessDeniedException) and on
+          # a plan going stale from THIS LOOP'S OWN prior partial progress.
+          # Not a blind wait: AWS's own SDK reference docs explicitly classify
+          # AccessDeniedException as non-retryable at the API/provider layer
+          # (grouped with ValidationException, ResourceNotFoundException) — it
+          # will never be retried automatically, so retrying the whole apply
+          # is the layer above the SDK where this has to be handled. Zero
+          # cost when nothing races: the overwhelming majority of applies
+          # succeed on attempt 1 with no delay at all, unlike a fixed
+          # time_sleep that used to pause every permissions-touching apply
+          # whether or not a race was actually happening.
+          #
+          # The FIRST attempt always applies the actual reviewed plan, kept
+          # intact. Only a RETRY, after a real failure, recomputes a fresh
+          # plan before reapplying — reapplying the SAME saved plan file a
+          # second time isn't safe here: a prior attempt in this same loop
+          # may have already partially applied (e.g. destroyed several
+          # resources before hitting one AccessDenied), which makes that
+          # exact plan file stale for a second application.
+          MAX_ATTEMPTS=3
+          attempt=1
+          while true; do
+            echo "--- apply attempt $attempt/$MAX_ATTEMPTS ---"
+            # PIPESTATUS[0] (not the pipeline's own exit code, which is tee's —
+            # always 0) so a real apply failure actually fails this step.
+            # Without this, "terraform apply | tee" always reports success
+            # regardless of whether apply errored: confirmed happening on a
+            # real run where the log showed "Error: ... Terraform exited with
+            # code 1" but the job still reported conclusion "success" in the
+            # GitHub API.
+            terraform apply -input=false -lock-timeout=120s tfplan.binary 2>&1 | tee apply_output.txt
+            EXIT_CODE="${PIPESTATUS[0]}"
+            [ "$EXIT_CODE" -eq 0 ] && break
+
+            if [ "$attempt" -ge "$MAX_ATTEMPTS" ]; then
+              echo "❌ Out of retry attempts."
+              exit "$EXIT_CODE"
+            fi
+
+            if ! grep -qE "AccessDeniedException|Saved plan is stale" apply_output.txt; then
+              echo "❌ Failure doesn't match a known retryable pattern (IAM propagation, or a plan gone stale from this loop's own progress) — not retrying."
+              exit "$EXIT_CODE"
+            fi
+
+            WAIT=$((attempt * 10))
+            echo "⏳ Retryable failure detected. Waiting ${WAIT}s, then recomputing and retrying..."
+            sleep "$WAIT"
+            terraform plan -no-color -input=false -lock-timeout=60s -out=tfplan.binary
+            attempt=$((attempt + 1))
+          done
 
       # This is only reached by workflow_dispatch.
       # All pushes are blocked above if there is no reviewed plan.
@@ -462,14 +505,37 @@ jobs:
           echo "📂 Working directory: member-accounts/network"
           echo ""
           terraform plan -no-color -input=false -lock-timeout=60s -out=tfplan.binary
-          # PIPESTATUS[0] (not the pipeline's own exit code, which is tee's — always 0)
-          # so a real apply failure actually fails this step. Without this, "terraform
-          # apply | tee" always reports success regardless of whether apply errored:
-          # confirmed happening on a real run where the log showed
-          # "Error: ... Terraform exited with code 1" but the job still reported
-          # conclusion "success" in the GitHub API.
-          terraform apply -input=false -lock-timeout=120s tfplan.binary 2>&1 | tee apply_output.txt
-          exit "${PIPESTATUS[0]}"
+
+          # See the "Terraform Apply (reviewed plan)" step above for why this
+          # retries on AccessDeniedException/"Saved plan is stale" specifically,
+          # and why recomputing before each retry (not just this first plan)
+          # is the safe approach once this loop has its own partial progress.
+          MAX_ATTEMPTS=3
+          attempt=1
+          while true; do
+            echo "--- apply attempt $attempt/$MAX_ATTEMPTS ---"
+            # PIPESTATUS[0] (not the pipeline's own exit code, which is tee's —
+            # always 0) so a real apply failure actually fails this step.
+            terraform apply -input=false -lock-timeout=120s tfplan.binary 2>&1 | tee apply_output.txt
+            EXIT_CODE="${PIPESTATUS[0]}"
+            [ "$EXIT_CODE" -eq 0 ] && break
+
+            if [ "$attempt" -ge "$MAX_ATTEMPTS" ]; then
+              echo "❌ Out of retry attempts."
+              exit "$EXIT_CODE"
+            fi
+
+            if ! grep -qE "AccessDeniedException|Saved plan is stale" apply_output.txt; then
+              echo "❌ Failure doesn't match a known retryable pattern — not retrying."
+              exit "$EXIT_CODE"
+            fi
+
+            WAIT=$((attempt * 10))
+            echo "⏳ Retryable failure detected. Waiting ${WAIT}s, then recomputing and retrying..."
+            sleep "$WAIT"
+            terraform plan -no-color -input=false -lock-timeout=60s -out=tfplan.binary
+            attempt=$((attempt + 1))
+          done
 
       - name: Report apply outcome
         working-directory: member-accounts/network
@@ -615,14 +681,57 @@ jobs:
           echo "📂 Working directory: ${{ matrix.working_directory }}"
           echo "🏷️ Environment: ${{ matrix.environment }}"
           echo ""
-          # PIPESTATUS[0] (not the pipeline's own exit code, which is tee's — always 0)
-          # so a real apply failure actually fails this step. Without this, "terraform
-          # apply | tee" always reports success regardless of whether apply errored:
-          # confirmed happening on a real run where the log showed
-          # "Error: ... Terraform exited with code 1" but the job still reported
-          # conclusion "success" in the GitHub API.
-          terraform apply -input=false -lock-timeout=120s tfplan.binary 2>&1 | tee apply_output.txt
-          exit "${PIPESTATUS[0]}"
+
+          # Retries on IAM eventual consistency (AccessDeniedException) and on
+          # a plan going stale from THIS LOOP'S OWN prior partial progress.
+          # Not a blind wait: AWS's own SDK reference docs explicitly classify
+          # AccessDeniedException as non-retryable at the API/provider layer
+          # (grouped with ValidationException, ResourceNotFoundException) — it
+          # will never be retried automatically, so retrying the whole apply
+          # is the layer above the SDK where this has to be handled. Zero
+          # cost when nothing races: the overwhelming majority of applies
+          # succeed on attempt 1 with no delay at all, unlike a fixed
+          # time_sleep that used to pause every permissions-touching apply
+          # whether or not a race was actually happening.
+          #
+          # The FIRST attempt always applies the actual reviewed plan, kept
+          # intact. Only a RETRY, after a real failure, recomputes a fresh
+          # plan before reapplying — reapplying the SAME saved plan file a
+          # second time isn't safe here: a prior attempt in this same loop
+          # may have already partially applied (e.g. destroyed several
+          # resources before hitting one AccessDenied), which makes that
+          # exact plan file stale for a second application.
+          MAX_ATTEMPTS=3
+          attempt=1
+          while true; do
+            echo "--- apply attempt $attempt/$MAX_ATTEMPTS ---"
+            # PIPESTATUS[0] (not the pipeline's own exit code, which is tee's —
+            # always 0) so a real apply failure actually fails this step.
+            # Without this, "terraform apply | tee" always reports success
+            # regardless of whether apply errored: confirmed happening on a
+            # real run where the log showed "Error: ... Terraform exited with
+            # code 1" but the job still reported conclusion "success" in the
+            # GitHub API.
+            terraform apply -input=false -lock-timeout=120s tfplan.binary 2>&1 | tee apply_output.txt
+            EXIT_CODE="${PIPESTATUS[0]}"
+            [ "$EXIT_CODE" -eq 0 ] && break
+
+            if [ "$attempt" -ge "$MAX_ATTEMPTS" ]; then
+              echo "❌ Out of retry attempts."
+              exit "$EXIT_CODE"
+            fi
+
+            if ! grep -qE "AccessDeniedException|Saved plan is stale" apply_output.txt; then
+              echo "❌ Failure doesn't match a known retryable pattern (IAM propagation, or a plan gone stale from this loop's own progress) — not retrying."
+              exit "$EXIT_CODE"
+            fi
+
+            WAIT=$((attempt * 10))
+            echo "⏳ Retryable failure detected. Waiting ${WAIT}s, then recomputing and retrying..."
+            sleep "$WAIT"
+            terraform plan -no-color -input=false -lock-timeout=60s -out=tfplan.binary
+            attempt=$((attempt + 1))
+          done
 
       # This runs for manual workflow_dispatch runs, or for non-production accounts
       # on a push. Production pushes are blocked by the refusal above.
@@ -635,14 +744,37 @@ jobs:
           echo "📂 Working directory: ${{ matrix.working_directory }}"
           echo ""
           terraform plan -no-color -input=false -lock-timeout=60s -out=tfplan.binary
-          # PIPESTATUS[0] (not the pipeline's own exit code, which is tee's — always 0)
-          # so a real apply failure actually fails this step. Without this, "terraform
-          # apply | tee" always reports success regardless of whether apply errored:
-          # confirmed happening on a real run where the log showed
-          # "Error: ... Terraform exited with code 1" but the job still reported
-          # conclusion "success" in the GitHub API.
-          terraform apply -input=false -lock-timeout=120s tfplan.binary 2>&1 | tee apply_output.txt
-          exit "${PIPESTATUS[0]}"
+
+          # See the "Terraform Apply (reviewed plan)" step above for why this
+          # retries on AccessDeniedException/"Saved plan is stale" specifically,
+          # and why recomputing before each retry (not just this first plan)
+          # is the safe approach once this loop has its own partial progress.
+          MAX_ATTEMPTS=3
+          attempt=1
+          while true; do
+            echo "--- apply attempt $attempt/$MAX_ATTEMPTS ---"
+            # PIPESTATUS[0] (not the pipeline's own exit code, which is tee's —
+            # always 0) so a real apply failure actually fails this step.
+            terraform apply -input=false -lock-timeout=120s tfplan.binary 2>&1 | tee apply_output.txt
+            EXIT_CODE="${PIPESTATUS[0]}"
+            [ "$EXIT_CODE" -eq 0 ] && break
+
+            if [ "$attempt" -ge "$MAX_ATTEMPTS" ]; then
+              echo "❌ Out of retry attempts."
+              exit "$EXIT_CODE"
+            fi
+
+            if ! grep -qE "AccessDeniedException|Saved plan is stale" apply_output.txt; then
+              echo "❌ Failure doesn't match a known retryable pattern — not retrying."
+              exit "$EXIT_CODE"
+            fi
+
+            WAIT=$((attempt * 10))
+            echo "⏳ Retryable failure detected. Waiting ${WAIT}s, then recomputing and retrying..."
+            sleep "$WAIT"
+            terraform plan -no-color -input=false -lock-timeout=60s -out=tfplan.binary
+            attempt=$((attempt + 1))
+          done
 
       - name: Report apply outcome
         working-directory: ${{ matrix.working_directory }}
