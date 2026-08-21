@@ -36,6 +36,28 @@ on:
       - '**.txt'
       - 'docs/**'
   workflow_dispatch:
+    inputs:
+      # Emergency escape hatch, not normal operation. For when a reviewed
+      # plan is stuck applying an unrelated change (e.g. a resource destroy)
+      # in the SAME plan as a fix something else depends on, and the two
+      # race — since -target can't be combined with an already-saved plan
+      # file, there's no way to apply just the fix through the normal
+      # reviewed-plan path. This computes and applies a FRESH, narrowly
+      # scoped plan instead, skipping the reviewed-plan lookup entirely.
+      # Leave empty for every normal run.
+      target_resources:
+        description: 'Emergency only: comma-separated -target resource addresses (e.g. "module.github-oidc-roles,time_sleep.wait_for_deploy_role_permissions"). Leave empty for a normal run.'
+        required: false
+        default: ''
+      # target_resources alone would apply to every account in the matrix,
+      # since it's one input shared workflow-wide. This scopes it to exactly
+      # one account so an emergency fix for production can't accidentally
+      # also fire against every other account's copy of the same resource
+      # address. Must match an account name exactly (e.g. "production").
+      target_account:
+        description: 'Emergency only: which single account target_resources applies to (e.g. "production"). Required if target_resources is set.'
+        required: false
+        default: ''
 
 permissions:
   id-token: write
@@ -433,7 +455,7 @@ jobs:
           exit 1
 
       - name: Terraform Apply (reviewed plan)
-        if: steps.reviewed.outputs.found == 'true'
+        if: steps.reviewed.outputs.found == 'true' && !(github.event_name == 'workflow_dispatch' && github.event.inputs.target_resources != '' && github.event.inputs.target_account == 'network')
         working-directory: member-accounts/network
         run: |
           echo "🚀 Applying the exact plan reviewed on the merged PR for network"
@@ -454,7 +476,7 @@ jobs:
       # A manual run is different because a human explicitly requested the apply
       # without a reviewed plan, so a fresh plan is allowed.
       - name: Terraform Apply (fresh plan — fallback)
-        if: steps.reviewed.outputs.found != 'true' && github.event_name != 'push'
+        if: steps.reviewed.outputs.found != 'true' && github.event_name != 'push' && !(github.event_name == 'workflow_dispatch' && github.event.inputs.target_resources != '' && github.event.inputs.target_account == 'network')
         working-directory: member-accounts/network
         run: |
           echo "⚠️ No reviewed plan for network. This run is a manual workflow_dispatch,"
@@ -468,6 +490,33 @@ jobs:
           # confirmed happening on a real run where the log showed
           # "Error: ... Terraform exited with code 1" but the job still reported
           # conclusion "success" in the GitHub API.
+          terraform apply -input=false -lock-timeout=120s tfplan.binary 2>&1 | tee apply_output.txt
+          exit "${PIPESTATUS[0]}"
+
+      # Emergency escape hatch — see the target_resources input's description
+      # at the top of this file for when this is appropriate. Bypasses the
+      # reviewed-plan mechanism entirely: -target can't be combined with an
+      # already-saved plan file, so this always computes a brand new plan
+      # scoped to exactly the given resources, nothing else.
+      - name: Terraform Apply (targeted — emergency)
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.target_resources != '' && github.event.inputs.target_account == 'network'
+        working-directory: member-accounts/network
+        env:
+          TARGET_RESOURCES: ${{ github.event.inputs.target_resources }}
+        run: |
+          echo "🚨 EMERGENCY targeted apply for network — resources: $TARGET_RESOURCES"
+          echo "📂 Working directory: member-accounts/network"
+          echo ""
+          TARGET_ARGS=()
+          IFS=',' read -ra TARGETS <<< "$TARGET_RESOURCES"
+          for t in "${TARGETS[@]}"; do
+            TARGET_ARGS+=("-target=$t")
+          done
+          echo "Resolved: ${TARGET_ARGS[*]}"
+          terraform plan -no-color -input=false -lock-timeout=60s "${TARGET_ARGS[@]}" -out=tfplan.binary
+          # PIPESTATUS[0] (not the pipeline's own exit code, which is tee's — always 0)
+          # so a real apply failure actually fails this step. Without this, "terraform
+          # apply | tee" always reports success regardless of whether apply errored.
           terraform apply -input=false -lock-timeout=120s tfplan.binary 2>&1 | tee apply_output.txt
           exit "${PIPESTATUS[0]}"
 
@@ -608,7 +657,7 @@ jobs:
           exit 1
 
       - name: Terraform Apply (reviewed plan)
-        if: steps.reviewed.outputs.found == 'true'
+        if: steps.reviewed.outputs.found == 'true' && !(github.event_name == 'workflow_dispatch' && github.event.inputs.target_resources != '' && github.event.inputs.target_account == matrix.account)
         working-directory: ${{ matrix.working_directory }}
         run: |
           echo "🚀 Applying the exact plan reviewed on the merged PR for ${{ matrix.account }} (ID: ${{ matrix.account_id }})"
@@ -627,7 +676,7 @@ jobs:
       # This runs for manual workflow_dispatch runs, or for non-production accounts
       # on a push. Production pushes are blocked by the refusal above.
       - name: Terraform Apply (fresh plan — fallback)
-        if: steps.reviewed.outputs.found != 'true' && !(github.event_name == 'push' && matrix.environment == 'production-approval')
+        if: steps.reviewed.outputs.found != 'true' && !(github.event_name == 'push' && matrix.environment == 'production-approval') && !(github.event_name == 'workflow_dispatch' && github.event.inputs.target_resources != '' && github.event.inputs.target_account == matrix.account)
         working-directory: ${{ matrix.working_directory }}
         run: |
           echo "⚠️ No reviewed plan for ${{ matrix.account }} (tier: ${{ matrix.environment }})."
@@ -641,6 +690,36 @@ jobs:
           # confirmed happening on a real run where the log showed
           # "Error: ... Terraform exited with code 1" but the job still reported
           # conclusion "success" in the GitHub API.
+          terraform apply -input=false -lock-timeout=120s tfplan.binary 2>&1 | tee apply_output.txt
+          exit "${PIPESTATUS[0]}"
+
+      # Emergency escape hatch — see the target_resources input's description
+      # at the top of this file for when this is appropriate. Bypasses the
+      # reviewed-plan mechanism entirely: -target can't be combined with an
+      # already-saved plan file, so this always computes a brand new plan
+      # scoped to exactly the given resources, nothing else. target_account
+      # scopes this to one matrix account so an emergency fix for one
+      # account can't accidentally also fire against every other account's
+      # copy of the same resource address.
+      - name: Terraform Apply (targeted — emergency)
+        if: github.event_name == 'workflow_dispatch' && github.event.inputs.target_resources != '' && github.event.inputs.target_account == matrix.account
+        working-directory: ${{ matrix.working_directory }}
+        env:
+          TARGET_RESOURCES: ${{ github.event.inputs.target_resources }}
+        run: |
+          echo "🚨 EMERGENCY targeted apply for ${{ matrix.account }} — resources: $TARGET_RESOURCES"
+          echo "📂 Working directory: ${{ matrix.working_directory }}"
+          echo ""
+          TARGET_ARGS=()
+          IFS=',' read -ra TARGETS <<< "$TARGET_RESOURCES"
+          for t in "${TARGETS[@]}"; do
+            TARGET_ARGS+=("-target=$t")
+          done
+          echo "Resolved: ${TARGET_ARGS[*]}"
+          terraform plan -no-color -input=false -lock-timeout=60s "${TARGET_ARGS[@]}" -out=tfplan.binary
+          # PIPESTATUS[0] (not the pipeline's own exit code, which is tee's — always 0)
+          # so a real apply failure actually fails this step. Without this, "terraform
+          # apply | tee" always reports success regardless of whether apply errored.
           terraform apply -input=false -lock-timeout=120s tfplan.binary 2>&1 | tee apply_output.txt
           exit "${PIPESTATUS[0]}"
 
