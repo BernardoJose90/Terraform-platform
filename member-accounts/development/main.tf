@@ -147,21 +147,21 @@ module "vpc" {
 
   source = "../../modules/vpc"
 
-  # Depends on BOTH, not just the sleep: time_sleep only blocks anything
-  # when IT has a pending action, and its trigger is a hash of current CODE,
-  # not of whether the real AWS policy actually matches it yet. If time_sleep
-  # already recreated once (e.g. in an earlier apply where the actual policy
-  # PutRolePolicy for some other change failed or hadn't run yet), later
-  # applies see "trigger unchanged" and skip waiting entirely — even while
-  # module.github-oidc-roles still has a real pending policy change sitting
-  # right next to it. Hit for real: a fresh plan clearly showed
-  # aws_iam_role_policy.terraform_deploy_policy "will be updated in-place",
-  # but the apply went straight to destroying a role needing that exact
-  # permission, with no policy-update line ever appearing first. Depending on
-  # the module directly is unconditional — it forces ALL of that module's
-  # pending actions to finish first, every time, with no matched-hash escape
-  # hatch.
-  depends_on = [module.github-oidc-roles, time_sleep.wait_for_deploy_role_permissions]
+  # See time_sleep.wait_for_deploy_role_permissions above.
+  #
+  # A direct depends_on on module.github-oidc-roles was tried here too, on
+  # the theory that time_sleep's own "already recreated once" escape hatch
+  # was letting a real pending policy update get skipped. It wasn't: the
+  # apply that included it failed the exact same way, with no policy-update
+  # line, before ever proving the extra edge did anything. The actual
+  # failure (a stuck production/development teardown, resolved separately)
+  # turned out to be unrelated to this dependency at all — depends_on can't
+  # reorder the destroy of a resource whose parent module instance is being
+  # entirely removed from configuration (count 1 -> 0), regardless of what
+  # it points at. Kept to just time_sleep, which IS the confirmed-working
+  # piece: see its triggers block for why the wait re-fires on every
+  # permissions change, not just the first.
+  depends_on = [time_sleep.wait_for_deploy_role_permissions]
 
   name = "development-vpc"
   cidr = var.cidr
