@@ -1,13 +1,14 @@
-# If the caller needs these resources to wait on something outside this
-# module (e.g. a Transit Gateway attachment that must exist before a
-# route can target it), use the module block's own depends_on meta-
-# argument at the call site — it applies to every resource in here.
+# If whoever calls this module needs these resources to wait on something
+# outside it — like a Transit Gateway attachment that has to exist before
+# a route can point at it — use the module block's own depends_on at the
+# call site. That applies to everything in this module at once.
 
 locals {
-  # Flattened to one entry per (production_workload_subnet, az) subnet, keyed e.g. "eks-a".
-  # merge({}, ...) rather than merge(...) so this still resolves cleanly
-  # to {} when var.production_workload_subnets is {} (merge() with zero arguments errors;
-  # the leading {} guarantees at least one).
+  # Flattens the input down to one entry per (workload, AZ) subnet, keyed
+  # like "eks-a". Starts from merge({}, ...) rather than merge(...) so this
+  # still comes out as {} when var.production_workload_subnets is empty —
+  # merge() with zero arguments is an error, so the leading {} guarantees
+  # there's always at least one thing to merge.
   subnet_instances = merge({}, [
     for production_workload_subnet, cfg in var.production_workload_subnets : {
       for az_key, s in cfg.subnets : "${production_workload_subnet}-${az_key}" => merge(s, {
@@ -42,7 +43,7 @@ resource "aws_route_table_association" "prod_workload_rtb_association" {
   route_table_id = aws_route_table.prod_workload_rtb[each.value.production_workload_subnet].id
 }
 
-# Only purposes with to_tgw = true get this route — see variables.tf.
+# Only the workloads with to_tgw = true get this route — see variables.tf.
 resource "aws_route" "to_tgw" {
   for_each = { for production_workload_subnet, cfg in var.production_workload_subnets : production_workload_subnet => cfg if cfg.to_tgw }
 
@@ -51,11 +52,13 @@ resource "aws_route" "to_tgw" {
   transit_gateway_id     = var.tgw_id
 }
 
-# Resource renames from the old modules/purpose-subnets module (see the
-# module-level "moved" block at the member-accounts/production/main.tf
-# call site). Without these, Terraform sees a brand-new resource type/name
-# and plans to destroy the existing subnets/route tables/associations and
-# recreate them — losing subnet IDs that RDS/EKS/ALB already reference.
+# These record resources that got renamed from the old
+# modules/purpose-subnets module (see the module-level "moved" block over
+# in member-accounts/production/main.tf too). Without them, Terraform
+# would think these are brand-new resources and plan to destroy the
+# existing subnets, route tables, and associations, then recreate them —
+# which would break the subnet IDs that RDS, EKS, and the ALB already
+# depend on.
 moved {
   from = aws_subnet.this
   to   = aws_subnet.prod_workload_sub

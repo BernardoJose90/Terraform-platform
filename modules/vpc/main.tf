@@ -1,24 +1,24 @@
 # ======================================================================================
-# Shared VPC module.
-#
-# Used by all three accounts:
+# Shared VPC module, used by all three accounts:
 #   - network      : egress VPC with NAT gateways (enable_nat_gateway = true, tgw_id = null)
 #   - development  : private-only spoke, egress via TGW (enable_nat_gateway = false, tgw_id set)
 #   - production   : private-only spoke, egress via TGW (enable_nat_gateway = false, tgw_id set)
 # ======================================================================================
 
 terraform {
-  # >= 1.9 is REQUIRED, not cosmetic. The validation blocks in variables.tf reference
-  # other variables (cross-object validation), which was introduced in Terraform 1.9.
-  # On older versions those blocks fail with "Invalid reference in variable validation".
+  # 1.9+ isn't just a nice-to-have here — it's required. The validation
+  # blocks in variables.tf check one variable's value against another
+  # variable, and Terraform only gained the ability to do that in 1.9. On
+  # an older version, those blocks fail outright with "Invalid reference in
+  # variable validation".
   required_version = "~> 1.11.0"
 
   required_providers {
     aws = {
       source = "hashicorp/aws"
-      # All three accounts are now aligned on provider 6.x (see their own
-      # required_providers blocks), so this is pinned to match rather than
-      # silently accepting whatever major the caller happens to have.
+      # All three accounts are on AWS provider 6.x now, so this is pinned
+      # to match them, rather than quietly accepting whatever major
+      # version the calling account happens to have.
       version = "~> 6.0"
     }
   }
@@ -29,29 +29,25 @@ data "aws_region" "current" {}
 data "aws_caller_identity" "current" {}
 
 # ======================================================================================
-# KMS key for VPC Flow Log encryption at rest. One CMK per VPC, only created when flow
-# logs are (enable_flow_log), so it follows the same everyone-gets-it-by-default toggle.
-#
-# Scoped narrowly: CloudWatch Logs may only use this key to encrypt/decrypt log groups
-# under the "/aws/vpc-flow-log/" prefix in this account and region — the prefix the
-# upstream module always uses for flow-log groups (flow_log_cloudwatch_log_group_name_prefix,
-# left at its default; see local.flow_log_cloudwatch_log_group_name_prefix below). It is not
-# scoped to the exact log group name because that name's suffix defaults to the VPC id,
-# which doesn't exist yet at plan time — this key is created before the VPC it protects.
+# KMS key that encrypts the VPC flow logs at rest. One key per VPC,
+# created whenever flow logs are turned on (enable_flow_log). It's scoped
+# to log groups under "/aws/vpc-flow-log/" rather than one exact log group
+# name, because the log group's name ends in the VPC's own ID — and this
+# key gets created before that VPC exists, so that ID isn't known yet.
 # ======================================================================================
 locals {
-  # Must match the upstream module's flow_log_cloudwatch_log_group_name_prefix default —
-  # we never override that variable, so this mirrors it rather than re-deriving it.
+  # Has to match the upstream module's own default exactly — we never
+  # override this value ourselves.
   flow_log_cloudwatch_log_group_name_prefix = "/aws/vpc-flow-log/"
 }
 
 data "aws_iam_policy_document" "flow_log_kms" {
   count = var.enable_flow_log ? 1 : 0
 
-  # Required on every KMS key policy: without an explicit root grant, IAM
-  # policies on this account's roles/users stop being able to control the key
-  # at all, since the key's own policy is the only thing consulted for a
-  # principal who isn't named elsewhere in it.
+  # Every KMS key policy needs a statement like this. Without an explicit
+  # grant back to the account root, this account's own IAM policies would
+  # lose all control over the key — a key's policy is the only thing AWS
+  # checks for a principal that isn't otherwise named in it.
   statement {
     sid     = "EnableIAMUserPermissions"
     effect  = "Allow"
@@ -77,9 +73,9 @@ data "aws_iam_policy_document" "flow_log_kms" {
       type        = "Service"
       identifiers = ["logs.${data.aws_region.current.region}.amazonaws.com"]
     }
-    # KMS key policies always use resources = ["*"] here — "*" means "this key",
-    # since a key policy document only ever describes grants on itself. The
-    # actual scoping is the condition below, not this line.
+    # "*" here doesn't mean "any key" — a key policy document only ever
+    # describes grants on the one key it's attached to, so "*" just means
+    # "this key". The real scoping happens in the condition below instead.
     resources = ["*"]
 
     condition {
@@ -110,10 +106,10 @@ resource "aws_kms_alias" "flow_log" {
 
 module "vpc" {
   source = "terraform-aws-modules/vpc/aws"
-  # 6.0.0 requires AWS provider v6 (already true for all three callers) and
-  # switches the flow-log group ARN to build from data.aws_region.current[0].region
-  # instead of the now-deprecated .name attribute; this is what silences the
-  # "Deprecated attribute" plan warning coming out of vpc-flow-logs.tf.
+  # 6.0.0 needs AWS provider v6, which all three accounts already have.
+  # It also switches how the flow-log group's ARN gets built, away from an
+  # attribute that AWS has since deprecated — which is what stops the
+  # "Deprecated attribute" plan warning that vpc-flow-logs.tf used to show.
   version = "~> 6.0"
 
   name = var.name
@@ -123,32 +119,28 @@ module "vpc" {
   private_subnets = var.private_subnets
   public_subnets  = var.public_subnets
 
-  # Only the network account VPC should set these to true.
-  # Spoke VPCs stay private-only and route egress (outbound traffic) via the TGW instead.
+  # Only the network account's VPC should ever set these to true — spoke
+  # VPCs (production, development) stay private-only and send their
+  # outbound traffic out through the TGW instead.
   enable_nat_gateway     = var.enable_nat_gateway
   single_nat_gateway     = var.single_nat_gateway
   one_nat_gateway_per_az = var.one_nat_gateway_per_az
 
-  # Spokes generally have no public subnets/IGW at all: enable_nat_gateway
-  # false + an empty public_subnets list gives you a fully private VPC.
+  # A spoke VPC usually has no public subnets or internet gateway at all —
+  # enable_nat_gateway = false plus an empty public_subnets list is what
+  # gives you a fully private VPC.
 
   private_subnet_names = var.private_subnet_names
   public_subnet_names  = var.public_subnet_names
   igw_tags             = var.igw_tags
 
-  # VPC Flow Logs -> CloudWatch Logs. On by default (var.enable_flow_log) so every
-  # account using this module gets flow logs without having to ask for them; the
-  # upstream module creates both the log group and the IAM role that writes to it.
-  #
-  # This chain (KMS key, log group, delivery role/policy, aws_flow_log itself)
-  # needs several TerraformDeploy permissions that aren't obvious from this file
-  # alone — kms:TagResource, logs:PutRetentionPolicy/AssociateKmsKey,
-  # iam:TagPolicy, and a scoped iam:PassRole for vpc-flow-logs.amazonaws.com.
-  # All granted in modules/github-oidc-roles/main.tf (FlowLogKmsKey,
-  # CloudWatchLogGroups, PassFlowLogDeliveryRole statements) — each one was
-  # found the hard way, one AccessDenied per resource in this chain, on a real
-  # apply/destroy. Look there first if a future change to this block starts
-  # failing with AccessDenied instead of a Terraform-level error.
+  # Flow logs go to CloudWatch Logs and are on by default
+  # (var.enable_flow_log). This whole chain — the KMS key, the log group,
+  # the delivery role/policy, and the flow log itself — needs several IAM
+  # permissions on TerraformDeploy that aren't obvious just from reading
+  # this file. They all live in modules/github-oidc-roles/main.tf, under
+  # FlowLogKmsKey, CloudWatchLogGroups, and PassFlowLogDeliveryRole — check
+  # there first if a change here starts failing with AccessDenied.
   enable_flow_log                                 = var.enable_flow_log
   create_flow_log_cloudwatch_log_group            = var.enable_flow_log
   create_flow_log_cloudwatch_iam_role             = var.enable_flow_log

@@ -30,22 +30,25 @@ output "private_route_table_ids" {
   value       = module.vpc.private_route_table_ids
 }
 
-# Needed by the network account to add return routes (spoke CIDRs -> TGW) to the
-# egress VPC's public route tables, so traffic coming back through the NAT gateways
-# can find its way to the spokes. Without this the NAT gateway has no route to
-# 10.20.0.0/16 or 10.30.0.0/16 and return traffic is silently dropped.
+# The network account needs this to add return routes (spoke CIDR -> TGW)
+# to the egress VPC's public route tables, so traffic coming back through
+# the NAT gateways can actually find its way to the spokes. Without it,
+# the NAT gateway has no route to 10.20.0.0/16 or 10.30.0.0/16, and return
+# traffic just gets silently dropped.
 #
-# This is a LIST. The upstream module normally creates a single shared public
-# route table, so it usually has one element, but don't assume that; iterate.
+# This is a list, not a single ID. The upstream module usually only
+# creates one shared public route table, so it'll usually have one
+# element — but don't assume that, iterate over it instead.
 output "public_route_table_ids" {
   description = "Public route table IDs. Usually a single shared table. Empty for spoke VPCs, which have no public subnets."
   value       = module.vpc.public_route_table_ids
 }
 
-# NAT gateways can only get one flat tags map from this module
-# (nat_gateway_tags), so a different Name per AZ isn't possible through a
-# variable. Exposed so a caller that needs that (e.g. "nat-egress-a" vs
-# "nat-egress-b") can rename each one individually with aws_ec2_tag.
+# This module can only pass NAT gateways one flat tags map
+# (nat_gateway_tags), so giving each one a different Name per AZ isn't
+# possible through a variable. This output exists so a caller that wants
+# that (e.g. "nat-egress-a" vs "nat-egress-b") can rename each one
+# individually afterwards, using aws_ec2_tag.
 output "natgw_ids" {
   description = "NAT Gateway IDs, one per AZ, same order as var.azs. Empty for spoke VPCs (enable_nat_gateway = false)."
   value       = module.vpc.natgw_ids

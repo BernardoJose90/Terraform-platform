@@ -1,19 +1,15 @@
-# Checkov configuration.
+# Checkov configuration — the security scanner that runs on every PR.
 #
-# Baseline as of the last full accounting (2026-08-17): 263 passed, 4 failed
-# in CI with external modules downloaded. All 4 are now covered below
-# (CKV_AWS_286, CKV_AWS_287, CKV_AWS_61), so the next CI run should show 0
-# failed — update this line with the real number once that run completes.
-# (A local run without external-module download shows fewer of both; always
-#  trust the CI number, it scans more.)
+# Every skip below is a risk we've deliberately decided to accept, with
+# the reason for that decision written down — not a shortcut to make the
+# build pass. soft_fail is turned off, so anything NOT listed here blocks
+# the merge. Rule for adding something to this list: if you can't write a
+# sentence explaining either why the finding doesn't really apply, or why
+# the risk is okay to accept and what the real fix would eventually look
+# like, then go fix the code instead of skipping the check.
 #
-# Every skip below is an accepted risk with a stated reason, not a way to make
-# the build green. `soft_fail` has been removed from the workflow, so anything
-# NOT listed here fails the merge.
-#
-# Rule for adding to this file: if you cannot write a sentence explaining why
-# the finding does not apply, or why the risk is accepted and what the
-# production-grade answer would be, fix the code instead.
+# If a local scan and the CI scan disagree, trust CI — it downloads extra
+# modules the local scan doesn't, so it checks more.
 
 framework:
   - terraform
@@ -23,94 +19,86 @@ skip-check:
   # Does not apply
   # ───────────────────────────────────────────────────────────────────────────
 
-  # CKV_TF_1 — "Ensure Terraform module sources use a commit hash".
-  # Every module here is a LOCAL path (../../modules/vpc). There is no remote
-  # source to pin: the module is versioned by the same commit as its caller.
-  # The check targets registry and git sources. False positive here. 2 findings.
+  # CKV_TF_1 — "Module sources should be pinned to a commit hash". Every
+  # module here is a local path (e.g. ../../modules/vpc), not a remote
+  # one — it's already versioned by the same git commit as whatever calls
+  # it, so there's nothing to pin. This check is really meant for modules
+  # pulled from a registry or a git URL. Doesn't apply here. 2 findings.
   - CKV_TF_1
 
-  # CKV2_AWS_34 — "AWS SSM Parameter should be Encrypted".
-  # The 5 flagged parameters hold Transit Gateway IDs, TGW route table IDs and
-  # a RAM share ARN, published by the network account for the spokes to read.
-  # These are AWS resource identifiers, not secrets: knowing a tgw-id grants
-  # nothing without IAM permission against it. Moving to SecureString would
-  # require a customer-managed KMS key with a cross-account key policy grant to
-  # every spoke, which is real operational surface for no confidentiality gain.
-  # Accepted. 5 findings.
+  # CKV2_AWS_34 — "SSM parameters should be encrypted". The 5 flagged
+  # parameters just hold IDs (TGW IDs, route table IDs, a RAM share ARN),
+  # not secrets — knowing one of these IDs doesn't get you anything
+  # without separate IAM permission to actually use it. Encrypting them
+  # would mean setting up a KMS key with a cross-account policy grant, for
+  # no real gain in confidentiality. Accepted. 5 findings.
   - CKV2_AWS_34
 
-  # CKV_AWS_274 — "Disallow IAM roles, users and groups from using the AWS
-  # AdministratorAccess policy".
-  # The flagged resource is the deliberate break-glass admin permission set in
-  # IAM Identity Center (security/sso.tf). A landing zone needs exactly one
-  # path to full access for account recovery, and this one is verified working:
-  # it is the tested route for repairing a TerraformDeploy trust policy if a CI
-  # change locks the pipeline out. Named permission set, assumed through SSO,
-  # every use logged in CloudTrail. Accepted. 1 finding.
+  # CKV_AWS_274 — "Don't let IAM roles/users use the AdministratorAccess
+  # policy". This is flagging our deliberate emergency-access setup in IAM
+  # Identity Center (security/sso.tf) — the tested way to recover if a CI
+  # change accidentally locks the whole pipeline out. It's a named
+  # permission set, only reachable through SSO, and every use of it shows
+  # up in CloudTrail. Accepted. 1 finding.
   - CKV_AWS_274
 
   # ───────────────────────────────────────────────────────────────────────────
   # Real finding, accepted, with the production answer written down
   # ───────────────────────────────────────────────────────────────────────────
 
-  # CKV_AWS_331 — "Ensure Transit Gateways do not automatically accept VPC
-  # attachment requests".
+  # CKV_AWS_331 — "TGWs shouldn't auto-accept VPC attachment requests".
+  # modules/tgw/main.tf does turn auto-accept on — this one's real.
   #
-  # modules/tgw/main.tf sets auto_accept_shared_attachments = "enable", so any
-  # account the TGW is shared with can attach a VPC without an approval step.
+  # What limits the risk: the RAM share is set to reject anyone outside
+  # our own AWS accounts, and names exactly two — production and
+  # development, both of which are SUPPOSED to be attached anyway. So
+  # this isn't "anyone in the org can attach", it's "the two accounts we
+  # already expect can attach without an extra click".
   #
-  # What bounds it here: the RAM share sets allow_external_principals = false
-  # and names exactly two principals, the production and development account
-  # IDs (member-accounts/network/main.tf, share_with_principals). So the set of
-  # accounts that can auto-attach is two accounts I own, both of which are
-  # supposed to be attached. It is not "anyone in the organisation".
+  # Why we haven't just turned it off: doing that properly needs a
+  # separate "accept this attachment" step in the network account for
+  # each spoke — but network's Terraform runs BEFORE the spokes', so at
+  # that point there'd be nothing yet to accept. Fixing this for real is
+  # a design change (either a second apply pass, or moving the accept
+  # step somewhere else), not a quick setting flip, and it would break
+  # how the current teardown/rebuild flow works today.
   #
-  # Why it is not simply turned off: disabling auto-accept requires an
-  # aws_ec2_transit_gateway_vpc_attachment_accepter in the network account for
-  # each spoke, and the apply order runs network BEFORE the spokes — so the
-  # accepter would need an attachment that does not exist yet. Closing this
-  # properly means either a second network apply pass or moving acceptance out
-  # of the spoke apply entirely. That is a design change, not a config flag,
-  # and it would break the networking_enabled teardown/rebuild flow as it
-  # stands today.
+  # The real fix, when we get to it: turn off auto-accept, have each
+  # spoke publish its own attachment ID to SSM the same way the TGW ID
+  # already is, and add a step in network that reads it and accepts it
+  # explicitly — so accepting an attachment becomes something a human
+  # reviews, not something that just happens automatically.
   #
-  # Production answer: disable auto-accept, publish each spoke's attachment ID
-  # to SSM the way the TGW ID is published today, and add an accepter pass in
-  # the network account that reads it. Then attachment acceptance becomes a
-  # reviewed change rather than an automatic one.
-  #
-  # Accepted for now, deliberately, with the above written down. 1 finding.
+  # Accepted for now. 1 finding.
   - CKV_AWS_331
 
   # ───────────────────────────────────────────────────────────────────────────
   # Real finding, accepted, tracked
   # ───────────────────────────────────────────────────────────────────────────
   #
-  # The 8 checks below all fire on ONE resource:
+  # The 8 checks below are all flagging the same one resource:
   #   modules/github-oidc-roles -> aws_iam_policy_document.permissions
-  # the TerraformDeploy role's permission policy.
+  # (this is the permission policy for the TerraformDeploy role our CI
+  # pipeline runs as).
   #
-  # They are correct. That policy grants ec2:* on "*" and broad iam:* actions
-  # on "*", because a Terraform role that provisions VPCs, Transit Gateways,
-  # subnets and instance profiles genuinely needs most of EC2, and scoping IAM
-  # actions by resource ARN is impossible when the role is what creates those
-  # ARNs in the first place.
+  # They're right to flag it — this is a genuine case of too much access,
+  # not a false alarm. It grants nearly all of EC2 and a lot of IAM,
+  # wide open, because a role that creates VPCs, Transit Gateways,
+  # subnets, and instance profiles genuinely needs most of what EC2 can
+  # do — and you can't lock permissions down to specific resource IDs
+  # when the role's whole job is creating those IDs in the first place.
   #
-  # This is a real over-privilege, not a false positive. Do not describe it as
-  # one.
+  # What keeps this contained: each account has its own separate role,
+  # not one shared role for everything; access to Terraform's state file
+  # is limited to that account's own folder; and the role can only be
+  # assumed by a GitHub Actions run coming from one of three specific
+  # environments, restricted to the main branch, two of which require a
+  # human to click approve first.
   #
-  # What bounds it today:
-  #   - one role per account, not one shared role
-  #   - S3 state access scoped to that account's own key prefix
-  #   - the trust policy only accepts an OIDC subject naming one of three
-  #     GitHub Environments, each of which is restricted to the main branch and
-  #     two of which require a human reviewer
-  #
-  # Production answer: an IAM permissions boundary on the role plus an SCP
-  # denying anything outside the expected service set, so the role cannot
-  # exceed the boundary even if its inline policy stays broad.
-  #
-  # Not built yet. Tracked, not forgotten.
+  # The real fix, eventually: add a permissions boundary plus an
+  # organization-level policy, so even if this role's own policy stays
+  # broad, there's a hard outer limit it can never cross. Not built yet.
+  # Tracked, not forgotten.
   - CKV_AWS_107  # credentials exposure
   - CKV_AWS_109  # permissions management without constraints
   - CKV_AWS_110  # privilege escalation
@@ -120,117 +108,101 @@ skip-check:
   - CKV_AWS_355  # "*" as a resource for restrictable actions
   - CKV_AWS_356  # "*" as a resource for restrictable actions
 
-  # CKV_AWS_286 / CKV_AWS_287 — "Ensure IAM policies does not allow privilege
-  # escalation" / "...credentials exposure". Same titles, same resource
-  # (aws_iam_role_policy.terraform_deploy_policy in github-oidc-roles), same
-  # underlying cloudsplaining detection as CKV_AWS_110/CKV_AWS_107 above —
-  # verified against Checkov's own source: both pairs call the identical
-  # cloudsplaining scanner, just registered under different check IDs for the
-  # "terraform_plan" (resolved-plan) framework vs. the "terraform" (source)
-  # framework. The source-mode scan (bridgecrewio/checkov-action, "Checkov
-  # Security Scan - All Accounts" job) only ever surfaces 107/110; the
-  # resolved-plan scan (terraform-plan.yaml's "Checkov policy scan (resolved
-  # plan)" step, framework: terraform_plan) surfaces 286/287 instead for the
-  # exact same finding. Not a new risk, not a false positive — it is the
-  # CKV_AWS_107/110 finding above, seen twice because two scan passes cover
-  # the same resource. Same acceptance, same production answer (permissions
-  # boundary + SCP, not built yet). 4 findings (2 accounts x 2 checks would
-  # be more; in practice this fires once per account per check).
+  # CKV_AWS_286 / CKV_AWS_287 — same idea, "privilege escalation" and
+  # "credentials exposure", on the same resource as above. We checked
+  # Checkov's own source code to confirm: this is the exact same
+  # underlying detection as CKV_AWS_110/107 above, just registered under
+  # two different IDs because Checkov scans this repo twice — once
+  # reading the raw source code, once reading the resolved plan — and
+  # each pass reports the finding under its own framework's ID. Not a
+  # new or different risk, just the same one counted twice. Same
+  # reasoning and same eventual fix as above. 4 findings.
   - CKV_AWS_286  # privilege escalation (terraform_plan framework)
   - CKV_AWS_287  # credentials exposure (terraform_plan framework)
 
-  # CKV_AWS_61 — "Ensure AWS IAM policy does not allow assume role permission
-  # across all services". Fires on aws_iam_role.terraform_deploy and
-  # aws_iam_role.terraform_plan in github-oidc-roles (main.tf:259-275 and
-  # 327-341), on every account, every time.
+  # CKV_AWS_61 — "IAM policy shouldn't allow assuming the role from any
+  # service". Flags both the TerraformDeploy and TerraformPlan roles, in
+  # every account.
   #
-  # Verified against Checkov's own source (IAMRoleAllowAssumeFromAccount.py):
-  # this check fails specifically when an Allow statement's Principal.AWS
-  # matches a 12-digit account ID or an "arn:aws:iam::<account>:root" ARN. The
-  # trigger is the ManagementAccountBreakGlass statement both trust policies
-  # share, which trusts arn:aws:iam::${var.management_account_id}:root. That
-  # is a real match, not a tool bug or a misparse of the OIDC/Federated
-  # statement sitting next to it.
+  # We checked Checkov's source to see exactly what trips this: it fails
+  # whenever a trust policy's Allow statement lists an AWS account ID (or
+  # that account's ":root") as who's allowed to assume the role. That's a
+  # real, accurate match here — both roles' trust policies include a
+  # break-glass statement that trusts the management account's root.
   #
-  # What bounds it: the statement is gated by a condition requiring
-  # aws:MultiFactorAuthPresent = true, so trusting account-root does not by
-  # itself let anyone in the management account assume the role — they still
-  # need their own IAM permission to assume it AND a live MFA session. This is
-  # the same break-glass shape already accepted for CKV_AWS_274 above (one
-  # deliberate full-access recovery path, gated, logged in CloudTrail): here
-  # it is the recovery path for a TerraformDeploy/TerraformPlan trust policy
-  # itself getting misconfigured and locking CI out, not for account admin.
+  # What limits the risk: that statement also requires MFA to be active,
+  # so simply being in the management account isn't enough on its own —
+  # you'd still need explicit IAM permission to assume the role AND an
+  # active MFA session. It's the same break-glass shape as CKV_AWS_274
+  # above, just here it's for recovering a broken trust policy rather
+  # than full account access.
   #
-  # Production answer: scope the break-glass principal to a specific role in
-  # the management account (e.g. a dedicated BreakGlassOperator role) instead
-  # of :root, so the check passes on the ARN shape without weakening the MFA
-  # gate. Not done yet because that role does not exist in the management
-  # account today. Accepted for now. 2 findings (one per role, every account).
+  # The real fix, eventually: point the break-glass trust at one specific
+  # role in the management account instead of the whole account's root —
+  # that role doesn't exist yet, so this is accepted for now. 2 findings
+  # per account (one for each role).
   - CKV_AWS_61
 
   # ───────────────────────────────────────────────────────────────────────────
   # Tool limitation: count-expansion inside a nested external module
   # ───────────────────────────────────────────────────────────────────────────
   #
-  # Both checks below are graph checks. Both fail on resources that carry a
-  # count index inside terraform-aws-modules/terraform-aws-vpc, and both are
-  # wrong. The tell is in the CI output itself: the SAME check PASSES for the
-  # un-indexed instance and FAILS for the [0]/[1] instances of the identical
-  # resource. Checkov's source-mode graph cannot follow an edge through count
-  # expansion in a nested module, so it sees an orphan.
+  # Both of these are checks that build a graph of your resources and
+  # trace connections between them — and both give the wrong answer here.
+  # The tell: the exact same check PASSES for a resource that isn't
+  # inside a "count" loop, but FAILS for the [0]/[1] versions of that
+  # same resource. Checkov just can't follow the connection through a
+  # counted resource sitting inside a module sitting inside another
+  # module.
   #
-  # CKV2_AWS_19 — "Ensure that all EIP addresses allocated to a VPC are attached
-  # to EC2 instances". Fails on module.egress_vpc.module.vpc.aws_eip.nat[0] and
-  # [1]. These are NAT gateway EIPs and they are attached, to the two NAT
-  # gateways the egress VPC creates one per AZ. The production VPC's single,
-  # un-indexed aws_eip.nat PASSES the same check.
+  # CKV2_AWS_19 — "EIPs attached to a VPC should be attached to an EC2
+  # instance". Flags the egress VPC's two NAT gateway IP addresses
+  # ([0]/[1]) — which genuinely ARE attached, one per availability zone.
+  # Production's own IP address, which isn't inside a count loop, passes
+  # the identical check just fine.
   #
-  # CKV2_AWS_12 — "Ensure the default security group of every VPC restricts all
-  # traffic". Verified false at source: at the pinned commit (v6.6.1) the module
-  # defaults manage_default_security_group = true with
-  # default_security_group_ingress = [] and default_security_group_egress = [],
-  # so aws_default_security_group.this[0] is created with zero rules. That is
-  # exactly what this check asks for. Our wrapper in modules/vpc/main.tf does
-  # not override any of those three, so the defaults apply.
+  # CKV2_AWS_12 — "Every VPC's default security group should block all
+  # traffic". We checked this directly: the exact module version we're
+  # pinned to (v6.6.1) already sets the default security group to allow
+  # nothing, which is exactly what this check is asking for. Nothing in
+  # our own code overrides that.
   #
-  # Neither is skipped because the risk is accepted. Both are skipped because
-  # the SOURCE scan cannot resolve them. The plan-JSON scan in terraform-plan's
-  # plan job reads fully expanded resources, so it evaluates both correctly and
-  # is the pass that actually covers this ground. If you ever remove that pass,
-  # remove these two skips and deal with the noise.
+  # Neither of these is an actual risk — they're skipped purely because
+  # this particular kind of scan can't see far enough to confirm it. A
+  # separate scan pass, later in the same pipeline, reads the fully
+  # resolved plan instead of the raw source and gets both of these
+  # right. If that pass is ever removed, these two skips need to go too.
   - CKV2_AWS_19
   - CKV2_AWS_12
 
-  # CKV_AWS_338 — "Ensure CloudWatch log groups retains logs for at least 1 year".
-  # modules/vpc sets flow_log_cloudwatch_log_group_retention_in_days = 90. Accepted:
-  # 90 days balances CloudWatch storage cost against the troubleshooting/audit window
-  # for flow logs, which are high-volume. (Previously skipped under CKV2_AWS_338, which
-  # is not a real check ID — that skip was a no-op. Fixed to the real ID, CKV_AWS_338.)
+  # CKV_AWS_338 — "CloudWatch log groups should keep logs for at least a
+  # year". modules/vpc keeps flow logs for 90 days instead — a deliberate
+  # balance between storage cost and how far back you'd actually need to
+  # look for troubleshooting, given how much data flow logs generate.
+  # Accepted.
   - CKV_AWS_338
 
-  # CKV2_AWS_11 — "Ensure VPC flow logging is enabled in all VPCs". Same tool
-  # limitation as CKV2_AWS_19/CKV2_AWS_12 above, just the mirror image: it PASSES
-  # under the source scan (verified: `checkov -d modules/vpc --check CKV2_AWS_11`
-  # passes cleanly) but FAILS under the terraform_plan (resolved-plan) scan on
-  # module.egress_vpc[0].module.vpc.aws_vpc.this[0] — Checkov's plan-based graph
-  # can't trace the aws_vpc -> aws_flow_log connection through a module-count x
-  # resource-count nesting two levels deep. Flow logs are genuinely enabled
-  # (modules/vpc defaults enable_flow_log = true). Skipped because the SOURCE
-  # scan is the pass that actually covers this ground, same logic as above.
+  # CKV2_AWS_11 — "VPC flow logging should be enabled in every VPC". This
+  # is the mirror image of the CKV2_AWS_19/12 tool limitation above: it
+  # PASSES when scanning the raw source, but FAILS when scanning the
+  # resolved plan, because Checkov's plan-based graph can't trace the
+  # connection between the VPC and its flow log through two levels of
+  # nested, counted modules. Flow logs really are on by default here.
+  # Skipped because the source-code scan already covers this correctly.
   - CKV2_AWS_11
 
-  # CKV2_AWS_35 — "AWS NAT Gateways should be utilized for the default route".
-  # False positive introduced by our own EVAL_TF_PLAN_AFTER_UNKNOWN=true fix
-  # (terraform-plan.yaml, added to resolve CKV_AWS_158 on the new flow-log KMS
-  # key). aws_route's instance_id is never set — we route via nat_gateway_id /
-  # gateway_id instead — but the provider schema marks instance_id as
-  # computed-if-unset, so it shows up in the plan's after_unknown too. Before
-  # our fix, Checkov read that as "attribute absent" and passed correctly.
-  # After it, Checkov treats every after_unknown attribute as "will get a real
-  # value", so instance_id looks set when it never will be. Verified by
-  # reproducing both real terraform_plan JSONs locally, with and without the
-  # env var flag, against modules/vpc: CKV_AWS_158 flips fail->pass and
-  # CKV2_AWS_35 flips pass->fail at the same time. Accepted trade-off — see
-  # main.tf and variables.tf for the actual NAT/IGW route resources; there is
-  # no NAT instance anywhere in this VPC design.
+  # CKV2_AWS_35 — "The default route should go through a NAT gateway".
+  # This one's a false alarm we accidentally introduced ourselves, with
+  # the EVAL_TF_PLAN_AFTER_UNKNOWN=true setting in terraform-plan.yaml
+  # (added to fix a different, real finding — CKV_AWS_158, about the
+  # flow-log encryption key). Here's why: our routes never set
+  # instance_id (we use nat_gateway_id/gateway_id instead), but AWS's own
+  # provider still marks instance_id as "possibly set later" even when
+  # it's never touched, so it shows up as unresolved in the plan. Our
+  # setting change means Checkov now assumes anything unresolved WILL end
+  # up with a real value — so it looks like an instance_id might be set,
+  # when it never will be. We proved this by generating the plan both
+  # with and without that setting: CKV_AWS_158 and CKV2_AWS_35 flip to
+  # opposite results depending on which way it's set. There's no NAT
+  # instance anywhere in this design — only NAT gateways.
   - CKV2_AWS_35

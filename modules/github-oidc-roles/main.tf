@@ -1,13 +1,15 @@
 # ======================================================================================
-# IAM infrastructure for GitHub Actions CI/CD: a deploy role (full permissions) and a
-# plan role (read-only), both assumable via OIDC, no long-lived access keys.
+# The two IAM roles GitHub Actions uses to run jobs in a workflow: one that can
+# make changes (deploy), one that can only look (plan). Both are assumed via
+# OIDC — GitHub proves who it is with a short-lived token, so there's no
+# long-lived AWS access key sitting in a secret anywhere.
 # ======================================================================================
 
 data "aws_caller_identity" "read_current_account" {}
 
 # ======================================================================================
-# OIDC provider: the trust relationship between AWS and GitHub that lets GitHub Actions
-# authenticate without access keys.
+# This is what lets AWS trust a token from GitHub Actions, instead of
+# needing a stored access key.
 # ======================================================================================
 resource "aws_iam_openid_connect_provider" "github" {
   url             = "https://token.actions.githubusercontent.com"
@@ -29,7 +31,8 @@ resource "aws_iam_openid_connect_provider" "github" {
 # Trust policy for the terraform_deploy role
 # ======================================================================================
 data "aws_iam_policy_document" "github_actions_trust_policy" {
-  # Management account admins with MFA can assume this role (break-glass).
+  # Emergency access: an admin in the management account can assume this
+  # role, but only if they've turned on MFA.
   statement {
     sid     = "ManagementAccountBreakGlass"
     effect  = "Allow"
@@ -108,12 +111,10 @@ data "aws_iam_policy_document" "permissions" {
       "iam:GetInstanceProfile",
       "iam:AddRoleToInstanceProfile",
       "iam:RemoveRoleFromInstanceProfile",
-      # Not a create/delete action on its own — the AWS provider calls this
-      # as a safety check before iam:DeleteRole actually runs, to confirm
-      # nothing is still attached. Deleting a role without it fails even
-      # though DeleteRole itself is already granted below. Hit for real on
-      # a teardown: every other flow-log resource destroyed cleanly, then
-      # the delivery role's own deletion failed on this exact call.
+      # AWS won't delete a role that still has something attached to it.
+      # Terraform checks for that before deleting, and this permission is
+      # what lets it check — without it, deleting a role fails even though
+      # the delete permission itself is right there.
       "iam:ListInstanceProfilesForRole",
 
       # OIDC and policy management
@@ -129,12 +130,9 @@ data "aws_iam_policy_document" "permissions" {
       "iam:ListPolicyVersions",
       "iam:CreatePolicyVersion",
       "iam:DeletePolicyVersion",
-      # Same lesson as ssm:AddTagsToResource / logs:TagResource above, this
-      # time on the standalone managed policy modules/vpc's upstream module
-      # creates for flow-log delivery (aws_iam_policy.vpc_flow_log_cloudwatch):
-      # CreatePolicy with tags needs its own Tag action too, and reading tags
-      # back on refresh is a separate call for managed policies (unlike
-      # roles, where GetRole returns tags inline).
+      # Creating a policy WITH tags needs an extra permission beyond just
+      # "create" — same pattern you'll see again below for SSM and
+      # CloudWatch Logs. This one covers the flow-log delivery role's policy.
       "iam:TagPolicy",
       "iam:UntagPolicy",
       "iam:ListPolicyTags"
@@ -142,23 +140,16 @@ data "aws_iam_policy_document" "permissions" {
     resources = ["*"]
   }
 
-  # iam:PassRole is deliberately its OWN statement, never folded into
-  # ManageInstanceRoles above: managing a role's lifecycle and being allowed
-  # to hand that role to another AWS service to assume are two different
-  # permissions in AWS's model, on purpose — folding them together would
-  # mean anything this role can create, it can also silently hand off for
-  # another service to use.
-  #
-  # Needed because aws_flow_log.this (modules/vpc's upstream module) passes
-  # the flow-log delivery role's ARN to EC2's CreateFlowLogs API — passing a
-  # role to a service always needs iam:PassRole on the CALLER, separate from
-  # whatever permissions the role itself carries. resources = ["*"] because
-  # the role name is a Terraform-generated suffix, no fixed ARN to scope to
-  # (same reasoning as ManageInstanceRoles). Bounded instead by
-  # iam:PassedToService: this grants "pass a role to the VPC Flow Logs
-  # service", not "pass any role to any service" — the standard AWS-
-  # recommended way to keep PassRole from being a blank check even when the
-  # resource can't be scoped by ARN.
+  # Kept as its own statement on purpose, not merged into ManageInstanceRoles
+  # above: AWS treats "I can manage this role" and "I can hand this role to
+  # another AWS service to use" as two different permissions — being able to
+  # create a role doesn't automatically let you give it away. We need this
+  # because creating a flow log means telling EC2 "use this role to write
+  # logs", which needs its own explicit permission. resources = ["*"]
+  # because the role's name is generated by Terraform, so there's no fixed
+  # ID to lock this down to ahead of time — but the condition below still
+  # limits it so the role can only be handed to the flow-logs service, not
+  # just any AWS service.
   statement {
     sid       = "PassFlowLogDeliveryRole"
     effect    = "Allow"
@@ -172,23 +163,18 @@ data "aws_iam_policy_document" "permissions" {
     }
   }
 
-  # KMS key + alias for VPC flow log CloudWatch log group encryption
-  # (modules/vpc/main.tf: aws_kms_key.flow_log, aws_kms_alias.flow_log).
-  # Discovered missing when a real apply failed on kms:TagResource: CreateKey
-  # with tags is actually two permission checks in one API call, and only
-  # kms:CreateKey existed.
+  # Permissions for the encryption key used on flow logs (modules/vpc's
+  # aws_kms_key.flow_log / aws_kms_alias.flow_log).
   #
-  # Deliberately NOT kms:* — every action below is one modules/vpc's
-  # aws_kms_key/aws_kms_alias resources actually call across their full
-  # create/read/update/delete lifecycle, nothing more. In particular this
-  # role never needs to USE the key (kms:Decrypt/Encrypt/GenerateDataKey*),
-  # only manage its existence, and it never needs kms:CreateGrant — granting
-  # that on resources = ["*"] would let this role hand out decrypt/sign
-  # rights on every KMS key in the account, not just this one, which is a
-  # documented KMS privilege-escalation path (AWS's own KMS best-practices
-  # guide warns against exactly this). resources = ["*"] is still required
-  # here (same reasoning as ManageInstanceRoles above): CreateKey/CreateAlias
-  # must run before the key/alias exist to have an ARN to scope to.
+  # Deliberately NOT "kms:*" (every KMS action) — only what's needed to
+  # create, read, update, and delete this one key. Notably missing:
+  # permission to actually USE the key to encrypt/decrypt anything (this
+  # role only manages the key, never reads or writes data with it), and
+  # permission to hand out access to it (kms:CreateGrant) — granting that
+  # broadly is a well-known way a role can quietly gain access to every KMS
+  # key in the account, not just this one. resources = ["*"] is still
+  # needed even so: a brand-new key has no ID yet, so there's nothing to
+  # scope the permission to at the moment it's created.
   statement {
     sid    = "FlowLogKmsKey"
     effect = "Allow"
@@ -217,10 +203,9 @@ data "aws_iam_policy_document" "permissions" {
   }
 
   statement {
-    # Originally VPN-only; also covers the VPC flow log CloudWatch group now
-    # (modules/vpc/main.tf's flow_log_destination_type = "cloud-watch-logs"),
-    # since both are just "a CloudWatch log group this account's Terraform
-    # creates" with no meaningful difference in the permissions needed.
+    # Used to be VPN-only, but now also covers the flow-log CloudWatch
+    # group — both are really just "a CloudWatch log group this account
+    # creates", so the same permissions cover either one.
     sid    = "CloudWatchLogGroups"
     effect = "Allow"
     actions = [
@@ -229,22 +214,14 @@ data "aws_iam_policy_document" "permissions" {
       "logs:PutLogEvents",
       "logs:DescribeLogGroups",
       "logs:DeleteLogGroup",
-      # Same lesson as ssm:AddTagsToResource above: CreateLogGroup with tags is
-      # two permission checks in one API call, and only CreateLogGroup existed.
-      # Hit for real: "AccessDeniedException: ... not authorized to perform
-      # CreateLogGroup with Tags. An additional permission logs:TagResource is
-      # required" on the flow-log group's aws_cloudwatch_log_group.flow_log.
+      # Creating a log group WITH tags needs its own extra permission —
+      # same pattern noted for SSM below.
       "logs:TagResource",
       "logs:UntagResource",
       "logs:ListTagsForResource",
-      # aws_cloudwatch_log_group.flow_log sets retention_in_days and
-      # kms_key_id, each a SEPARATE API call from CreateLogGroup itself, and
-      # each needing its own permission the same way TagResource did. Adding
-      # the full set now rather than one AccessDenied at a time:
-      #   - retention_in_days -> PutRetentionPolicy (set) / DeleteRetentionPolicy
-      #     (only if retention_in_days is ever removed/set to null)
-      #   - kms_key_id        -> AssociateKmsKey (set) / DisassociateKmsKey
-      #     (only if kms_key_id is ever removed)
+      # Setting the retention period and the encryption key are each their
+      # own separate call behind the scenes, not part of CreateLogGroup —
+      # so each needs its own permission too.
       "logs:PutRetentionPolicy",
       "logs:DeleteRetentionPolicy",
       "logs:AssociateKmsKey",
@@ -263,15 +240,15 @@ data "aws_iam_policy_document" "permissions" {
       "ssm:GetParametersByPath",
       "ssm:PutParameter",
       "ssm:DeleteParameter",
-      # Every aws_ssm_parameter in this repo passes tags = var.tags, which needs
-      # this as a separate action from PutParameter: AWS tags a new parameter via
-      # its own API call. RemoveTagsFromResource covers the reverse (a tag
-      # dropped from var.tags later).
+      # Every SSM parameter here gets tags. Tagging one is its own separate
+      # call from creating it, so it needs its own permission. UntagResource
+      # covers the opposite case — a tag that gets removed later.
       "ssm:AddTagsToResource",
       "ssm:RemoveTagsFromResource",
-      # Reads back a parameter's current tags on every plan/apply to diff against
-      # var.tags. Unlike ssm:DescribeParameters, this supports resource-level
-      # scoping, so it belongs here rather than in SSMDescribeParameters below.
+      # Terraform reads back a parameter's current tags on every plan/apply
+      # to check they still match the code. This action can be scoped to
+      # one specific parameter (unlike DescribeParameters below), so it
+      # belongs up here.
       "ssm:ListTagsForResource"
     ]
     resources = [
@@ -284,11 +261,11 @@ data "aws_iam_policy_document" "permissions" {
     ]
   }
 
-  # ssm:DescribeParameters doesn't support resource-level permissions at all: AWS
-  # always evaluates it against the account-wide "*" resource, never a specific
-  # parameter ARN, since it's a filter/search API over the whole parameter store.
-  # Scoping it in SSMParameterStore above looks correct but silently grants
-  # nothing, so it needs its own statement at resources = ["*"].
+  # This one can't be scoped to specific parameters at all — it's a
+  # search/filter API over the whole parameter store, so AWS always checks
+  # it against the whole account, never one parameter. Scoping it up in
+  # SSMParameterStore above would look correct but silently grant nothing,
+  # so it needs its own wide-open statement instead.
   statement {
     sid       = "SSMDescribeParameters"
     effect    = "Allow"
@@ -313,11 +290,12 @@ data "aws_iam_policy_document" "permissions" {
     }
   }
 
-  # S3 state file access, scoped to this account's own prefix only, not the whole
-  # bucket. Every account's TerraformDeploy role has this same statement, each
-  # scoped to its own prefix, so no account's pipeline can touch another
-  # account's state file. state_key_prefix must match this account's own
-  # backend "s3" { key = "..." }.
+  # Access to this account's own Terraform state file in S3 — locked to
+  # just this account's own folder, not the whole bucket. Every account has
+  # this same statement, each locked to its own folder, so one account's
+  # pipeline can never read or touch another account's state.
+  # state_key_prefix must match the key used in this account's own backend
+  # config.
   statement {
     sid    = "StateFileAccess"
     effect = "Allow"
@@ -331,10 +309,10 @@ data "aws_iam_policy_document" "permissions" {
     ]
   }
 
-  # ListBucket is a bucket-level action (its resource is the bucket ARN, never an
-  # object path), so it can't be scoped by a prefix on the resource ARN like the
-  # statement above. s3:prefix is the only way to restrict which prefix a
-  # ListBucket call can see.
+  # ListBucket works differently from GetObject/PutObject — it always
+  # targets the whole bucket, never one file's path, so it can't be locked
+  # to a folder the same way the statement above is. The s3:prefix
+  # condition below is the only way to limit what a ListBucket call sees.
   statement {
     sid       = "ListOwnPrefixOnly"
     effect    = "Allow"
@@ -359,8 +337,9 @@ data "aws_iam_policy_document" "permissions" {
       "ram:GetResourceShareAssociations",
       "ram:ListResourceSharePermissions",
       "ram:EnableSharingWithAwsOrganization",
-      # Tag-on-create: RAM evaluates ram:TagResource against resource-share/*
-      # before the share ARN exists, so this statement must stay at Resource "*".
+      # Same "tag on create" situation as elsewhere: AWS checks this
+      # permission before the resource share even has an ID yet, so it
+      # can't be scoped to a specific ARN — has to stay wide open.
       "ram:TagResource",
       "ram:UntagResource",
       "ram:ListTagsForResource"
@@ -374,8 +353,8 @@ resource "aws_iam_role" "terraform_deploy" {
   name                 = var.role_name
   assume_role_policy   = data.aws_iam_policy_document.github_actions_trust_policy.json
   max_session_duration = 3600
-  # See variables.tf — null (the default) means no boundary, unchanged
-  # behavior for every caller that doesn't set this.
+  # Defaults to null (see variables.tf), meaning no boundary — nothing
+  # changes for any caller that doesn't set this.
   permissions_boundary = var.permissions_boundary_arn
 
   tags = {
@@ -457,8 +436,8 @@ resource "aws_iam_role" "terraform_plan" {
   }
 }
 
-# Lets terraform_plan temporarily assume SSMReadOnly in the management account,
-# to read SSM parameters from there during planning.
+# Lets terraform_plan borrow the SSMReadOnly role in the management
+# account, just for reading SSM parameters from there while planning.
 resource "aws_iam_role_policy" "terraform_plan_assume_ssm_readonly" {
   name = "AssumeManagementSSMReadOnly"
   role = aws_iam_role.terraform_plan.id
@@ -492,14 +471,14 @@ resource "aws_iam_role_policy_attachment" "terraform_plan_readonly" {
   policy_arn = "arn:aws:iam::aws:policy/ReadOnlyAccess"
 }
 
-# S3 state file access for terraform_plan, scoped to this account's own prefix
-# only, same as TerraformDeploy's StateFileAccess statement above.
+# Same idea as TerraformDeploy's StateFileAccess above, but for the
+# read-only plan role, and locked to this account's own folder.
 #
-# The ReadOnlyAccess managed policy attached below already grants
-# s3:GetObject/s3:ListBucket on every bucket in the account, unscoped, so this
-# policy's read actions are redundant with that. What actually matters here is
-# PutObject/DeleteObject (state locking), which ReadOnlyAccess does not grant,
-# and which a PR-triggered plan should never have outside its own prefix.
+# The ReadOnlyAccess policy attached below already grants read access to
+# every bucket in the account, so the read actions here are redundant with
+# that. What actually matters is write access for state locking
+# (PutObject/DeleteObject) — ReadOnlyAccess doesn't grant that, and a
+# PR-triggered plan should never be able to write outside its own folder.
 resource "aws_iam_policy" "terraform_plan_s3_role" {
   name = "TerraformPlanS3Policy"
   policy = jsonencode({
@@ -516,9 +495,9 @@ resource "aws_iam_policy" "terraform_plan_s3_role" {
         Resource = ["arn:aws:s3:::${var.state_bucket_name}/${var.state_key_prefix}/*"]
       },
       {
-        # Bucket-level action, must target the bucket ARN not an object path
-        # (see ListOwnPrefixOnly above). Listed mainly for parity with Deploy;
-        # ReadOnlyAccess already covers this in practice.
+        # Targets the whole bucket, not one file's path (see
+        # ListOwnPrefixOnly above) — listed mainly to mirror Deploy's
+        # setup; ReadOnlyAccess already covers this in practice.
         Sid      = "ListOwnPrefixOnly"
         Effect   = "Allow"
         Action   = ["s3:ListBucket"]

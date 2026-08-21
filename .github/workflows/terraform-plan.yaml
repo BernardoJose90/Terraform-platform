@@ -220,14 +220,16 @@ jobs:
         id: filter
         if: steps.classify.outputs.tf_changed == 'true'
         run: |
-          # modules/ is checked FIRST and separately. A shared module has no
-          # single owning account, and any account that consumes it can be
-          # affected — without a dependency graph mapping module -> accounts,
-          # the only safe answer to "which accounts" is "all of them". This
-          # is deliberately blunter than the member-accounts/ diff below: a
-          # module-only change costs a few extra minutes of CI re-planning
-          # every account, versus silently never planning the accounts that
-          # actually depend on it (the failure mode this replaces).
+          # modules/ gets checked first, and separately, from everything
+          # else. A shared module has no single account that owns it — any
+          # account using it could be affected — and without a real
+          # dependency graph mapping which module feeds which account, the
+          # only safe answer to "which accounts changed" is "all of them".
+          # This is deliberately blunter than the member-accounts/ diff
+          # below: a module-only change costs a few extra minutes of CI
+          # re-planning every account, which is a much smaller problem than
+          # silently never planning the accounts that actually depend on
+          # it — the failure mode this is here to prevent.
           CHANGED_MODULE_FILES=$(git diff --name-only origin/main...HEAD -- modules/ || echo "")
 
           if [ -n "$CHANGED_MODULE_FILES" ]; then
@@ -391,10 +393,16 @@ jobs:
         working-directory: ${{ matrix.working_directory }}
         run: terraform init -input=false
 
-      - name: Terraform Validate
-        working-directory: ${{ matrix.working_directory }}
-        run: terraform validate
-
+      # No separate "terraform validate" step here — it's redundant with two
+      # things: the Validate & Format job already runs it for every account
+      # (see terraform validate loop above), and Terraform Plan below performs
+      # the same validation internally as part of computing the plan, so a
+      # broken config still fails loudly either way. Removed rather than kept
+      # "for a clearer error message": validate never caught anything plan
+      # wouldn't have, on this codebase, and the account matrix runs in
+      # parallel, so the seconds saved per account don't shorten the overall
+      # pipeline (gated by Terraform Plan's state refresh either way) — this
+      # is purely a cleanup, not a performance fix.
       - name: Terraform Plan
         id: plan
         working-directory: ${{ matrix.working_directory }}
@@ -423,12 +431,13 @@ jobs:
             echo "✅ Terraform plan SUCCEEDED"
           fi
 
-          # Destructive-change detection. The "Z to destroy" count in
-          # Terraform's own summary line covers both plain destroys and the
-          # destroy half of a "-/+ replace" — a single reliable signal
-          # without having to pattern-match individual resource action
-          # lines. Doesn't block the job (a deliberate destroy is sometimes
-          # correct); just makes it impossible to merge past unnoticed.
+          # Detects destructive changes by reading the "Z to destroy" count
+          # from Terraform's own summary line — that single number already
+          # covers both plain destroys and the destroy half of a "-/+
+          # replace", so there's no need to pattern-match individual
+          # resource lines. This doesn't block the job — a deliberate
+          # destroy is sometimes exactly the right call — it just makes
+          # sure one can't slip through a merge unnoticed.
           DESTROY_COUNT=$(grep -oE '[0-9]+ to destroy' plan_output.txt | grep -oE '^[0-9]+' | head -1)
           DESTROY_COUNT=${DESTROY_COUNT:-0}
           if [ "$DESTROY_COUNT" -gt 0 ]; then
@@ -547,21 +556,23 @@ jobs:
           retention-days: 30
 
 # ── Policy scan of the RESOLVED plan ────────────────────────────────────
-      # The security-scan job reads raw HCL, so it cannot see anything that only
-      # exists after evaluation: tfvars values, module outputs, data source
-      # results, count/for_each expansion. This pass reads the plan JSON, where
-      # all of that is materialised, and catches what a source scan structurally
-      # cannot.
+      # The security-scan job above only reads raw HCL, so it can't see
+      # anything that only exists after Terraform actually evaluates
+      # everything — tfvars values, module outputs, data source results,
+      # count/for_each expansion. This second pass reads the plan's JSON
+      # instead, where all of that has already been worked out, and catches
+      # what a plain source-code scan structurally can't.
       #
-      # Runs inside this job rather than as its own, deliberately. terraform is
-      # already initialised here, credentials are already assumed, and
-      # tfplan.binary is already on disk. A separate job would repeat checkout,
-      # setup-terraform, an OIDC assume and a terraform init, six times over,
-      # for no extra coverage.
+      # This runs inside the same job as the plan, rather than as its own
+      # separate job, on purpose: Terraform is already initialized here,
+      # credentials are already assumed, and tfplan.binary is already sitting
+      # on disk. A separate job would repeat checkout, setup-terraform, an
+      # OIDC assume, and a terraform init six times over — one per account —
+      # for zero extra coverage.
       #
-      # Placed AFTER the artifact upload on purpose: if this scan fails the job
-      # fails and Plan Summary blocks the merge, but the plan artifact and the
-      # PR comment still exist for you to read.
+      # Placed AFTER the artifact upload on purpose too: if this scan fails,
+      # the job fails and Plan Summary blocks the merge — but the plan
+      # artifact and the PR comment are still there for someone to read.
       - name: Convert plan to JSON
         if: steps.plan.outputs.plan_exit_code == '0'
         working-directory: ${{ matrix.working_directory }}
@@ -570,14 +581,16 @@ jobs:
       - name: Checkov policy scan (resolved plan)
         if: steps.plan.outputs.plan_exit_code == '0'
         env:
-          # Without this, Checkov reads only the plan's `after` values. A resource
-          # created in the same plan as something it depends on (e.g. a CloudWatch
-          # log group's kms_key_id pointing at a KMS key being created alongside it)
-          # has that value as `(known after apply)` — `after` is null, so
-          # value-presence checks like CKV_AWS_158 see "not set" and fail, even
-          # though the HCL genuinely sets it. This tells Checkov to treat
-          # `(known after apply)` as "will have a value" instead of "has no value".
-          # Checkov source: checkov/terraform/plan_parser.py, _eval_after_unknown().
+          # Without this, Checkov only reads the plan's `after` values. When a
+          # resource is created in the same plan as something it depends on —
+          # say, a CloudWatch log group's kms_key_id pointing at a KMS key
+          # being created right alongside it — that value shows up as
+          # `(known after apply)`, meaning `after` is null. A check like
+          # CKV_AWS_158, which just looks for "is this value set?", reads that
+          # as "not set" and fails, even though the HCL genuinely does set it.
+          # This setting tells Checkov to treat `(known after apply)` as "this
+          # will have a value" instead of "this has no value". Checkov's own
+          # source for this: checkov/terraform/plan_parser.py, _eval_after_unknown().
           EVAL_TF_PLAN_AFTER_UNKNOWN: "true"
         run: |
           pip install --quiet checkov==3.3.11

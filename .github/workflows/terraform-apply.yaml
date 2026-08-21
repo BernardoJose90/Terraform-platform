@@ -1,31 +1,34 @@
 name: Terraform Apply
 
-# Runs when changes are merged to main.
-# Accounts, directories, roles, and approval tiers are discovered at runtime
-# from SSM and only changed account folders are included.
-# Adding a new account does not require changing this workflow.
+# Runs whenever a change lands on main.
+# Which accounts, directories, roles, and approval tiers exist is worked
+# out at runtime by reading SSM, and only the account folders that
+# actually changed get included — adding a new account never means
+# editing this workflow.
 #
-# When possible, apply the EXACT Terraform plan that was reviewed in the PR.
-# This prevents applying a different plan based on state that may have changed
-# since the review.
+# Wherever possible, this applies the EXACT plan that was reviewed on the
+# PR — not a fresh one — so nothing gets applied based on state that may
+# have shifted since the review happened.
 #
-# If the reviewed plan cannot be found:
+# If that reviewed plan can't be found, what happens depends on how this
+# run started:
 #
-#   1-push to main + production -> REFUSE and fail
-#   2-push to main + non-production -> create a fresh plan
-#   3-workflow_dispatch -> create a fresh plan
+#   1. push to main, production account     -> refuse, fail the run
+#   2. push to main, non-production account -> compute a fresh plan
+#   3. manual workflow_dispatch run          -> compute a fresh plan
 #
-# Production must refuse when the reviewed plan is missing. Otherwise, a
-# missing/expired artifact or failed PR lookup could cause an unreviewed plan
-# to be applied, defeating the purpose of reviewed plans.
+# Production has to refuse rather than fall back, because a missing or
+# expired artifact, or a failed PR lookup, could otherwise let an
+# unreviewed plan slip through and apply — which defeats the whole point
+# of reviewing plans in the first place. A manual run is different: a
+# person explicitly asked for this apply, so computing a fresh plan for
+# them is fine.
 #
-# Manual runs are different because someone explicitly requested the apply,
-# so creating a fresh plan is acceptable.
-#
-# To find the reviewed plan, we trace the current main commit back to the PR
-# that produced the plan artifact. We cannot match github.sha directly because
-# merge, squash, and rebase merges create a new commit on main with a different
-# SHA from the commit used by the PR's Terraform plan.
+# To find the reviewed plan, this traces the commit that just landed on
+# main back to the PR that produced it. It can't just match github.sha
+# directly, because merge, squash, and rebase merges all create a brand
+# new commit on main — with a different SHA than the one the PR's
+# Terraform plan was actually computed against.
 
 on:
   push:
@@ -88,19 +91,22 @@ jobs:
       - name: Detect changed account folders
         id: filter
         run: |
-          # github.event.before is the commit main was on BEFORE this push,
-          # which is the only correct base for a push event.
+          # github.event.before is the commit main was sitting on BEFORE this
+          # push landed — that's the only correct starting point to diff
+          # from for a push event.
           #
-          # HEAD~1 (what this used to be) is only right when the push contains
-          # exactly one commit. Rebase-merge a three-commit PR and main gains
-          # three commits in a single push: HEAD~1 sees only the last one, so
-          # any account touched by the first two is silently never applied.
-          # That is the same class of silent-partial-deploy failure the
-          # modules/ "treat everything as changed" rule below exists to avoid.
+          # HEAD~1 (what this used to use) is only correct when the push
+          # contains exactly one commit. Rebase-merge a three-commit PR and
+          # main gains three commits in one push — HEAD~1 only sees the
+          # last of the three, so any account touched by the first two
+          # would silently never get applied. That's the exact same kind
+          # of silent-partial-deploy problem the "treat everything as
+          # changed" rule for modules/ below is also guarding against.
           #
-          # The fallbacks cover workflow_dispatch (no `before`), the first push
-          # to a branch (all-zeroes SHA), and force pushes where `before` no
-          # longer exists in history.
+          # The fallbacks below cover: workflow_dispatch (there's no
+          # `before` at all), the very first push to a branch (an
+          # all-zeroes SHA), and force pushes where `before` points at a
+          # commit that no longer exists in history.
           BASE="${{ github.event.before }}"
           if [ -z "$BASE" ] \
             || [ "$BASE" = "0000000000000000000000000000000000000000" ] \
@@ -110,14 +116,16 @@ jobs:
           fi
           echo "Diffing $BASE..HEAD"
 
-          # modules/ is checked FIRST and separately. A shared module has no
-          # single owning account, and any account that consumes it can be
-          # affected — without a dependency graph mapping module -> accounts,
-          # the only safe answer to "which accounts" is "all of them". This
-          # is deliberately blunter than the member-accounts/ diff below: a
-          # module-only change costs a few extra minutes re-applying every
-          # account, versus silently never applying to the accounts that
-          # actually depend on it (the failure mode this replaces).
+          # modules/ gets checked first, and separately, from everything
+          # else. A shared module has no single account that owns it — any
+          # account using it could be affected — and without a real
+          # dependency graph mapping which module feeds which account, the
+          # only safe answer to "which accounts changed" is "all of them".
+          # This is deliberately blunter than the member-accounts/ diff
+          # below: a module-only change costs a few extra minutes
+          # re-applying every account, which is a much smaller problem than
+          # silently never applying to the accounts that actually depend on
+          # it — the failure mode this is here to prevent.
           CHANGED_MODULE_FILES=$(git diff --name-only "$BASE" HEAD -- modules/ || echo "")
 
           if [ -n "$CHANGED_MODULE_FILES" ]; then
@@ -199,15 +207,16 @@ jobs:
             --query "Parameters[*].{Name:Name,Value:Value}" \
             --output json)
 
-          # $changed == "ALL" (set by detect-changes when modules/ changed)
-          # bypasses the IN($changed_list[]) filter entirely, so every
-          # discovered account is included instead of just the ones with a
-          # direct member-accounts/ change.
+          # When $changed is "ALL" (detect-changes sets that when modules/
+          # changed), the IN($changed_list[]) filter gets skipped entirely,
+          # so every discovered account is included — not just the ones
+          # with a direct member-accounts/ change.
           #
           # Note the // "production-approval" default on environment: an
-          # account with no tier parameter in SSM gets the STRICTEST tier, not
-          # the loosest. The unreviewed-apply refusal below keys off exactly
-          # that value, so a misconfigured account fails safe.
+          # account with no tier parameter set in SSM gets the STRICTEST
+          # tier, not the loosest. The unreviewed-apply refusal further
+          # down keys off exactly that value, so a misconfigured account
+          # fails safe rather than sneaking through unreviewed.
           FILTERED=$(jq -c -n --argjson accounts "$ACCOUNTS" --argjson tiers "$TIERS" --arg changed "$CHANGED_ACCOUNTS" '
             ($changed | split(",")) as $changed_list |
             ($tiers | map({(.Name | split("/") | last): .Value}) | add) as $tier_map |
@@ -227,13 +236,14 @@ jobs:
           MATRIX=$(echo "$FILTERED" | jq -c '{include: .}')
           ACCOUNT_COUNT=$(echo "$FILTERED" | jq 'length')
 
-          # Spoke accounts (production, development, ...) read SSM parameters
-          # and assume a role that only exist once network has applied and
-          # published them — see member-accounts/network/main.tf's own
-          # "apply order" comment. Splitting network into its own matrix
-          # lets apply-network run to completion before apply (everyone
-          # else) starts, instead of racing it when both land in the same
-          # workflow run (e.g. a shared modules/ change touches both).
+          # Spoke accounts (production, development, ...) read SSM
+          # parameters and assume a role that only exist once network has
+          # applied and published them — see the "apply order" comment in
+          # member-accounts/network/main.tf. Splitting network out into its
+          # own matrix lets the apply-network job finish completely before
+          # the apply job (everyone else) even starts, instead of the two
+          # racing each other when both land in the same run — which
+          # happens whenever a shared modules/ change touches both.
           NETWORK_MATRIX=$(echo "$FILTERED" | jq -c '{include: [.[] | select(.account == "network")]}')
           NETWORK_COUNT=$(echo "$NETWORK_MATRIX" | jq '.include | length')
           OTHER_MATRIX=$(echo "$FILTERED" | jq -c '{include: [.[] | select(.account != "network")]}')
@@ -262,27 +272,31 @@ jobs:
     needs:
       - discover-accounts
     if: needs.discover-accounts.outputs.account_count != '0' && needs.discover-accounts.outputs.account_count != ''
-      # Don't use job-level outputs here because this is a matrix job.
-      # GitHub Actions only keeps the output from the last matrix instance to finish,
-      # so it can't safely provide one output per account.
+      # Job-level outputs won't work here, because this is a matrix job —
+      # GitHub Actions only keeps whichever matrix instance's output
+      # finished last, so there's no safe way to get one output per
+      # account out of it.
       #
-      # Instead, each apply job checks its own account locally. See the
-      # "Check reviewed plan actually downloaded" step.
+      # Instead, each apply job below just checks its own account locally.
+      # See the "Check reviewed plan actually downloaded" step.
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.discover-accounts.outputs.matrix) }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
-      # This workflow runs on `push` to main, so github.sha is the new merge/squash/
-      # rebase commit. It won't match the PR commit that the Terraform plan used.
+      # This workflow runs on `push` to main, so github.sha is the new
+      # merge/squash/rebase commit — it won't match the commit the PR's
+      # Terraform plan was actually computed against.
       #
-      # Instead, we find the PR associated with this commit and download the plan
-      # using the PR number. This works with all GitHub merge methods.
+      # So instead, this finds the PR associated with the commit and
+      # downloads the plan by PR number instead. Works the same regardless
+      # of which merge method was used.
       #
-      # If there is no PR (for example, a manual run or direct push), pr_number is
-      # empty. The download step then finds no plan and the apply jobs fall back to
-      # refusing the apply or creating a fresh plan.
+      # If there's no associated PR at all (a manual run, or a direct
+      # push), pr_number just comes out empty. The download step below
+      # then finds no plan, and the apply jobs fall back to either
+      # refusing the apply or computing a fresh plan.
       - name: Resolve PR number for this commit
         id: resolve-pr
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -306,9 +320,10 @@ jobs:
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
           workflow: terraform-plan.yaml
-          # Exactly one of pr/commit may be set (the action errors if both
-          # are) — pr wins when resolve-pr found one, otherwise this falls
-          # back to the (expected-to-miss) direct SHA match.
+          # Only one of pr/commit can be set — the action errors if both
+          # are given. pr takes priority when resolve-pr found one;
+          # otherwise this falls back to matching the raw SHA directly,
+          # which is expected not to find anything.
           pr: ${{ steps.resolve-pr.outputs.pr_number }}
           commit: ${{ steps.resolve-pr.outputs.pr_number == '' && github.sha || '' }}
           name: tfplan-${{ matrix.account }}
@@ -327,12 +342,13 @@ jobs:
             echo "ℹ️ No reviewed plan found for ${{ matrix.account }}"
           fi
 
-      # retention-days raised from 5 to 30. Now that a missing artifact is a
-      # hard failure on production-tier pushes rather than a silent fresh
-      # plan, artifact expiry becomes a real operational trip hazard: a PR
-      # opened before a week off would expire its own plan and block its own
-      # merge. Keep this in sync with the two upload steps in
-      # terraform-plan.yaml, which also need raising to 30.
+      # retention-days is 30, raised up from the original 5. Now that a
+      # missing artifact is a hard failure on production-tier pushes,
+      # rather than quietly falling back to a fresh plan, letting the
+      # artifact expire early becomes a real trip hazard — a PR opened
+      # right before someone's week off would expire its own plan and end
+      # up blocking its own merge. Keep this the same as the two upload
+      # steps over in terraform-plan.yaml, which also need to stay at 30.
       - name: Upload plan artifact (if found)
         if: steps.check.outputs.plan_exists == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -342,14 +358,16 @@ jobs:
           retention-days: 30
 
   # ──────────────────────────────────────────────────────────────────────────────
-  # 5. Apply network FIRST — spoke accounts depend on it for SSM parameters
-  #     and IAM roles, so network must finish before spoke accounts start.
+  # 5. Apply network FIRST. Spoke accounts depend on the SSM parameters and
+  #    IAM roles it publishes, so network has to finish before any spoke
+  #    account gets started.
   #
-  # This is a normal job, not a matrix, because there is only one network account.
-  #
-  # A zero-instance matrix reports "success" instead of "skipped". That breaks
-  # the downstream check of needs.apply-network.result.
-  # A normal job with if:false correctly reports "skipped", so use that instead.
+  #    This is a plain job, not a matrix, since there's only ever one
+  #    network account. A zero-instance matrix would report "success"
+  #    instead of "skipped" when there's nothing to do, which would break
+  #    the downstream check on needs.apply-network.result — a plain job
+  #    with if:false correctly reports "skipped" instead, so that's used
+  #    here.
   # ──────────────────────────────────────────────────────────────────────────────
   apply-network:
     name: Terraform Apply - network
@@ -385,13 +403,13 @@ jobs:
         working-directory: member-accounts/network
         run: terraform init -input=false
 
-    # Don't use needs.resolve-plan-run.outputs.plan_exists here.
-    # resolve-plan-run is a matrix job, so GitHub only keeps the output from
-    # whichever matrix instance finishes last — not one output per account.
-    #
-    # Instead, always try to download the plan and check for the file locally.
-    # This is the same approach used by resolve-plan-run and correctly checks
-    # whether the network plan exists.
+    # needs.resolve-plan-run.outputs.plan_exists isn't usable here.
+    # resolve-plan-run is a matrix job, so GitHub only keeps the output
+    # from whichever matrix instance happened to finish last — not one
+    # output per account. So instead, this always tries downloading the
+    # plan and just checks locally whether the file showed up. Same
+    # approach resolve-plan-run itself uses, and it correctly reflects
+    # whether network's own plan actually exists.
       - name: Download reviewed plan from resolve job
         id: download-reviewed
         continue-on-error: true
@@ -410,12 +428,12 @@ jobs:
             echo "found=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # Network is always refused on pushes if the reviewed plan is missing.
-      # Unlike spoke accounts, there is no tier-based exception.
-      #
-      # Spokes depend on the network account's SSM parameters and IAM roles, so an
-      # unreviewed network change could affect the entire repo. Therefore, an
-      # unreviewed network plan must never be applied automatically on a push.e.
+      # Network always gets refused on a push if the reviewed plan is
+      # missing — unlike spoke accounts, there's no tier-based exception
+      # here. Every spoke depends on network's SSM parameters and IAM
+      # roles, so an unreviewed network change could ripple out to affect
+      # the whole repo. An unreviewed network plan should never apply
+      # automatically on a push.
       - name: Refuse unreviewed apply (network)
         if: steps.reviewed.outputs.found != 'true' && github.event_name == 'push'
         run: |
@@ -440,35 +458,38 @@ jobs:
           echo "📂 Working directory: member-accounts/network"
           echo ""
 
-          # Retries on IAM eventual consistency (AccessDeniedException) and on
-          # a plan going stale from THIS LOOP'S OWN prior partial progress.
-          # Not a blind wait: AWS's own SDK reference docs explicitly classify
-          # AccessDeniedException as non-retryable at the API/provider layer
-          # (grouped with ValidationException, ResourceNotFoundException) — it
-          # will never be retried automatically, so retrying the whole apply
-          # is the layer above the SDK where this has to be handled. Zero
-          # cost when nothing races: the overwhelming majority of applies
-          # succeed on attempt 1 with no delay at all, unlike a fixed
-          # time_sleep that used to pause every permissions-touching apply
-          # whether or not a race was actually happening.
+          # This retries on two things: IAM eventual consistency
+          # (AccessDeniedException) and a plan going stale because of THIS
+          # LOOP'S OWN earlier partial progress. Not a blind wait — AWS's
+          # own SDK reference docs explicitly say AccessDeniedException is
+          # non-retryable at the API/provider layer (grouped alongside
+          # ValidationException and ResourceNotFoundException), meaning the
+          # SDK itself will never retry it automatically. So retrying the
+          # whole apply is the only layer left where this can be handled.
+          # It costs nothing when there's no race: the vast majority of
+          # applies succeed on the first attempt, with no delay at all —
+          # unlike the old fixed time_sleep, which used to pause every
+          # permissions-touching apply whether or not a race was actually
+          # happening.
           #
-          # The FIRST attempt always applies the actual reviewed plan, kept
-          # intact. Only a RETRY, after a real failure, recomputes a fresh
-          # plan before reapplying — reapplying the SAME saved plan file a
-          # second time isn't safe here: a prior attempt in this same loop
-          # may have already partially applied (e.g. destroyed several
-          # resources before hitting one AccessDenied), which makes that
-          # exact plan file stale for a second application.
+          # The FIRST attempt always applies the actual reviewed plan,
+          # untouched. Only a RETRY, after a real failure, recomputes a
+          # fresh plan before trying again — reapplying the exact same
+          # saved plan file a second time isn't safe here, because an
+          # earlier attempt in this same loop may have already partially
+          # applied (e.g. destroyed several resources before hitting one
+          # AccessDenied), which makes that original plan file stale for a
+          # second run.
           MAX_ATTEMPTS=3
           attempt=1
           while true; do
             echo "--- apply attempt $attempt/$MAX_ATTEMPTS ---"
-            # PIPESTATUS[0] (not the pipeline's own exit code, which is tee's —
-            # always 0) so a real apply failure actually fails this step.
-            # Without this, "terraform apply | tee" always reports success
-            # regardless of whether apply errored: confirmed happening on a
-            # real run where the log showed "Error: ... Terraform exited with
-            # code 1" but the job still reported conclusion "success" in the
+            # PIPESTATUS[0], not the pipeline's own exit code (which is
+            # tee's, always 0), so a real apply failure actually fails this
+            # step. Without this, "terraform apply | tee" always reports
+            # success no matter what apply did — confirmed on a real run
+            # where the log clearly showed "Error: ... Terraform exited
+            # with code 1", yet the job still reported "success" via the
             # GitHub API.
             terraform apply -input=false -lock-timeout=120s tfplan.binary 2>&1 | tee apply_output.txt
             EXIT_CODE="${PIPESTATUS[0]}"
@@ -491,11 +512,10 @@ jobs:
             attempt=$((attempt + 1))
           done
 
-      # This is only reached by workflow_dispatch.
-      # All pushes are blocked above if there is no reviewed plan.
-      #
-      # A manual run is different because a human explicitly requested the apply
-      # without a reviewed plan, so a fresh plan is allowed.
+      # Only reachable through a manual workflow_dispatch run — every push
+      # gets blocked above if there's no reviewed plan. A manual run is
+      # different because a person explicitly asked for this apply, so
+      # computing a fresh plan for them is fine.
       - name: Terraform Apply (fresh plan — fallback)
         if: steps.reviewed.outputs.found != 'true' && github.event_name != 'push'
         working-directory: member-accounts/network
@@ -506,16 +526,18 @@ jobs:
           echo ""
           terraform plan -no-color -input=false -lock-timeout=60s -out=tfplan.binary
 
-          # See the "Terraform Apply (reviewed plan)" step above for why this
-          # retries on AccessDeniedException/"Saved plan is stale" specifically,
-          # and why recomputing before each retry (not just this first plan)
-          # is the safe approach once this loop has its own partial progress.
+          # See the "Terraform Apply (reviewed plan)" step above for why
+          # this retries specifically on AccessDeniedException / "Saved
+          # plan is stale", and why it recomputes before every retry (not
+          # just this first plan) once this loop has partial progress of
+          # its own to worry about.
           MAX_ATTEMPTS=3
           attempt=1
           while true; do
             echo "--- apply attempt $attempt/$MAX_ATTEMPTS ---"
-            # PIPESTATUS[0] (not the pipeline's own exit code, which is tee's —
-            # always 0) so a real apply failure actually fails this step.
+            # PIPESTATUS[0], not the pipeline's own exit code (which is
+            # tee's, always 0), so a real apply failure actually fails
+            # this step.
             terraform apply -input=false -lock-timeout=120s tfplan.binary 2>&1 | tee apply_output.txt
             EXIT_CODE="${PIPESTATUS[0]}"
             [ "$EXIT_CODE" -eq 0 ] && break
@@ -575,15 +597,15 @@ jobs:
           if-no-files-found: ignore
 
   # ──────────────────────────────────────────────────────────────────────────────
-  # 6. Apply every other changed account after network finishes.
-  #     This prevents spoke accounts from racing network.
+  # 6. Apply every other changed account, after network finishes. This is
+  #    what stops spoke accounts from racing network.
   #
-  # !failure() && !cancelled() means "continue unless an upstream job failed
-  # or was cancelled". It also allows the job to continue when network was
-  # skipped because it wasn't needed.
-  #
-  # If network was needed but failed, all other account applies are skipped
-  # to avoid applying against an incomplete or broken network state.
+  #    !failure() && !cancelled() reads as "continue, unless an upstream
+  #    job actually failed or got cancelled" — which also lets this job
+  #    continue normally when network was simply skipped because it wasn't
+  #    needed. If network WAS needed and it failed, every other account's
+  #    apply gets skipped too, so nothing applies against an incomplete or
+  #    broken network state.
   # ──────────────────────────────────────────────────────────────────────────────
   apply:
     name: Terraform Apply - ${{ matrix.account }}
@@ -625,13 +647,14 @@ jobs:
         working-directory: ${{ matrix.working_directory }}
         run: terraform init -input=false
 
-      # Don't use needs.resolve-plan-run.outputs.plan_exists here.
-      # resolve-plan-run is a matrix job, so GitHub only keeps the output from the
-      # matrix instance that finishes last. It does not provide one value per account.
-      #
-      # That means every account could read the same, incorrect value.
-      # Instead, each account downloads its plan and checks the file locally.
-      # This is the only reliable way for each account to verify its own reviewed plan.
+      # needs.resolve-plan-run.outputs.plan_exists isn't usable here either
+      # — resolve-plan-run is a matrix job, so GitHub only keeps the output
+      # from whichever matrix instance finished last, not one value per
+      # account. Reading it here would mean every account sees the same,
+      # possibly wrong, value. So instead each account downloads its own
+      # plan and checks locally whether the file is actually there — the
+      # only reliable way for an account to confirm its own reviewed plan
+      # exists.
       - name: Download reviewed plan from resolve job
         id: download-reviewed
         continue-on-error: true
@@ -650,13 +673,12 @@ jobs:
             echo "found=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # The tier comes from matrix.environment.
-      # If an account has no tier set in SSM, discover-accounts defaults it to
-      # "production-approval".
-      #
-      # This means a new or misconfigured account is treated as production and
-      # refused if its reviewed plan is missing, instead of falling back to a
-      # fresh plan. This is fail-safe.
+      # The tier comes straight from matrix.environment. If an account has
+      # no tier set in SSM, discover-accounts already defaulted it to
+      # "production-approval" — so a new or misconfigured account gets
+      # treated as production here too, and gets refused if its reviewed
+      # plan is missing, rather than quietly falling back to a fresh plan.
+      # That's the fail-safe behavior.
       - name: Refuse unreviewed apply (${{ matrix.account }})
         if: steps.reviewed.outputs.found != 'true' && github.event_name == 'push' && matrix.environment == 'production-approval'
         run: |
@@ -682,35 +704,38 @@ jobs:
           echo "🏷️ Environment: ${{ matrix.environment }}"
           echo ""
 
-          # Retries on IAM eventual consistency (AccessDeniedException) and on
-          # a plan going stale from THIS LOOP'S OWN prior partial progress.
-          # Not a blind wait: AWS's own SDK reference docs explicitly classify
-          # AccessDeniedException as non-retryable at the API/provider layer
-          # (grouped with ValidationException, ResourceNotFoundException) — it
-          # will never be retried automatically, so retrying the whole apply
-          # is the layer above the SDK where this has to be handled. Zero
-          # cost when nothing races: the overwhelming majority of applies
-          # succeed on attempt 1 with no delay at all, unlike a fixed
-          # time_sleep that used to pause every permissions-touching apply
-          # whether or not a race was actually happening.
+          # This retries on two things: IAM eventual consistency
+          # (AccessDeniedException) and a plan going stale because of THIS
+          # LOOP'S OWN earlier partial progress. Not a blind wait — AWS's
+          # own SDK reference docs explicitly say AccessDeniedException is
+          # non-retryable at the API/provider layer (grouped alongside
+          # ValidationException and ResourceNotFoundException), meaning the
+          # SDK itself will never retry it automatically. So retrying the
+          # whole apply is the only layer left where this can be handled.
+          # It costs nothing when there's no race: the vast majority of
+          # applies succeed on the first attempt, with no delay at all —
+          # unlike the old fixed time_sleep, which used to pause every
+          # permissions-touching apply whether or not a race was actually
+          # happening.
           #
-          # The FIRST attempt always applies the actual reviewed plan, kept
-          # intact. Only a RETRY, after a real failure, recomputes a fresh
-          # plan before reapplying — reapplying the SAME saved plan file a
-          # second time isn't safe here: a prior attempt in this same loop
-          # may have already partially applied (e.g. destroyed several
-          # resources before hitting one AccessDenied), which makes that
-          # exact plan file stale for a second application.
+          # The FIRST attempt always applies the actual reviewed plan,
+          # untouched. Only a RETRY, after a real failure, recomputes a
+          # fresh plan before trying again — reapplying the exact same
+          # saved plan file a second time isn't safe here, because an
+          # earlier attempt in this same loop may have already partially
+          # applied (e.g. destroyed several resources before hitting one
+          # AccessDenied), which makes that original plan file stale for a
+          # second run.
           MAX_ATTEMPTS=3
           attempt=1
           while true; do
             echo "--- apply attempt $attempt/$MAX_ATTEMPTS ---"
-            # PIPESTATUS[0] (not the pipeline's own exit code, which is tee's —
-            # always 0) so a real apply failure actually fails this step.
-            # Without this, "terraform apply | tee" always reports success
-            # regardless of whether apply errored: confirmed happening on a
-            # real run where the log showed "Error: ... Terraform exited with
-            # code 1" but the job still reported conclusion "success" in the
+            # PIPESTATUS[0], not the pipeline's own exit code (which is
+            # tee's, always 0), so a real apply failure actually fails this
+            # step. Without this, "terraform apply | tee" always reports
+            # success no matter what apply did — confirmed on a real run
+            # where the log clearly showed "Error: ... Terraform exited
+            # with code 1", yet the job still reported "success" via the
             # GitHub API.
             terraform apply -input=false -lock-timeout=120s tfplan.binary 2>&1 | tee apply_output.txt
             EXIT_CODE="${PIPESTATUS[0]}"
@@ -733,8 +758,9 @@ jobs:
             attempt=$((attempt + 1))
           done
 
-      # This runs for manual workflow_dispatch runs, or for non-production accounts
-      # on a push. Production pushes are blocked by the refusal above.
+      # Runs for manual workflow_dispatch runs, or for non-production
+      # accounts on a push. Production pushes get blocked by the refusal
+      # step above instead.
       - name: Terraform Apply (fresh plan — fallback)
         if: steps.reviewed.outputs.found != 'true' && !(github.event_name == 'push' && matrix.environment == 'production-approval')
         working-directory: ${{ matrix.working_directory }}
@@ -745,16 +771,18 @@ jobs:
           echo ""
           terraform plan -no-color -input=false -lock-timeout=60s -out=tfplan.binary
 
-          # See the "Terraform Apply (reviewed plan)" step above for why this
-          # retries on AccessDeniedException/"Saved plan is stale" specifically,
-          # and why recomputing before each retry (not just this first plan)
-          # is the safe approach once this loop has its own partial progress.
+          # See the "Terraform Apply (reviewed plan)" step above for why
+          # this retries specifically on AccessDeniedException / "Saved
+          # plan is stale", and why it recomputes before every retry (not
+          # just this first plan) once this loop has partial progress of
+          # its own to worry about.
           MAX_ATTEMPTS=3
           attempt=1
           while true; do
             echo "--- apply attempt $attempt/$MAX_ATTEMPTS ---"
-            # PIPESTATUS[0] (not the pipeline's own exit code, which is tee's —
-            # always 0) so a real apply failure actually fails this step.
+            # PIPESTATUS[0], not the pipeline's own exit code (which is
+            # tee's, always 0), so a real apply failure actually fails
+            # this step.
             terraform apply -input=false -lock-timeout=120s tfplan.binary 2>&1 | tee apply_output.txt
             EXIT_CODE="${PIPESTATUS[0]}"
             [ "$EXIT_CODE" -eq 0 ] && break
@@ -840,12 +868,14 @@ jobs:
           echo ""
           echo "Accounts applied: ${{ needs.discover-accounts.outputs.account_count }}"
           echo ""
-          # Guard the jq. A push that passes paths-ignore but touches nothing
-          # under member-accounts/ or modules/ (scripts/, assets/, a root file)
-          # leaves has_changes false, so discover-accounts is skipped and this
-          # output is an empty string. Piping "" into jq exits non-zero, which
-          # turned this whole run red and emailed you about a push that
-          # correctly did nothing.
+          # This guard is needed because a push that passes paths-ignore
+          # but doesn't actually touch member-accounts/ or modules/ (say,
+          # it only touched scripts/, assets/, or a root file) leaves
+          # has_changes false. That means discover-accounts gets skipped,
+          # and this output comes through as an empty string. Piping ""
+          # straight into jq exits non-zero — which used to turn this
+          # entire run red and email everyone about a push that had
+          # correctly done nothing at all.
           MATRIX='${{ needs.discover-accounts.outputs.matrix }}'
           if [ -n "$MATRIX" ]; then
             echo "Matrix:"
@@ -857,8 +887,10 @@ jobs:
           echo "apply-network: ${{ needs.apply-network.result }}"
           echo "apply:         ${{ needs.apply.result }}"
 
-      # Without this, the summary would always be green and wouldn't be useful as a required status check.
-      # Only a real "failure" blocks the merge. "Skipped" is a normal outcome.
+      # Without this step, the summary job would always show green,
+      # making it useless as a required status check. Only a real
+      # "failure" here blocks anything — "skipped" is a perfectly normal
+      # outcome and shouldn't count against it.
       - name: Fail if any apply failed
         run: |
           if [ "${{ needs.apply-network.result }}" = "failure" ] || [ "${{ needs.apply.result }}" = "failure" ]; then
