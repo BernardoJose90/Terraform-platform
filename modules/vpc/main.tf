@@ -139,6 +139,16 @@ module "vpc" {
   # VPC Flow Logs -> CloudWatch Logs. On by default (var.enable_flow_log) so every
   # account using this module gets flow logs without having to ask for them; the
   # upstream module creates both the log group and the IAM role that writes to it.
+  #
+  # This chain (KMS key, log group, delivery role/policy, aws_flow_log itself)
+  # needs several TerraformDeploy permissions that aren't obvious from this file
+  # alone — kms:TagResource, logs:PutRetentionPolicy/AssociateKmsKey,
+  # iam:TagPolicy, and a scoped iam:PassRole for vpc-flow-logs.amazonaws.com.
+  # All granted in modules/github-oidc-roles/main.tf (FlowLogKmsKey,
+  # CloudWatchLogGroups, PassFlowLogDeliveryRole statements) — each one was
+  # found the hard way, one AccessDenied per resource in this chain, on a real
+  # apply/destroy. Look there first if a future change to this block starts
+  # failing with AccessDenied instead of a Terraform-level error.
   enable_flow_log                                 = var.enable_flow_log
   create_flow_log_cloudwatch_log_group            = var.enable_flow_log
   create_flow_log_cloudwatch_iam_role             = var.enable_flow_log
