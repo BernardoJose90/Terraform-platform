@@ -83,6 +83,72 @@ resource "null_resource" "wait_for_tgw_available" {
 }
 
 # ============================================================
+# The mirror-image problem, on teardown. Production and development's
+# TGW attachments get destroyed first (see the CI teardown tiers — spokes
+# always finish before network starts), but the same way apply doesn't
+# wait for "available", destroy doesn't wait for "actually gone": AWS
+# reports each attachment "deleting" for a while before it's really
+# removed, even though Terraform already called the spoke's destroy
+# complete. If network then tries to delete its route tables or the TGW
+# itself while one of those is still mid-delete, AWS rejects it —
+# "IncorrectState: tgw-xxx has non-deleted Transit Gateway Attachments",
+# a real previously-reported issue
+# (hashicorp/terraform-provider-aws#7196), not a hypothetical.
+#
+# destroy-time provisioners can only safely reference `self` — anything
+# else may already be gone from Terraform's perspective by the time this
+# runs, or create a cycle in the destroy graph (see HashiCorp's own
+# provisioner docs). That's why the TGW ID is captured into `triggers`
+# at CREATE time and read back via self.triggers here, instead of
+# referencing aws_ec2_transit_gateway.tgw.id directly.
+# ============================================================
+resource "null_resource" "wait_for_attachments_cleared" {
+  triggers = {
+    tgw_id = aws_ec2_transit_gateway.tgw.id
+  }
+
+  # Depends on the TGW and every route table it owns so that, on destroy,
+  # Terraform tears THIS down first (dependents are destroyed before what
+  # they depend on) — which is the whole point: this resource's
+  # destroy-time provisioner runs, and blocks, before Terraform is
+  # allowed to touch any of them.
+  depends_on = [
+    aws_ec2_transit_gateway.tgw,
+    aws_ec2_transit_gateway_route_table.main,
+    aws_ec2_transit_gateway_route_table.prod_spoke,
+    aws_ec2_transit_gateway_route_table.dev_spoke,
+  ]
+
+  provisioner "local-exec" {
+    when        = destroy
+    interpreter = ["/bin/bash", "-c"]
+    command     = <<-EOT
+      set -euo pipefail
+      TGW_ID="${self.triggers.tgw_id}"
+      echo "Waiting for every VPC attachment on $TGW_ID to finish deleting..."
+
+      for i in $(seq 1 60); do
+        REMAINING=$(aws ec2 describe-transit-gateway-vpc-attachments \
+          --filters "Name=transit-gateway-id,Values=$TGW_ID" \
+          --query "length(TransitGatewayVpcAttachments[?State!=\`deleted\`])" \
+          --output text 2>/dev/null || echo "0")
+        echo "  [$i/60] non-deleted attachments remaining: $REMAINING"
+
+        if [ "$REMAINING" = "0" ]; then
+          echo "All attachments cleared."
+          exit 0
+        fi
+
+        sleep 10
+      done
+
+      echo "Timed out after 10 minutes waiting for attachments on $TGW_ID to clear."
+      exit 1
+    EOT
+  }
+}
+
+# ============================================================
 # ROUTE TABLES. Each spoke gets its own table that only its own automation
 # can touch — production only touches prod_spoke, development only
 # touches dev_spoke (enforced in modules/tgw-spoke-wiring-role) — and
