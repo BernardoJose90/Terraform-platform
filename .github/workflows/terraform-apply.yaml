@@ -458,19 +458,23 @@ jobs:
           echo "📂 Working directory: member-accounts/network"
           echo ""
 
-          # This retries on two things: IAM eventual consistency
-          # (AccessDeniedException) and a plan going stale because of THIS
-          # LOOP'S OWN earlier partial progress. Not a blind wait — AWS's
-          # own SDK reference docs explicitly say AccessDeniedException is
+          # This retries on three things: IAM eventual consistency
+          # (AccessDeniedException), a plan going stale because of THIS
+          # LOOP'S OWN earlier partial progress, and a resource that
+          # AWS accepted but hasn't actually finished settling into yet
+          # (IncorrectState — e.g. attaching a VPC to a Transit Gateway
+          # that's technically "created" but still short of "available";
+          # modules/tgw now waits for that itself, this is just a backstop
+          # for whatever it doesn't cover). Not a blind wait — AWS's own
+          # SDK reference docs explicitly say AccessDeniedException is
           # non-retryable at the API/provider layer (grouped alongside
           # ValidationException and ResourceNotFoundException), meaning the
           # SDK itself will never retry it automatically. So retrying the
           # whole apply is the only layer left where this can be handled.
           # It costs nothing when there's no race: the vast majority of
           # applies succeed on the first attempt, with no delay at all —
-          # unlike the old fixed time_sleep, which used to pause every
-          # permissions-touching apply whether or not a race was actually
-          # happening.
+          # unlike a blind fixed time_sleep, which would pause every
+          # apply whether or not a race was actually happening.
           #
           # The FIRST attempt always applies the actual reviewed plan,
           # untouched. Only a RETRY, after a real failure, recomputes a
@@ -500,8 +504,8 @@ jobs:
               exit "$EXIT_CODE"
             fi
 
-            if ! grep -qE "AccessDeniedException|Saved plan is stale" apply_output.txt; then
-              echo "❌ Failure doesn't match a known retryable pattern (IAM propagation, or a plan gone stale from this loop's own progress) — not retrying."
+            if ! grep -qE "AccessDeniedException|Saved plan is stale|IncorrectState" apply_output.txt; then
+              echo "❌ Failure doesn't match a known retryable pattern (IAM propagation, a plan gone stale from this loop's own progress, or a resource still settling into its final AWS state) — not retrying."
               exit "$EXIT_CODE"
             fi
 
@@ -528,9 +532,9 @@ jobs:
 
           # See the "Terraform Apply (reviewed plan)" step above for why
           # this retries specifically on AccessDeniedException / "Saved
-          # plan is stale", and why it recomputes before every retry (not
-          # just this first plan) once this loop has partial progress of
-          # its own to worry about.
+          # plan is stale" / IncorrectState, and why it recomputes before
+          # every retry (not just this first plan) once this loop has
+          # partial progress of its own to worry about.
           MAX_ATTEMPTS=3
           attempt=1
           while true; do
@@ -547,7 +551,7 @@ jobs:
               exit "$EXIT_CODE"
             fi
 
-            if ! grep -qE "AccessDeniedException|Saved plan is stale" apply_output.txt; then
+            if ! grep -qE "AccessDeniedException|Saved plan is stale|IncorrectState" apply_output.txt; then
               echo "❌ Failure doesn't match a known retryable pattern — not retrying."
               exit "$EXIT_CODE"
             fi
@@ -704,19 +708,23 @@ jobs:
           echo "🏷️ Environment: ${{ matrix.environment }}"
           echo ""
 
-          # This retries on two things: IAM eventual consistency
-          # (AccessDeniedException) and a plan going stale because of THIS
-          # LOOP'S OWN earlier partial progress. Not a blind wait — AWS's
-          # own SDK reference docs explicitly say AccessDeniedException is
+          # This retries on three things: IAM eventual consistency
+          # (AccessDeniedException), a plan going stale because of THIS
+          # LOOP'S OWN earlier partial progress, and a resource that
+          # AWS accepted but hasn't actually finished settling into yet
+          # (IncorrectState — e.g. attaching a VPC to a Transit Gateway
+          # that's technically "created" but still short of "available";
+          # modules/tgw now waits for that itself, this is just a backstop
+          # for whatever it doesn't cover). Not a blind wait — AWS's own
+          # SDK reference docs explicitly say AccessDeniedException is
           # non-retryable at the API/provider layer (grouped alongside
           # ValidationException and ResourceNotFoundException), meaning the
           # SDK itself will never retry it automatically. So retrying the
           # whole apply is the only layer left where this can be handled.
           # It costs nothing when there's no race: the vast majority of
           # applies succeed on the first attempt, with no delay at all —
-          # unlike the old fixed time_sleep, which used to pause every
-          # permissions-touching apply whether or not a race was actually
-          # happening.
+          # unlike a blind fixed time_sleep, which would pause every
+          # apply whether or not a race was actually happening.
           #
           # The FIRST attempt always applies the actual reviewed plan,
           # untouched. Only a RETRY, after a real failure, recomputes a
@@ -746,8 +754,8 @@ jobs:
               exit "$EXIT_CODE"
             fi
 
-            if ! grep -qE "AccessDeniedException|Saved plan is stale" apply_output.txt; then
-              echo "❌ Failure doesn't match a known retryable pattern (IAM propagation, or a plan gone stale from this loop's own progress) — not retrying."
+            if ! grep -qE "AccessDeniedException|Saved plan is stale|IncorrectState" apply_output.txt; then
+              echo "❌ Failure doesn't match a known retryable pattern (IAM propagation, a plan gone stale from this loop's own progress, or a resource still settling into its final AWS state) — not retrying."
               exit "$EXIT_CODE"
             fi
 
@@ -773,9 +781,9 @@ jobs:
 
           # See the "Terraform Apply (reviewed plan)" step above for why
           # this retries specifically on AccessDeniedException / "Saved
-          # plan is stale", and why it recomputes before every retry (not
-          # just this first plan) once this loop has partial progress of
-          # its own to worry about.
+          # plan is stale" / IncorrectState, and why it recomputes before
+          # every retry (not just this first plan) once this loop has
+          # partial progress of its own to worry about.
           MAX_ATTEMPTS=3
           attempt=1
           while true; do
@@ -792,7 +800,7 @@ jobs:
               exit "$EXIT_CODE"
             fi
 
-            if ! grep -qE "AccessDeniedException|Saved plan is stale" apply_output.txt; then
+            if ! grep -qE "AccessDeniedException|Saved plan is stale|IncorrectState" apply_output.txt; then
               echo "❌ Failure doesn't match a known retryable pattern — not retrying."
               exit "$EXIT_CODE"
             fi
