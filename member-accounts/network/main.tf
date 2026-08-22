@@ -15,6 +15,13 @@ terraform {
       source  = "hashicorp/aws"
       version = "~> 6.0"
     }
+    # Used by modules/tgw's wait-for-available poll (null_resource +
+    # local-exec) — see the comment above that resource for why it's
+    # needed at all.
+    null = {
+      source  = "hashicorp/null"
+      version = "~> 3.2"
+    }
   }
   backend "s3" {
     bucket       = "james-terraform-state-2026"
