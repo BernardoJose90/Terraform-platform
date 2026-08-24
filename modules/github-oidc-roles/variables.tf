@@ -61,4 +61,38 @@ variable "permissions_boundary_arn" {
   default     = null
 }
 
+variable "extra_trusted_environments" {
+  description = <<-EOT
+    Additional GitHub Environment names (beyond the fixed
+    production-approval/automated/teardown-approval trio this module always
+    trusts) allowed to log in as TerraformDeploy via OIDC. For a caller
+    whose own workflow gates its apply job behind a differently-named
+    GitHub Environment — e.g. a separate repo like terraform-org gating its
+    apply behind "management-approval" — that environment name has to be
+    listed here, or its OIDC token's sub claim will never match the trust
+    policy and every login attempt will be rejected.
+    Empty by default, so nothing changes for a caller that doesn't set
+    this.
+  EOT
+  type        = list(string)
+  default     = []
+}
+
+variable "create_oidc_provider" {
+  description = <<-EOT
+    Whether this module should create the GitHub OIDC provider in the
+    account, or assume one already exists there and just reference it.
+    AWS only allows one OIDC provider per unique URL per account — a
+    second `resource` here for the same URL would fail as a duplicate. Most
+    callers create their own account's provider through this module and
+    leave this at the default `true`. A caller whose account already
+    manages that provider elsewhere (e.g. terraform-org's platform/
+    account, via its own discovery-role.tf) should set this to `false` so
+    the module reads the existing provider instead of trying to create a
+    conflicting one.
+  EOT
+  type        = bool
+  default     = true
+}
+
          
