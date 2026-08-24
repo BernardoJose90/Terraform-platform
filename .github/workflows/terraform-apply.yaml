@@ -458,32 +458,37 @@ jobs:
           echo "📂 Working directory: member-accounts/network"
           echo ""
 
-          # This retries on three things: IAM eventual consistency
-          # (AccessDeniedException), a plan going stale because of THIS
-          # LOOP'S OWN earlier partial progress, and a resource that
-          # AWS accepted but hasn't actually finished settling into yet
-          # (IncorrectState — e.g. attaching a VPC to a Transit Gateway
-          # that's technically "created" but still short of "available";
-          # modules/tgw now waits for that itself, this is just a backstop
-          # for whatever it doesn't cover). Not a blind wait — AWS's own
-          # SDK reference docs explicitly say AccessDeniedException is
-          # non-retryable at the API/provider layer (grouped alongside
-          # ValidationException and ResourceNotFoundException), meaning the
-          # SDK itself will never retry it automatically. So retrying the
-          # whole apply is the only layer left where this can be handled.
-          # It costs nothing when there's no race: the vast majority of
-          # applies succeed on the first attempt, with no delay at all —
-          # unlike a blind fixed time_sleep, which would pause every
-          # apply whether or not a race was actually happening.
+          # This retries on two things: IAM eventual consistency
+          # (AccessDeniedException) and a resource that AWS accepted but
+          # hasn't actually finished settling into yet (IncorrectState —
+          # e.g. attaching a VPC to a Transit Gateway that's technically
+          # "created" but still short of "available"; modules/tgw now
+          # waits for that itself, this is just a backstop for whatever it
+          # doesn't cover). Neither of these means AWS state actually
+          # changed, so recomputing and reapplying is safe. Not a blind
+          # wait — AWS's own SDK reference docs explicitly say
+          # AccessDeniedException is non-retryable at the API/provider
+          # layer (grouped alongside ValidationException and
+          # ResourceNotFoundException), meaning the SDK itself will never
+          # retry it automatically. So retrying the whole apply is the
+          # only layer left where this can be handled. It costs nothing
+          # when there's no race: the vast majority of applies succeed on
+          # the first attempt, with no delay at all — unlike a blind fixed
+          # time_sleep, which would pause every apply whether or not a
+          # race was actually happening.
           #
-          # The FIRST attempt always applies the actual reviewed plan,
-          # untouched. Only a RETRY, after a real failure, recomputes a
-          # fresh plan before trying again — reapplying the exact same
-          # saved plan file a second time isn't safe here, because an
-          # earlier attempt in this same loop may have already partially
-          # applied (e.g. destroyed several resources before hitting one
-          # AccessDenied), which makes that original plan file stale for a
-          # second run.
+          # "Saved plan is stale" is deliberately NOT retried here, even
+          # though a fresh plan would clear it. It means an earlier
+          # attempt in THIS SAME LOOP already partially applied (e.g.
+          # destroyed several resources before hitting one AccessDenied)
+          # — so the only way to retry is to compute a brand new plan, and
+          # that new plan would never have gone through PR review.
+          # Auto-applying it would silently defeat the entire "production
+          # only applies a reviewed plan" rule this workflow exists to
+          # enforce (see the file header). So instead this fails loudly
+          # and leaves recovery to a human: check what actually landed in
+          # AWS, then get a fresh plan through the normal reviewed path (a
+          # new PR, or workflow_dispatch).
           MAX_ATTEMPTS=3
           attempt=1
           while true; do
@@ -504,8 +509,13 @@ jobs:
               exit "$EXIT_CODE"
             fi
 
-            if ! grep -qE "AccessDeniedException|Saved plan is stale|IncorrectState" apply_output.txt; then
-              echo "❌ Failure doesn't match a known retryable pattern (IAM propagation, a plan gone stale from this loop's own progress, or a resource still settling into its final AWS state) — not retrying."
+            if grep -qE "Saved plan is stale" apply_output.txt; then
+              echo "::error::Plan went stale mid-apply — an earlier attempt in this run already made partial changes to network. Refusing to auto-replan and apply an unreviewed plan to production. Check the account's actual state in AWS, then get a fresh plan through the normal reviewed path (a new PR, or workflow_dispatch) before continuing."
+              exit "$EXIT_CODE"
+            fi
+
+            if ! grep -qE "AccessDeniedException|IncorrectState" apply_output.txt; then
+              echo "❌ Failure doesn't match a known retryable pattern (IAM propagation, or a resource still settling into its final AWS state) — not retrying."
               exit "$EXIT_CODE"
             fi
 
@@ -708,32 +718,37 @@ jobs:
           echo "🏷️ Environment: ${{ matrix.environment }}"
           echo ""
 
-          # This retries on three things: IAM eventual consistency
-          # (AccessDeniedException), a plan going stale because of THIS
-          # LOOP'S OWN earlier partial progress, and a resource that
-          # AWS accepted but hasn't actually finished settling into yet
-          # (IncorrectState — e.g. attaching a VPC to a Transit Gateway
-          # that's technically "created" but still short of "available";
-          # modules/tgw now waits for that itself, this is just a backstop
-          # for whatever it doesn't cover). Not a blind wait — AWS's own
-          # SDK reference docs explicitly say AccessDeniedException is
-          # non-retryable at the API/provider layer (grouped alongside
-          # ValidationException and ResourceNotFoundException), meaning the
-          # SDK itself will never retry it automatically. So retrying the
-          # whole apply is the only layer left where this can be handled.
-          # It costs nothing when there's no race: the vast majority of
-          # applies succeed on the first attempt, with no delay at all —
-          # unlike a blind fixed time_sleep, which would pause every
-          # apply whether or not a race was actually happening.
+          # This retries on two things: IAM eventual consistency
+          # (AccessDeniedException) and a resource that AWS accepted but
+          # hasn't actually finished settling into yet (IncorrectState —
+          # e.g. attaching a VPC to a Transit Gateway that's technically
+          # "created" but still short of "available"; modules/tgw now
+          # waits for that itself, this is just a backstop for whatever it
+          # doesn't cover). Neither of these means AWS state actually
+          # changed, so recomputing and reapplying is safe. Not a blind
+          # wait — AWS's own SDK reference docs explicitly say
+          # AccessDeniedException is non-retryable at the API/provider
+          # layer (grouped alongside ValidationException and
+          # ResourceNotFoundException), meaning the SDK itself will never
+          # retry it automatically. So retrying the whole apply is the
+          # only layer left where this can be handled. It costs nothing
+          # when there's no race: the vast majority of applies succeed on
+          # the first attempt, with no delay at all — unlike a blind fixed
+          # time_sleep, which would pause every apply whether or not a
+          # race was actually happening.
           #
-          # The FIRST attempt always applies the actual reviewed plan,
-          # untouched. Only a RETRY, after a real failure, recomputes a
-          # fresh plan before trying again — reapplying the exact same
-          # saved plan file a second time isn't safe here, because an
-          # earlier attempt in this same loop may have already partially
-          # applied (e.g. destroyed several resources before hitting one
-          # AccessDenied), which makes that original plan file stale for a
-          # second run.
+          # "Saved plan is stale" is deliberately NOT retried here, even
+          # though a fresh plan would clear it. It means an earlier
+          # attempt in THIS SAME LOOP already partially applied (e.g.
+          # destroyed several resources before hitting one AccessDenied)
+          # — so the only way to retry is to compute a brand new plan, and
+          # that new plan would never have gone through PR review.
+          # Auto-applying it would silently defeat the entire "production
+          # only applies a reviewed plan" rule this workflow exists to
+          # enforce (see the file header). So instead this fails loudly
+          # and leaves recovery to a human: check what actually landed in
+          # AWS, then get a fresh plan through the normal reviewed path (a
+          # new PR, or workflow_dispatch).
           MAX_ATTEMPTS=3
           attempt=1
           while true; do
@@ -754,8 +769,13 @@ jobs:
               exit "$EXIT_CODE"
             fi
 
-            if ! grep -qE "AccessDeniedException|Saved plan is stale|IncorrectState" apply_output.txt; then
-              echo "❌ Failure doesn't match a known retryable pattern (IAM propagation, a plan gone stale from this loop's own progress, or a resource still settling into its final AWS state) — not retrying."
+            if grep -qE "Saved plan is stale" apply_output.txt; then
+              echo "::error::Plan went stale mid-apply — an earlier attempt in this run already made partial changes to ${{ matrix.account }}. Refusing to auto-replan and apply an unreviewed plan to production. Check the account's actual state in AWS, then get a fresh plan through the normal reviewed path (a new PR, or workflow_dispatch) before continuing."
+              exit "$EXIT_CODE"
+            fi
+
+            if ! grep -qE "AccessDeniedException|IncorrectState" apply_output.txt; then
+              echo "❌ Failure doesn't match a known retryable pattern (IAM propagation, or a resource still settling into its final AWS state) — not retrying."
               exit "$EXIT_CODE"
             fi
 
