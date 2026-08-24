@@ -339,7 +339,6 @@ warning rather than hiding it.
 ### ✅ Implemented
 
 - **No long-lived credentials** — every account is reached via GitHub OIDC (`sts:AssumeRoleWithWebIdentity`), scoped to specific GitHub Environment subjects, no IAM access keys
-- **Optional permissions boundaries** — `permissions_boundary_arn` on `github-oidc-roles` lets any one account cap its effective permissions below the shared module policy, without narrowing it for every other account
 - **MFA-gated break-glass** — the management account can always assume any deploy role directly, but only with `aws:MultiFactorAuthPresent`
 - **State isolation** — each account's role is scoped to only its own prefix in the shared state bucket, enforced by IAM condition, not just convention
 - **Branch protection** — `main` requires Checkov + validation + plan checks and an open PR before merge (`protect-main` ruleset)
