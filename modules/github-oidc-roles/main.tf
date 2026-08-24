@@ -11,16 +11,18 @@ data "aws_caller_identity" "read_current_account" {}
 # This is what lets AWS trust a token from GitHub Actions, instead of
 # needing a stored access key.
 #
-# Conditional on var.create_oidc_provider: AWS only allows one OIDC
-# provider per unique URL per account, so a caller whose account already
-# has one (created elsewhere) sets that variable to false, and the data
-# source right below reads the existing one instead of colliding with it.
-# Every caller that doesn't set the variable gets exactly the old
-# behavior — this module creates and owns the provider, unchanged.
+# Used to be conditional on a create_oidc_provider variable, for a caller
+# whose account already had one created elsewhere (terraform-org's
+# platform/ account, via its own discovery-role.tf). That was the only
+# caller that ever needed it, and it stopped sourcing this module entirely
+# 2026-08-24 (replaced with a dedicated role definition owned directly in
+# that repo) — every remaining caller here always creates and owns its own
+# provider, so the variable and the data-source fallback were removed. The
+# `moved` block below is what makes that safe: it keeps every existing
+# account's already-live provider at the same object, just without the
+# `[0]` index the old `count` required.
 # ======================================================================================
 resource "aws_iam_openid_connect_provider" "github" {
-  count = var.create_oidc_provider ? 1 : 0
-
   url             = "https://token.actions.githubusercontent.com"
   client_id_list  = ["sts.amazonaws.com"]
   thumbprint_list = ["6938fd4d98bab03faadb97b34396831e3780aea1"]
@@ -36,31 +38,25 @@ resource "aws_iam_openid_connect_provider" "github" {
   }
 }
 
-data "aws_iam_openid_connect_provider" "github" {
-  count = var.create_oidc_provider ? 0 : 1
-
-  url = "https://token.actions.githubusercontent.com"
+moved {
+  from = aws_iam_openid_connect_provider.github[0]
+  to   = aws_iam_openid_connect_provider.github
 }
 
 locals {
-  # Whichever path was taken above, this is the one ARN the rest of the
-  # module should reference — nothing below here needs to know or care
-  # whether the provider was created here or already existed.
-  github_oidc_provider_arn = var.create_oidc_provider ? aws_iam_openid_connect_provider.github[0].arn : data.aws_iam_openid_connect_provider.github[0].arn
+  github_oidc_provider_arn = aws_iam_openid_connect_provider.github.arn
 
-  # The trust policy always accepts these three environments, plus
-  # whatever a caller adds via extra_trusted_environments — e.g.
-  # terraform-org's platform/ account adding "management-approval" for
-  # its own differently-named apply-approval environment. See that
-  # variable's description for why this can't just stay a fixed list.
-  trusted_environment_subs = concat(
-    [
-      "repo:${var.github_org}/${var.github_repo}:environment:production-approval",
-      "repo:${var.github_org}/${var.github_repo}:environment:automated",
-      "repo:${var.github_org}/${var.github_repo}:environment:teardown-approval",
-    ],
-    [for env in var.extra_trusted_environments : "repo:${var.github_org}/${var.github_repo}:environment:${env}"]
-  )
+  # Used to also concat() in whatever a caller added via an
+  # extra_trusted_environments variable — e.g. terraform-org's platform/
+  # account, for its differently-named "management-approval" apply-approval
+  # environment. That was the only caller that ever used it, and it
+  # stopped sourcing this module entirely 2026-08-24, so the variable was
+  # removed; every remaining caller only ever used these three.
+  trusted_environment_subs = [
+    "repo:${var.github_org}/${var.github_repo}:environment:production-approval",
+    "repo:${var.github_org}/${var.github_repo}:environment:automated",
+    "repo:${var.github_org}/${var.github_repo}:environment:teardown-approval",
+  ]
 }
 
 # ======================================================================================
@@ -385,9 +381,13 @@ resource "aws_iam_role" "terraform_deploy" {
   name                 = var.role_name
   assume_role_policy   = data.aws_iam_policy_document.github_actions_trust_policy.json
   max_session_duration = 3600
-  # Defaults to null (see variables.tf), meaning no boundary — nothing
-  # changes for any caller that doesn't set this.
-  permissions_boundary = var.permissions_boundary_arn
+  # Used to accept a permissions_boundary_arn variable, for a caller that
+  # wanted to cap this role's effective permissions below what the
+  # `permissions` policy above grants — terraform-org's platform/ account
+  # was the only caller that ever set it. That account stopped sourcing
+  # this module entirely 2026-08-24 (replaced with a dedicated, already-
+  # minimal role definition owned directly in that repo, where the
+  # boundary still lives), so the variable was removed as unused here.
 
   tags = {
     ManagedBy   = "Terraform"
@@ -399,7 +399,11 @@ resource "aws_iam_role" "terraform_deploy" {
     prevent_destroy = true
   }
 
-  depends_on = [aws_iam_openid_connect_provider.github, data.aws_iam_openid_connect_provider.github]
+  # No explicit depends_on needed (unlike before this resource lost its
+  # count/data-source split): assume_role_policy already references
+  # local.github_oidc_provider_arn, which references this provider
+  # directly — a single, unconditional resource reference Terraform's
+  # graph picks up on its own.
 }
 
 resource "aws_iam_role_policy" "terraform_deploy_policy" {

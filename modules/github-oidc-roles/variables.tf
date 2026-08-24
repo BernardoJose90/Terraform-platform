@@ -44,55 +44,10 @@ variable "extra_assumable_role_arns" {
   default     = []
 }
 
-variable "permissions_boundary_arn" {
-  description = <<-EOT
-    Optional ARN of an IAM permissions boundary to attach to the
-    TerraformDeploy role. This module's own `permissions` policy above is
-    shared across every account that calls this module and is written wide
-    (ec2:*, unconstrained iam:CreateRole/AttachRolePolicy, VPN logging) for
-    accounts that actually run that kind of infrastructure. A boundary caps
-    what's *usable* for one specific caller without narrowing the shared
-    policy itself, so accounts that do need the wide grant are unaffected.
-    Leave unset (the default) for no boundary — the role's effective
-    permissions are then exactly what `permissions` above grants, unchanged
-    from before this variable existed.
-  EOT
-  type        = string
-  default     = null
-}
-
-variable "extra_trusted_environments" {
-  description = <<-EOT
-    Additional GitHub Environment names (beyond the fixed
-    production-approval/automated/teardown-approval trio this module always
-    trusts) allowed to log in as TerraformDeploy via OIDC. For a caller
-    whose own workflow gates its apply job behind a differently-named
-    GitHub Environment — e.g. a separate repo like terraform-org gating its
-    apply behind "management-approval" — that environment name has to be
-    listed here, or its OIDC token's sub claim will never match the trust
-    policy and every login attempt will be rejected.
-    Empty by default, so nothing changes for a caller that doesn't set
-    this.
-  EOT
-  type        = list(string)
-  default     = []
-}
-
-variable "create_oidc_provider" {
-  description = <<-EOT
-    Whether this module should create the GitHub OIDC provider in the
-    account, or assume one already exists there and just reference it.
-    AWS only allows one OIDC provider per unique URL per account — a
-    second `resource` here for the same URL would fail as a duplicate. Most
-    callers create their own account's provider through this module and
-    leave this at the default `true`. A caller whose account already
-    manages that provider elsewhere (e.g. terraform-org's platform/
-    account, via its own discovery-role.tf) should set this to `false` so
-    the module reads the existing provider instead of trying to create a
-    conflicting one.
-  EOT
-  type        = bool
-  default     = true
-}
-
-         
+# permissions_boundary_arn, extra_trusted_environments, and
+# create_oidc_provider were removed 2026-08-24 — all three existed only for
+# terraform-org's platform/ account, the one caller with different-enough
+# needs to use any of them. That account stopped sourcing this module
+# entirely (replaced with a dedicated role definition owned directly in
+# that repo), and no other caller ever set any of the three. See main.tf's
+# comments at each removed usage for the detail on each.
