@@ -10,8 +10,17 @@ data "aws_caller_identity" "read_current_account" {}
 # ======================================================================================
 # This is what lets AWS trust a token from GitHub Actions, instead of
 # needing a stored access key.
+#
+# Conditional on var.create_oidc_provider: AWS only allows one OIDC
+# provider per unique URL per account, so a caller whose account already
+# has one (created elsewhere) sets that variable to false, and the data
+# source right below reads the existing one instead of colliding with it.
+# Every caller that doesn't set the variable gets exactly the old
+# behavior — this module creates and owns the provider, unchanged.
 # ======================================================================================
 resource "aws_iam_openid_connect_provider" "github" {
+  count = var.create_oidc_provider ? 1 : 0
+
   url             = "https://token.actions.githubusercontent.com"
   client_id_list  = ["sts.amazonaws.com"]
   thumbprint_list = ["6938fd4d98bab03faadb97b34396831e3780aea1"]
@@ -25,6 +34,33 @@ resource "aws_iam_openid_connect_provider" "github" {
   lifecycle {
     prevent_destroy = true
   }
+}
+
+data "aws_iam_openid_connect_provider" "github" {
+  count = var.create_oidc_provider ? 0 : 1
+
+  url = "https://token.actions.githubusercontent.com"
+}
+
+locals {
+  # Whichever path was taken above, this is the one ARN the rest of the
+  # module should reference — nothing below here needs to know or care
+  # whether the provider was created here or already existed.
+  github_oidc_provider_arn = var.create_oidc_provider ? aws_iam_openid_connect_provider.github[0].arn : data.aws_iam_openid_connect_provider.github[0].arn
+
+  # The trust policy always accepts these three environments, plus
+  # whatever a caller adds via extra_trusted_environments — e.g.
+  # terraform-org's platform/ account adding "management-approval" for
+  # its own differently-named apply-approval environment. See that
+  # variable's description for why this can't just stay a fixed list.
+  trusted_environment_subs = concat(
+    [
+      "repo:${var.github_org}/${var.github_repo}:environment:production-approval",
+      "repo:${var.github_org}/${var.github_repo}:environment:automated",
+      "repo:${var.github_org}/${var.github_repo}:environment:teardown-approval",
+    ],
+    [for env in var.extra_trusted_environments : "repo:${var.github_org}/${var.github_repo}:environment:${env}"]
+  )
 }
 
 # ======================================================================================
@@ -55,7 +91,7 @@ data "aws_iam_policy_document" "github_actions_trust_policy" {
     actions = ["sts:AssumeRoleWithWebIdentity"]
     principals {
       type        = "Federated"
-      identifiers = [aws_iam_openid_connect_provider.github.arn]
+      identifiers = [local.github_oidc_provider_arn]
     }
     condition {
       test     = "StringEquals"
@@ -65,11 +101,7 @@ data "aws_iam_policy_document" "github_actions_trust_policy" {
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values = [
-        "repo:${var.github_org}/${var.github_repo}:environment:production-approval",
-        "repo:${var.github_org}/${var.github_repo}:environment:automated",
-        "repo:${var.github_org}/${var.github_repo}:environment:teardown-approval"
-      ]
+      values   = local.trusted_environment_subs
     }
   }
 }
@@ -367,7 +399,7 @@ resource "aws_iam_role" "terraform_deploy" {
     prevent_destroy = true
   }
 
-  depends_on = [aws_iam_openid_connect_provider.github]
+  depends_on = [aws_iam_openid_connect_provider.github, data.aws_iam_openid_connect_provider.github]
 }
 
 resource "aws_iam_role_policy" "terraform_deploy_policy" {
@@ -401,7 +433,7 @@ data "aws_iam_policy_document" "github_oidc_trust_plan" {
     actions = ["sts:AssumeRoleWithWebIdentity"]
     principals {
       type        = "Federated"
-      identifiers = [aws_iam_openid_connect_provider.github.arn]
+      identifiers = [local.github_oidc_provider_arn]
     }
     condition {
       test     = "StringEquals"
