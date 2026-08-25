@@ -187,13 +187,13 @@ line, a file you can't see, an ambiguous error — would raise it.
 
 <example>
 <log_summary>terraform validate fails: "Unsupported argument" for
-`max_session_duration` on the `module.terraform_deploy_role` block in
+`max_session_duration` on the `module.github-oidc-roles` block in
 `member-accounts/monitoring/main.tf`. The same PR's diff also touches
 `modules/github-oidc-roles/variables.tf`.</log_summary>
 <diagnosis>
 ### What failed
 `terraform validate` failed on `member-accounts/monitoring/main.tf`'s
-`terraform_deploy_role` module call.
+`github-oidc-roles` module call.
 
 ### Root cause
 The module call passes `max_session_duration`, an argument

@@ -200,15 +200,13 @@ locals {
     for idx, suffix in local.az_suffixes : idx => "private-tgw-egress-rtb-${suffix}"
   } : {}
 }
-# This resource block creates Name tags for each NAT gateway in the egress VPC, using the names defined in local.nat_gateway_names. 
-# It uses a for_each loop to iterate over the local.nat_gateway_names map, creating a tag for each NAT gateway. 
-# The resource_id is set to the corresponding NAT gateway ID from module.egress_vpc[0].natgw_ids, and t
-# the key is set to "Name" with the value being the name from local.nat_gateway_names.
+# This resource block creates Name tags for each NAT gateway in the egress VPC, using the names defined in local.nat_gateway_names.
+# It uses a for_each loop to iterate over the local.nat_gateway_names map, creating a tag for each NAT gateway.
 resource "aws_ec2_tag" "nat_gateway_name" {
   for_each = local.nat_gateway_names
 
-# This resource_id is set to the corresponding NAT gateway ID from module.egress_vpc[0].natgw_ids
-# and the key is set to "Name" with the value being the name from local.nat_gateway_names.
+  # This resource_id is set to the corresponding NAT gateway ID from module.egress_vpc[0].natgw_ids
+  # and the key is set to "Name" with the value being the name from local.nat_gateway_names.
   resource_id = module.egress_vpc[0].natgw_ids[each.key]
   key         = "Name"
   value       = each.value
@@ -228,8 +226,8 @@ resource "aws_ec2_tag" "private_tgw_route_table_name" {
 resource "aws_ec2_tag" "public_nat_route_table_name" {
   count = var.networking_enabled ? 1 : 0
 
-# This resource_id is set to the public route table ID from module.egress_vpc[0].public_route_table_ids, 
-# and the key is set to "Name" with the value being "public-nat-egress-rtb".
+  # This resource_id is set to the public route table ID from module.egress_vpc[0].public_route_table_ids, 
+  # and the key is set to "Name" with the value being "public-nat-egress-rtb".
   resource_id = module.egress_vpc[0].public_route_table_ids[0]
   key         = "Name"
   value       = "public-nat-egress-rtb"

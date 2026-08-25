@@ -46,13 +46,13 @@ resource "aws_iam_openid_connect_provider" "github" {
 # locals is just a block of named shortcuts which are values computed once, 
 # then reused by name later in the file, instead of writing out the full expression every time. 
 locals {
-# This is just a short alias for the OIDC provider resource's ARN
-# used in the TerraformDeploy & TerraformPlan trust_policy below in the GitHubActionsCI statement, 
-# so we don't have to write out the full resource reference every time.
+  # This is just a short alias for the OIDC provider resource's ARN
+  # used in the TerraformDeploy & TerraformPlan trust_policy below in the GitHubActionsCI statement, 
+  # so we don't have to write out the full resource reference every time.
   github_oidc_provider_arn = aws_iam_openid_connect_provider.github.arn
 
-# Every caller trusts these three GitHub Environments.
-# allow-list of which three GitHub Environments are trusted to log in as this role. 
+  # Every caller trusts these three GitHub Environments.
+  # allow-list of which three GitHub Environments are trusted to log in as this role. 
   trusted_environment_subs = [
     "repo:${var.github_org}/${var.github_repo}:environment:production-approval",
     "repo:${var.github_org}/${var.github_repo}:environment:automated",

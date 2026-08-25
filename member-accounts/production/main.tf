@@ -115,7 +115,7 @@ module "terraform_deploy_boundary" {
   # this flag enables VPC networking in the production account, allowing the creation of VPCs, subnets, and route tables for the production workloads.
   enable_vpc_networking = true
 
-# this variable defines the ARNs of the roles that can be assumed by the Terraform deploy role in production, allowing it to perform actions on behalf of those roles.
+  # this variable defines the ARNs of the roles that can be assumed by the Terraform deploy role in production, allowing it to perform actions on behalf of those roles.
   extra_assumable_role_arns = local.extra_assumable_role_arns
 }
 
@@ -163,7 +163,7 @@ module "vpc" {
   enable_nat_gateway = false
 
   # this tgw_id variable retrieves the Transit Gateway (TGW) ID from the SSM parameter store in the network account, allowing the production VPC to route traffic through the TGW for outbound connectivity.
-  tgw_id             = nonsensitive(data.aws_ssm_parameter.tgw_id.value)
+  tgw_id = nonsensitive(data.aws_ssm_parameter.tgw_id.value)
 
   tags = var.tags
 }
@@ -250,14 +250,14 @@ resource "aws_route" "private_to_tgw" {
 
   # this route_table_id variable retrieves the private route table IDs from the production VPC module, 
   # allowing the creation of routes in each private route table for outbound traffic to the Transit Gateway (TGW).
-  route_table_id         = module.vpc[0].private_route_table_ids[each.value]
+  route_table_id = module.vpc[0].private_route_table_ids[each.value]
 
-  # this destination_cidr_block variable defines the CIDR block for the route, which is set to "
+  # this destination_cidr_block variable defines the CIDR block for the route, which is set to "0.0.0.0/0" — a catch-all for all internet-bound traffic.
   destination_cidr_block = "0.0.0.0/0"
 
   # this transit_gateway_id variable retrieves the Transit Gateway (TGW) ID from the SSM parameter store in the network account, 
   # allowing the route to point to the TGW for outbound traffic.
-  transit_gateway_id     = nonsensitive(data.aws_ssm_parameter.tgw_id.value)
+  transit_gateway_id = nonsensitive(data.aws_ssm_parameter.tgw_id.value)
 
   # this depends_on variable ensures that the route creation waits for the Transit Gateway (TGW) attachment to be created before creating the routes,  
   # preventing any potential issues with routing traffic to the TGW before the attachment is established.
