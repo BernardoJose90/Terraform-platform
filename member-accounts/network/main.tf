@@ -93,6 +93,32 @@ locals {
 # -----------------------------------------------------------------------
 # GitHub OIDC deploy role for this account
 # -----------------------------------------------------------------------
+# This boundary is used by the github-oidc-roles module below, which creates
+# the actual deploy role in this account. That role is then assumed by
+# the GitHub OIDC workflow in this account, which can then deploy the
+# egress VPC, TGW, and spoke-wiring roles. The spoke accounts have
+# their own github-oidc-roles modules, which create their own deploy roles
+module "terraform_deploy_boundary" {
+  source = "../../modules/terraform-deploy-boundary"
+
+  account_name          = "network"
+  management_account_id = var.management_account_id
+  state_bucket_name     = "james-terraform-state-2026"
+  state_key_prefix      = "network" # must match the backend "s3" key above
+  role_name             = "TerraformDeploy"
+
+  enable_vpc_networking = true
+  enable_ram_sharing    = true
+
+  # This is a list of the role names that will be created by modules/tgw-spoke-wiring-role, which the deploy role needs to be able to assume.
+  manage_named_roles = [
+    "TgwSpokeWiringProduction",
+    "TgwSpokeWiringDevelopment",
+  ]
+}
+
+# This module creates the actual deploy role in this account, which is assumed by the GitHub OIDC workflow. 
+# It uses the permissions boundary created above to limit what the deploy role can do.
 module "github-oidc-roles" {
   source       = "../../modules/github-oidc-roles"
   account_name = "network"
@@ -104,6 +130,8 @@ module "github-oidc-roles" {
   state_bucket_name     = "james-terraform-state-2026"
   state_key_prefix      = "network" # must match the backend "s3" key above
   role_name             = "TerraformDeploy"
+
+  permissions_boundary_arn = module.terraform_deploy_boundary.arn
 }
 
 # -----------------------------------------------------------------------
@@ -114,6 +142,8 @@ module "github-oidc-roles" {
 # doc calls for: private -> local + 0.0.0.0/0 via NAT (AZ-local),
 # public -> local + 0.0.0.0/0 via IGW.
 # -----------------------------------------------------------------------
+# This whole module is gated by var.networking_enabled, so it doesn't even try to create a VPC when networking is off. 
+# That makes all the references to module.egress_vpc[0] below safe: they only run when the VPC actually exists.
 module "egress_vpc" {
   count = var.networking_enabled ? 1 : 0
 
@@ -131,9 +161,8 @@ module "egress_vpc" {
   private_subnets = var.private_subnets
   public_subnets  = var.public_subnets
 
-  # This account's NAT/egress VPC: the one case where enable_nat_gateway
-  # = true and tgw_id is left null (it's the egress point itself, so it
-  # doesn't need the module's own route-to-TGW).
+  # This account's egress VPC is the only one that needs NAT gateways, so the module's default of "one per AZ" is fine. 
+  # The design doc's subnet table already has the public subnets in the right AZ order for that.
   enable_nat_gateway     = true
   one_nat_gateway_per_az = true
   single_nat_gateway     = false
@@ -171,18 +200,22 @@ locals {
     for idx, suffix in local.az_suffixes : idx => "private-tgw-egress-rtb-${suffix}"
   } : {}
 }
-
+# This resource block creates Name tags for each NAT gateway in the egress VPC, using the names defined in local.nat_gateway_names. 
+# It uses a for_each loop to iterate over the local.nat_gateway_names map, creating a tag for each NAT gateway. 
+# The resource_id is set to the corresponding NAT gateway ID from module.egress_vpc[0].natgw_ids, and t
+# the key is set to "Name" with the value being the name from local.nat_gateway_names.
 resource "aws_ec2_tag" "nat_gateway_name" {
   for_each = local.nat_gateway_names
 
-  # Fine to reference module.egress_vpc[0] here: when networking is
-  # disabled, nat_gateway_names is empty, so this resource never actually
-  # runs and never tries to look at a VPC that isn't there.
+# This resource_id is set to the corresponding NAT gateway ID from module.egress_vpc[0].natgw_ids
+# and the key is set to "Name" with the value being the name from local.nat_gateway_names.
   resource_id = module.egress_vpc[0].natgw_ids[each.key]
   key         = "Name"
   value       = each.value
 }
 
+# This resource block creates private route table Name tags for each private route table in the egress VPC, 
+# using the names defined in local.private_tgw_route_table_names. 
 resource "aws_ec2_tag" "private_tgw_route_table_name" {
   for_each = local.private_tgw_route_table_names
 
@@ -191,23 +224,20 @@ resource "aws_ec2_tag" "private_tgw_route_table_name" {
   value       = each.value
 }
 
+# This resource block creates public route table Name tag for the shared public route table in the egress VPC.
 resource "aws_ec2_tag" "public_nat_route_table_name" {
   count = var.networking_enabled ? 1 : 0
 
-  # There's only ever one shared public route table, so [0] always
-  # exists here. And this whole resource only runs when networking is
-  # enabled (the count line above), so egress_vpc[0] is safe to reference.
+# This resource_id is set to the public route table ID from module.egress_vpc[0].public_route_table_ids, 
+# and the key is set to "Name" with the value being "public-nat-egress-rtb".
   resource_id = module.egress_vpc[0].public_route_table_ids[0]
   key         = "Name"
   value       = "public-nat-egress-rtb"
 }
 
 # -----------------------------------------------------------------------
-# Return path, VPC side. The public route tables only have "local" + IGW
-# by default — a NAT reply to a spoke address (10.20/10.30.x.x) finds no
-# match and gets silently dropped ("curl hangs", not a routing error).
-# These routes send it back into the TGW, where "main" already has a
-# route to each spoke via propagation.
+# This resource block creates routes in the public route tables of the egress VPC 
+# to send traffic destined for spoke CIDRs back into the Transit Gateway (TGW).
 # -----------------------------------------------------------------------
 resource "aws_route" "public_to_spokes" {
   for_each = local.public_spoke_routes
@@ -224,10 +254,9 @@ resource "aws_route" "public_to_spokes" {
 }
 
 # -----------------------------------------------------------------------
-# Transit Gateway (hub): creates "main" (egress's table, the one narrow
-# surface both spokes share write access to for their return route) plus
-# prod_spoke/dev_spoke (each isolated to its own spoke's automation
-# only), and shares the TGW to prod/dev via RAM.
+# This module creates the Transit Gateway (TGW) in the network account, with the specified name and Amazon side ASN.
+# It also shares the TGW with the specified principals (production and development account IDs) using AWS Resource Access Manager (RAM).
+# The count parameter is used to conditionally create the TGW only when networking is enabled.
 # -----------------------------------------------------------------------
 module "tgw" {
   count = var.networking_enabled ? 1 : 0
@@ -249,17 +278,12 @@ module "tgw" {
   tags = var.tags
 }
 
-# -----------------------------------------------------------------------
-# This connects the egress VPC itself to the TGW. Since this account owns
-# the TGW, there's no separate accept-the-connection step needed like a
-# spoke account would have. Linked to "main" so NAT return traffic can
-# find its way back to whichever spoke it came from — without ever
-# letting prod_spoke and dev_spoke see each other.
-#
-# TEARDOWN FLAG: this costs real money (~$0.05/hr) and needs module.tgw
-# and egress_vpc to exist, both of which turn off during a teardown — so
-# this (and the line right after it) has to turn off with them too.
-# -----------------------------------------------------------------------
+# ---------------------------------------------------------------------------------------------------------------------------------------------------------------
+# This module creates a Transit Gateway attachment for the egress VPC, connecting it to the Transit Gateway (TGW).
+# This attachment allows the egress VPC to communicate with the TGW and route traffic to and from the spoke accounts.
+# This module also applies the specified tags to the attachment for identification and management purposes.
+# This module is essential for enabling communication between the egress VPC and the TGW, allowing traffic to flow between the egress VPC and the spoke accounts.
+# ---------------------------------------------------------------------------------------------------------------------------------------------------------------
 module "egress_tgw_attachment" {
   count = var.networking_enabled ? 1 : 0
 
@@ -273,6 +297,11 @@ module "egress_tgw_attachment" {
   tags = var.tags
 }
 
+# -------------------------------------------------------------------------------------------------------------------------------------
+# This resource block associates the egress VPC's Transit Gateway attachment with the main route table of the Transit Gateway (TGW).
+# This association allows traffic from the egress VPC to be routed through the TGW and reach the spoke accounts.
+# The count parameter is used to conditionally create the association only when networking is enabled.
+# -------------------------------------------------------------------------------------------------------------------------------------
 resource "aws_ec2_transit_gateway_route_table_association" "egress" {
   count = var.networking_enabled ? 1 : 0
 
@@ -292,6 +321,11 @@ resource "aws_ec2_transit_gateway_route_table_association" "egress" {
 # TEARDOWN FLAG: needs module.tgw and egress_tgw_attachment, both of
 # which turn off during a teardown, so these have to as well.
 # -----------------------------------------------------------------------
+
+# This module creates static routes in the production spoke's route table of the Transit Gateway (TGW) 
+# this allows the production spoke to route traffic through the TGW and reach the egress VPC. 
+# The blackhole_cidrs parameter is used to specify the CIDRs that should be blackholed (dropped) in the production spoke's route table, preventing traffic from being routed to the development spoke.
+
 module "routes_prod_spoke" {
   count = var.networking_enabled ? 1 : 0
 
@@ -306,6 +340,10 @@ module "routes_prod_spoke" {
   blackhole_cidrs = [var.dev_cidr]
 }
 
+# This module creates static routes in the development spoke's route table of the Transit Gateway (TGW)
+# this allows the development spoke to route traffic through the TGW and reach the egress VPC. 
+# The blackhole_cidrs parameter is used to specify the CIDRs that should be blackholed (dropped) in the development spoke's route table,
+# This preventing traffic from being routed to the production spoke.
 module "routes_dev_spoke" {
   count = var.networking_enabled ? 1 : 0
 
@@ -412,11 +450,11 @@ locals {
   main_route_table_arn = "arn:aws:ec2:${var.aws_region}:${local.network_account_id}:transit-gateway-route-table/${aws_ssm_parameter.tgw_route_table_id_main.value}"
 }
 
-# TEARDOWN FLAG: this never turns off — see local.main_route_table_arn
-# above for why. The role sticks around when networking is disabled; its
-# permissions just end up pointing at route tables that no longer exist,
-# which does nothing harmful (AWS doesn't check that a policy's targets
-# still exist), rather than actually breaking anything.
+
+# this module creates a role in the production spoke account that allows it to wire itself into the Transit Gateway (TGW) in the network account.
+# The role is granted permissions to modify the production spoke's route table and the main route table of the TGW, allowing it to create routes for traffic destined for the egress VPC.
+# The ssm_parameter_arns parameter is used to specify the ARNs of the SSM parameters that the role needs access to, which include the TGW ID, RAM resource share ARN, and route table IDs.
+# The tags parameter is used to apply tags to the role for identification and management purposes.
 module "tgw_spoke_wiring_production" {
   source = "../../modules/tgw-spoke-wiring-role"
 
@@ -435,8 +473,9 @@ module "tgw_spoke_wiring_production" {
   tags = var.tags
 }
 
-# TEARDOWN FLAG: intentionally not gated, same reasoning as
-# tgw_spoke_wiring_production above.
+# This module creates a role in the development spoke account that allows it to wire itself into the Transit Gateway (TGW) in the network account.
+# The role is granted permissions to modify the development spoke's route table and the main route table of the TGW, allowing it to create routes for traffic destined for the egress VPC.
+# The ssm_parameter_arns parameter is used to specify the ARNs of the SSM parameters that the role needs access to, which include the TGW ID, RAM resource share ARN, and route table IDs.
 module "tgw_spoke_wiring_development" {
   source = "../../modules/tgw-spoke-wiring-role"
 

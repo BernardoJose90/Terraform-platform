@@ -41,6 +41,20 @@ provider "aws" {
 
 }
 
+# Caps TerraformDeploy to exactly the baseline every account needs — this
+# account has no resources of its own yet (see the file header), so no
+# extra_policy_json on top. See monitoring/main.tf's boundary comment for
+# why that's the intended fail-safe rather than a gap.
+module "terraform_deploy_boundary" {
+  source = "../../modules/terraform-deploy-boundary"
+
+  account_name          = "security-analytics"
+  management_account_id = "145678291484"
+  state_bucket_name     = "james-terraform-state-2026"
+  state_key_prefix      = "security-analytics" # must match the backend "s3" key above
+  role_name             = "TerraformDeploy"
+}
+
 module "github-oidc-roles" {
   source       = "../../modules/github-oidc-roles"
   account_name = "security-analytics"
@@ -52,4 +66,6 @@ module "github-oidc-roles" {
   state_bucket_name     = "james-terraform-state-2026"
   state_key_prefix      = "security-analytics" # must match the backend "s3" key above
   role_name             = "TerraformDeploy"
+
+  permissions_boundary_arn = module.terraform_deploy_boundary.arn
 }

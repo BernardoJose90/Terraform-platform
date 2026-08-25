@@ -41,6 +41,24 @@ provider "aws" {
   allowed_account_ids = [data.aws_ssm_parameter.monitoring_account_id.value]
 }
 
+# Caps TerraformDeploy to exactly the baseline every account needs — this
+# account has no resources of its own yet (see the file header), so no
+# extra_policy_json on top. When real CloudWatch/dashboards/alarms/X-Ray
+# resources get added here, the first apply that needs new IAM actions
+# will fail against this boundary — that's the intended fail-safe: it
+# forces a deliberate boundary update alongside the new infrastructure,
+# instead of this account silently carrying permissions for infrastructure
+# it doesn't have yet.
+module "terraform_deploy_boundary" {
+  source = "../../modules/terraform-deploy-boundary"
+
+  account_name          = "monitoring"
+  management_account_id = "145678291484"
+  state_bucket_name     = "james-terraform-state-2026"
+  state_key_prefix      = "monitoring" # must match the backend "s3" key above
+  role_name             = "TerraformDeploy"
+}
+
 module "github-oidc-roles" {
   source       = "../../modules/github-oidc-roles"
   account_name = "monitoring"
@@ -52,4 +70,6 @@ module "github-oidc-roles" {
   state_bucket_name     = "james-terraform-state-2026"
   state_key_prefix      = "monitoring" # must match the backend "s3" key above
   role_name             = "TerraformDeploy"
+
+  permissions_boundary_arn = module.terraform_deploy_boundary.arn
 }

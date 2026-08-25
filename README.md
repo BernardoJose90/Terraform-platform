@@ -240,7 +240,7 @@ Four workflows in [.github/workflows/](.github/workflows/), all authenticating v
 
 ## 🩺 CI Failure Diagnosis
 
-`.github/workflows/diagnose.yml` fires after `terraform-plan.yaml` finishes with `conclusion: failure`, fetches that run's failed-step logs, and posts a best-effort diagnosis (what failed / root cause / suggested fix / confidence) as a comment on the PR — described in prose only, never as a patch. It is read-only by design: `contents: read`, `actions: read`, `pull-requests: write` and nothing else. It never checks out anything but `prompts/diagnose.md`, never touches AWS, never pushes, and never opens or edits a PR.
+`.github/workflows/diagnose.yml` fires after `terraform-plan.yaml` finishes with `conclusion: failure`, fetches that run's failed-step logs, and posts a best-effort diagnosis (what failed / root cause / suggested fix / confidence) as a comment on the PR — described in prose only, never as a patch. It is read-only by design: `contents: read`, `actions: read`, `pull-requests: write` and nothing else. It never checks out anything but `prompts/diagnose.md` and `.checkov.yaml` (the latter so the model reads the real, current Checkov skip-list instead of a paraphrase of it) — never module source, never account-specific infrastructure, never AWS, never a push, never a PR edit.
 
 **Setup:** add an `ANTHROPIC_API_KEY` repository secret (Settings → Secrets and variables → Actions) with a key that has API access. Nothing else to configure.
 

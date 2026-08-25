@@ -40,6 +40,24 @@ provider "aws" {
   allowed_account_ids = [data.aws_ssm_parameter.security_account_id.value]
 }
 
+module "terraform_deploy_boundary" {
+  source = "../../modules/terraform-deploy-boundary"
+
+  account_name          = "security"
+  management_account_id = "145678291484"
+  state_bucket_name     = "james-terraform-state-2026"
+  state_key_prefix      = "security" # must match the backend "s3" key above
+  role_name             = "TerraformDeploy"
+
+  # This account's SSO/Identity Store admin work (sso.tf,
+  # iam-supplemental.tf) — the one thing it does that no other account
+  # does. GuardDuty/Security Hub/IAM Access Analyzer (see file header)
+  # don't get a toggle: nothing in this repo manages them yet, so there's
+  # nothing to grant permissions for — same fail-safe reasoning as
+  # monitoring/main.tf's boundary comment.
+  enable_sso_management = true
+}
+
 module "github-oidc-roles" {
   source       = "../../modules/github-oidc-roles"
   account_name = "security"
@@ -51,4 +69,6 @@ module "github-oidc-roles" {
   state_bucket_name     = "james-terraform-state-2026"
   state_key_prefix      = "security" # must match the backend "s3" key above
   role_name             = "TerraformDeploy"
+
+  permissions_boundary_arn = module.terraform_deploy_boundary.arn
 }
