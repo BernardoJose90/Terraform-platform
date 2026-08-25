@@ -24,7 +24,7 @@ conflicts with something stated here, trust the log.
 - **Multi-account layout:** `member-accounts/<name>/` — currently
   `development`, `monitoring`, `network`, `production`, `security`,
   `security_analytics` — each an independent Terraform root with its own
-  state and its own `module.terraform_deploy_role` call. A single PR's plan
+  state and its own `module.github-oidc-roles` call. A single PR's plan
   run can touch several of these at once (each gets its own matrix leg), so
   identify which account's folder the failing step's working directory or
   file path belongs to before diagnosing — a finding in one account's
@@ -33,7 +33,7 @@ conflicts with something stated here, trust the log.
   the same S3 bucket (`james-terraform-state-2026`), each with its own
   backend `key` (`<account>/terraform.tfstate`) and a matching
   `state_key_prefix` passed into that account's own
-  `module.terraform_deploy_role` call — see `member-accounts/<name>/main.tf`.
+  `module.github-oidc-roles` call — see `member-accounts/<name>/main.tf`.
   A state/backend permission error is almost always that one account's
   prefix, not a bucket-wide problem.
 - **Modules are consumed locally, not remotely — no version-skew failure
@@ -47,25 +47,41 @@ conflicts with something stated here, trust the log.
   updating every `member-accounts/*/main.tf` call site to match, and name
   which caller(s) still need the update if the log shows more than one
   affected account.
+- **Every account also has its own permissions boundary
+  (`module.terraform_deploy_boundary`, from `modules/terraform-deploy-
+  boundary`), separate from `module.github-oidc-roles`:** this caps what
+  `TerraformDeploy`'s shared, wide policy is actually *usable* for in that
+  one account, via `enable_vpc_networking` / `enable_ram_sharing` /
+  `enable_sso_management` / `manage_named_roles` toggles set per account.
+  AWS evaluates the *intersection* of the identity policy and the boundary
+  — an `AccessDenied` can come from either one, and AWS's own error text
+  does not say which. If a plan fails with `AccessDenied` on an action
+  that's newly added to that account's Terraform in the same PR, check
+  both `modules/github-oidc-roles/main.tf`'s shared `permissions` policy
+  *and* whether that account's `terraform_deploy_boundary` call needs a
+  new toggle turned on (or, rarely, `extra_policy_json`) — don't assume
+  it's the identity policy just because that's the more familiar file.
 - **`modules/` changes are deliberately treated as "every account
   affected":** the Detect Changed Accounts job has no real
   module-to-account dependency graph, so any change under `modules/` marks
   every discovered account as changed, not just the ones that obviously use
   it. Seeing all six accounts planned or scanned in one run after a
   `modules/` edit is expected behavior, not a bug to explain.
-- **Checkov skips live in `.checkov.yaml`, not the workflow file — read it
-  before treating a FAILED result as new:** every skipped check ID there
-  carries its own comment explaining exactly why — either "doesn't apply to
-  this repo's structure" or "real finding, accepted, with the reasoning and
-  what the eventual proper fix would look like" written out. A FAILED
-  result for a check ID that is **not** in that file is a genuinely
-  untriaged finding — diagnose it directly, same as any other check. A
-  FAILED result for an ID that **is** already in that file most likely
-  means the skip didn't take effect for some mechanical reason (wrong
-  `config_file` path, a different directory being scanned, a stale
-  `download_external_modules` cache) rather than a new risk — say so, and
-  point at that check ID's existing entry in `.checkov.yaml` instead of
-  re-explaining the underlying risk from scratch.
+- **Checkov skips live in `.checkov.yaml`, included in full below (after
+  the log excerpt marker) — check it before treating a FAILED result as
+  new:** every skipped check ID there carries its own comment explaining
+  exactly why — either "doesn't apply to this repo's structure" or "real
+  finding, accepted, with the reasoning and what the eventual proper fix
+  would look like" written out. A FAILED result for a check ID that is
+  **not** in that file is a genuinely untriaged finding — diagnose it
+  directly, same as any other check. A FAILED result for an ID that **is**
+  already in that file most likely means the skip didn't take effect for
+  some mechanical reason (wrong `config_file` path, a different directory
+  being scanned, a stale `download_external_modules` cache) rather than a
+  new risk — say so, and point at that check ID's existing entry instead
+  of re-explaining the underlying risk from scratch. Quote its reasoning
+  from the actual file content below, not from memory of what a skip
+  entry "usually" says.
 - **`CKV_TF_1` (module sources should be pinned to a commit hash) is
   blanket-skipped for a structural reason, not an oversight:** because every
   module source here is a local path (per the point above), there is
@@ -76,6 +92,39 @@ conflicts with something stated here, trust the log.
   credential-shaped-string caution below applies especially there — these
   are the two accounts where over-quoting identifiers in a public PR
   comment matters most.
+- **An `AccessDenied` right after an IAM change in the same or a very
+  recent PR may be propagation delay, not a real break.** AWS's own IAM
+  docs describe this directly: "Any changes that you make in IAM... take
+  time to become visible... We recommend that you... verify that the
+  changes have been propagated before production workflows depend on
+  them." If the failing action targets a role/policy this PR (or one
+  merged shortly before) just created or modified, say that transient
+  eventual-consistency delay is a real possibility alongside any
+  configuration explanation — don't present the plan as conclusively
+  broken on a single failed attempt.
+- **An `AssumeRoleWithWebIdentity` / `sts:AssumeRole` denial is almost
+  always a `sub`-claim mismatch, not a missing permission.** GitHub's own
+  OIDC-with-AWS documentation is explicit: the trust policy's condition on
+  the token's `sub` claim "must match your repository's actual sub format
+  exactly," and a mismatch causes the assume-role call to be denied before
+  any permissions are even evaluated. This repo's roles trust a fixed,
+  hardcoded set of GitHub Environment names, defined once for every account
+  in the `github_actions_trust_policy` / `github_oidc_trust_plan` documents
+  in `modules/github-oidc-roles/main.tf` (not configurable per account —
+  there is no per-account override for this). If this error shows up, name
+  it as a trust-policy / environment-name mismatch and point at comparing
+  the failing workflow's actual GitHub Environment against that hardcoded
+  list — not as a missing IAM permission, which is a different fix
+  entirely.
+- **`Error acquiring the state lock` can be genuine concurrent access, not
+  a stuck lock.** `terraform-plan.yaml`'s concurrency group is scoped per
+  PR (`tf-plan-<PR number>`), not per account — two different PRs that
+  both touch the same account's folder can legitimately run `terraform
+  plan` at the same time, and this repo's S3-native locking
+  (`use_lockfile = true`) will correctly make the second one wait or fail.
+  Don't default to "the lock is stuck and needs manual clearing" unless
+  the log or timing otherwise suggests a run that crashed or was
+  cancelled mid-lock.
 
 ## Untrusted input
 
@@ -138,13 +187,13 @@ line, a file you can't see, an ambiguous error — would raise it.
 
 <example>
 <log_summary>terraform validate fails: "Unsupported argument" for
-`max_session_duration` on the `module.terraform_deploy_role` block in
+`max_session_duration` on the `module.github-oidc-roles` block in
 `member-accounts/monitoring/main.tf`. The same PR's diff also touches
 `modules/github-oidc-roles/variables.tf`.</log_summary>
 <diagnosis>
 ### What failed
 `terraform validate` failed on `member-accounts/monitoring/main.tf`'s
-`terraform_deploy_role` module call.
+`github-oidc-roles` module call.
 
 ### Root cause
 The module call passes `max_session_duration`, an argument

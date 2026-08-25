@@ -1,27 +1,32 @@
-# ======================================================================================
-# The two IAM roles GitHub Actions uses to run jobs in a workflow: one that can
-# make changes (deploy), one that can only look (plan). Both are assumed via
-# OIDC — GitHub proves who it is with a short-lived token, so there's no
-# long-lived AWS access key sitting in a secret anywhere.
-# ======================================================================================
+# =====================================================================================================================================================================
+# This is the module that creates the IAM identities GitHub Actions uses to run Terraform solving two problems:
 
+# 1. Secure login (authentication), with no stored secrets.
+# It creates an OIDC trust relationship between AWS and GitHub — GitHub proves its identity with a short-lived token on every workflow run, 
+# instead of a long-lived AWS access key sitting in a GitHub secret forever (which would be a standing target if ever leaked). 
+# The trust policy is scoped tightly: only specific GitHub Environment names (production-approval, automated, teardown-approval) 
+# are trusted, plus a break-glass path for a human with MFA in the management account.
+
+# 2. What that identity is allowed to do (authorization).
+# Once logged in, the role needs permissions to actually create/manage infrastructure — VPCs, TGW attachments, IAM roles it needs to hand off to other AWS services, 
+# SSM parameters, its own state file in S3, etc. That's the permissions policy document in this file — one shared, wide policy, 
+# written to cover whatever any account calling this module might need (since network needs far more than monitoring does, but they both call the same module).
+#   
+# It also creates a second, read-only role (TerraformPlan) for PR-time plans, so a plan run can never accidentally write anything.
+# =======================================================================================================================================================================
+
+# Data source block — a read-only lookup, which asks AWS: "who am I, right now, in this Terraform run?"
+# it returns three things about whichever AWS account/credentials Terraform is currently authenticated as:
+# account_id — the 12-digit AWS account number
+# arn — the full ARN of the identity being used
+# user_id — a unique identifier for that identity
 data "aws_caller_identity" "read_current_account" {}
 
-# ======================================================================================
-# This is what lets AWS trust a token from GitHub Actions, instead of
-# needing a stored access key.
-#
-# Used to be conditional on a create_oidc_provider variable, for a caller
-# whose account already had one created elsewhere (terraform-org's
-# platform/ account, via its own discovery-role.tf). That was the only
-# caller that ever needed it, and it stopped sourcing this module entirely
-# 2026-08-24 (replaced with a dedicated role definition owned directly in
-# that repo) — every remaining caller here always creates and owns its own
-# provider, so the variable and the data-source fallback were removed. The
-# `moved` block below is what makes that safe: it keeps every existing
-# account's already-live provider at the same object, just without the
-# `[0]` index the old `count` required.
-# ======================================================================================
+# ====================================================================================================================
+# Resource block - creates a Github Provider this is what lets AWS trust a token from GitHub Actions, instead of
+# needing a stored access key. Every caller(dev, prod security etc) creates and owns its own provider.
+# also added prevent_destroy because every account's ability to log in via GitHub Actions depends on this staying put.
+# ====================================================================================================================
 resource "aws_iam_openid_connect_provider" "github" {
   url             = "https://token.actions.githubusercontent.com"
   client_id_list  = ["sts.amazonaws.com"]
@@ -38,20 +43,16 @@ resource "aws_iam_openid_connect_provider" "github" {
   }
 }
 
-moved {
-  from = aws_iam_openid_connect_provider.github[0]
-  to   = aws_iam_openid_connect_provider.github
-}
-
+# locals is just a block of named shortcuts which are values computed once, 
+# then reused by name later in the file, instead of writing out the full expression every time. 
 locals {
+  # This is just a short alias for the OIDC provider resource's ARN
+  # used in the TerraformDeploy & TerraformPlan trust_policy below in the GitHubActionsCI statement, 
+  # so we don't have to write out the full resource reference every time.
   github_oidc_provider_arn = aws_iam_openid_connect_provider.github.arn
 
-  # Used to also concat() in whatever a caller added via an
-  # extra_trusted_environments variable — e.g. terraform-org's platform/
-  # account, for its differently-named "management-approval" apply-approval
-  # environment. That was the only caller that ever used it, and it
-  # stopped sourcing this module entirely 2026-08-24, so the variable was
-  # removed; every remaining caller only ever used these three.
+  # Every caller trusts these three GitHub Environments.
+  # allow-list of which three GitHub Environments are trusted to log in as this role. 
   trusted_environment_subs = [
     "repo:${var.github_org}/${var.github_repo}:environment:production-approval",
     "repo:${var.github_org}/${var.github_repo}:environment:automated",
@@ -60,7 +61,7 @@ locals {
 }
 
 # ======================================================================================
-# Trust policy for the terraform_deploy role
+# Trust policy for the terraform_deploy role it answers who is allowed to log in as this role at all?
 # ======================================================================================
 data "aws_iam_policy_document" "github_actions_trust_policy" {
   # Emergency access: an admin in the management account can assume this
@@ -376,18 +377,18 @@ data "aws_iam_policy_document" "permissions" {
   }
 
 }
-
+# 
+# resource block - creates the TerraformDeploy role, which is the identity GitHub Actions uses to run Terraform.
 resource "aws_iam_role" "terraform_deploy" {
   name                 = var.role_name
   assume_role_policy   = data.aws_iam_policy_document.github_actions_trust_policy.json
   max_session_duration = 3600
-  # Used to accept a permissions_boundary_arn variable, for a caller that
-  # wanted to cap this role's effective permissions below what the
-  # `permissions` policy above grants — terraform-org's platform/ account
-  # was the only caller that ever set it. That account stopped sourcing
-  # this module entirely 2026-08-24 (replaced with a dedicated, already-
-  # minimal role definition owned directly in that repo, where the
-  # boundary still lives), so the variable was removed as unused here.
+  # Defaults to null, meaning no boundary — nothing changes for any caller
+  # that doesn't set this. Re-added 2026-08-25: this was removed the same
+  # day terraform-org stopped calling this module (its sole caller at the
+  # time), but every in-repo account is now adopting a boundary of its
+  # own via modules/terraform-deploy-boundary, so it's needed here again.
+  permissions_boundary = var.permissions_boundary_arn
 
   tags = {
     ManagedBy   = "Terraform"
@@ -399,11 +400,6 @@ resource "aws_iam_role" "terraform_deploy" {
     prevent_destroy = true
   }
 
-  # No explicit depends_on needed (unlike before this resource lost its
-  # count/data-source split): assume_role_policy already references
-  # local.github_oidc_provider_arn, which references this provider
-  # directly — a single, unconditional resource reference Terraform's
-  # graph picks up on its own.
 }
 
 resource "aws_iam_role_policy" "terraform_deploy_policy" {
@@ -413,7 +409,8 @@ resource "aws_iam_role_policy" "terraform_deploy_policy" {
 }
 
 # ======================================================================================
-# Trust policy for the terraform_plan role
+# Trust policy for the terraform_plan role it answers who is allowed to log in as this role at all? 
+# this role is used for PR-time plans, so it can read resources but not modify them. 
 # ======================================================================================
 data "aws_iam_policy_document" "github_oidc_trust_plan" {
   statement {
@@ -487,6 +484,11 @@ resource "aws_iam_role_policy" "terraform_plan_assume_ssm_readonly" {
   })
 }
 
+# This resource block grants the read-only TerraformPlan role permission to assume a role in another account (whatever's in extra_assumable_role_arns)
+# but only for accounts that actually pass something in that list which in our case like for production account below
+#   extra_assumable_role_arns = [
+#     "arn:aws:iam::${nonsensitive(data.aws_ssm_parameter.network_account_id.value)}:role/TgwSpokeWiringProduction",
+#   ]. 
 resource "aws_iam_role_policy" "terraform_plan_assume_extra_roles" {
   count = length(var.extra_assumable_role_arns) > 0 ? 1 : 0
 
@@ -501,7 +503,7 @@ resource "aws_iam_role_policy" "terraform_plan_assume_extra_roles" {
     }]
   })
 }
-
+# This resource block attaches the AWS-managed ReadOnlyAccess policy to the terraform_plan role, so it can read resources but not modify them.
 resource "aws_iam_role_policy_attachment" "terraform_plan_readonly" {
   role       = aws_iam_role.terraform_plan.name
   policy_arn = "arn:aws:iam::aws:policy/ReadOnlyAccess"
@@ -515,6 +517,9 @@ resource "aws_iam_role_policy_attachment" "terraform_plan_readonly" {
 # that. What actually matters is write access for state locking
 # (PutObject/DeleteObject) — ReadOnlyAccess doesn't grant that, and a
 # PR-triggered plan should never be able to write outside its own folder.
+
+# This policy is scoped to just this account's own folder, so one account's
+# plan role can never write to another account's state.
 resource "aws_iam_policy" "terraform_plan_s3_role" {
   name = "TerraformPlanS3Policy"
   policy = jsonencode({
@@ -548,6 +553,7 @@ resource "aws_iam_policy" "terraform_plan_s3_role" {
   })
 }
 
+# This is the attachment of the S3 policy to the terraform_plan role, so it can read/write its own state folder.
 resource "aws_iam_role_policy_attachment" "terraform_plan_s3_policy_attachment" {
   role       = aws_iam_role.terraform_plan.name
   policy_arn = aws_iam_policy.terraform_plan_s3_role.arn

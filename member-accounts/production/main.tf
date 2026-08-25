@@ -52,6 +52,8 @@ data "aws_ssm_parameter" "network_account_id" {
 }
 
 # Main provider for the production account itself.
+# this provider is used for creating resources in the production account, such as VPCs, subnets, and route tables.
+# It is configured to only allow access to the production account ID retrieved from SSM.
 provider "aws" {
   region              = var.aws_region
   allowed_account_ids = [data.aws_ssm_parameter.production_account_id.value]
@@ -60,6 +62,9 @@ provider "aws" {
 # Assumes a role in the network account that's locked to just this
 # account's own route table plus "main" (modules/tgw-spoke-wiring-role) —
 # this account can never touch development's route table.
+
+# this provider is used for reading SSM parameters and creating resources in the network account, such as Transit Gateway route table associations and propagations.
+# It is configured to assume a role in the network account that allows access to the production account's route table and the main route table of the Transit Gateway (TGW).
 provider "aws" {
   alias  = "network"
   region = var.aws_region
@@ -68,27 +73,54 @@ provider "aws" {
   }
 }
 
-# Published by the network account, and read using the aws.network role
-# above instead of reading network's Terraform state file directly — so
-# this account's read-only plan role never needs access to that state.
+# this data source retrieves the Transit Gateway (TGW) ID from the SSM parameter store in the network account, 
+# allowing the production account to reference the TGW for routing and attachment purposes.
 data "aws_ssm_parameter" "tgw_id" {
   provider = aws.network
   name     = "/transit-gateway/id"
 }
 
+# this data source retrieves the production spoke route table ID from the SSM parameter store in the network account,
+# allowing the production account to reference its own route table for routing and attachment purposes.
 data "aws_ssm_parameter" "prod_spoke_route_table_id" {
   provider = aws.network
   name     = "/transit-gateway/route_table_ids/prod_spoke"
 }
 
-# "main" is the one shared table this account and development both get
-# write access to — used only so each can publish its own return route,
+# this data source retrieves the main route table ID from the SSM parameter store in the network account,
+# allowing the production account to reference the main route table of the Transit Gateway (TGW)
 # never to reach into the other's own table.
 data "aws_ssm_parameter" "main_route_table_id" {
   provider = aws.network
   name     = "/transit-gateway/route_table_ids/main"
 }
 
+# this local variable defines the ARN of the role in the network account that allows the production account to wire itself into the Transit Gateway (TGW).
+locals {
+  extra_assumable_role_arns = [
+    "arn:aws:iam::${nonsensitive(data.aws_ssm_parameter.network_account_id.value)}:role/TgwSpokeWiringProduction",
+  ]
+}
+
+# this module creates a permissions boundary in the production account that restricts the actions that can be performed by the Terraform deploy role in production.
+module "terraform_deploy_boundary" {
+  source = "../../modules/terraform-deploy-boundary"
+
+  account_name          = "production"
+  management_account_id = "145678291484"
+  state_bucket_name     = "james-terraform-state-2026"
+  state_key_prefix      = "production"
+  role_name             = "TerraformDeploy"
+
+  # this flag enables VPC networking in the production account, allowing the creation of VPCs, subnets, and route tables for the production workloads.
+  enable_vpc_networking = true
+
+  # this variable defines the ARNs of the roles that can be assumed by the Terraform deploy role in production, allowing it to perform actions on behalf of those roles.
+  extra_assumable_role_arns = local.extra_assumable_role_arns
+}
+
+# this module creates a GitHub OIDC role called TerraformDeploy in the production account that allows GitHub Actions workflows to assume the Terraform deploy role in production.
+# this role is granted permissions to perform actions on behalf of the Terraform deploy role, allowing GitHub Actions workflows to deploy infrastructure in the production account.
 module "github-oidc-roles" {
   source       = "../../modules/github-oidc-roles"
   account_name = "production"
@@ -101,9 +133,9 @@ module "github-oidc-roles" {
   state_key_prefix      = "production"
   role_name             = "TerraformDeploy"
 
-  extra_assumable_role_arns = [
-    "arn:aws:iam::${nonsensitive(data.aws_ssm_parameter.network_account_id.value)}:role/TgwSpokeWiringProduction",
-  ]
+  extra_assumable_role_arns = local.extra_assumable_role_arns
+
+  permissions_boundary_arn = module.terraform_deploy_boundary.arn
 }
 
 # ============================================================
@@ -115,11 +147,7 @@ module "github-oidc-roles" {
 module "vpc" {
   count = var.networking_enabled ? 1 : 0
 
-  # This VPC and module.github-oidc-roles (which sets up this account's
-  # own CI permissions) can sometimes run at the same time and collide —
-  # AWS doesn't make a permission change visible everywhere instantly.
-  # If that happens, the fix is a retry step in
-  # .github/workflows/terraform-apply.yaml, not something added here.
+
   source = "../../modules/vpc"
 
   name = "production-vpc"
@@ -128,13 +156,14 @@ module "vpc" {
   azs             = var.azs
   private_subnets = var.private_subnets
 
-  # Explicit rather than left to modules/vpc's default-name fallback —
-  # same names the fallback already produces, just making it intentional.
-  # A rename later is a tag update, not a replacement.
+  # this private_subnet_names variable defines the names of the private subnets in the production VPC, based on the availability zones (AZs) specified in the var.azs variable.
   private_subnet_names = [for az in var.azs : "production-Twg-private-sub-${az}"]
 
+  # this enable_nat_gateway variable disables the creation of a NAT gateway in the production VPC, since outbound traffic is routed through the network account's Transit Gateway (TGW) instead.
   enable_nat_gateway = false
-  tgw_id             = nonsensitive(data.aws_ssm_parameter.tgw_id.value)
+
+  # this tgw_id variable retrieves the Transit Gateway (TGW) ID from the SSM parameter store in the network account, allowing the production VPC to route traffic through the TGW for outbound connectivity.
+  tgw_id = nonsensitive(data.aws_ssm_parameter.tgw_id.value)
 
   tags = var.tags
 }
@@ -143,6 +172,8 @@ module "vpc" {
 # the TGW is set to auto-accept connections, and since this account and
 # network are in the same AWS Organization with sharing turned on, there's
 # no manual accept step needed.
+
+# this module creates a Transit Gateway (TGW) attachment in the production account that connects the production VPC to the Transit Gateway (TGW) in the network account.
 module "tgw_attachment" {
   count = var.networking_enabled ? 1 : 0
 
@@ -168,6 +199,10 @@ module "tgw_attachment" {
 # at all, and into "main", so return traffic from NAT can find its way
 # back here.
 # ============================================================
+
+
+# this resource block associates the Transit Gateway (TGW) attachment for the production VPC with the production spoke route table in the network account, 
+# allowing traffic from the production VPC to be routed through the TGW and reach other spoke accounts.
 resource "aws_ec2_transit_gateway_route_table_association" "tgw_rtb_association" {
   count = var.networking_enabled ? 1 : 0
 
@@ -176,7 +211,8 @@ resource "aws_ec2_transit_gateway_route_table_association" "tgw_rtb_association"
   transit_gateway_attachment_id  = module.tgw_attachment[0].attachment_id
   transit_gateway_route_table_id = nonsensitive(data.aws_ssm_parameter.prod_spoke_route_table_id.value)
 }
-
+# this resource block propagates the routes from the production VPC's Transit Gateway (TGW) attachment into the production spoke route table in the network account,
+# allowing the production VPC to announce its routes to other spoke accounts through the TGW.
 resource "aws_ec2_transit_gateway_route_table_propagation" "spoke" {
   count = var.networking_enabled ? 1 : 0
 
@@ -186,6 +222,9 @@ resource "aws_ec2_transit_gateway_route_table_propagation" "spoke" {
   transit_gateway_route_table_id = nonsensitive(data.aws_ssm_parameter.prod_spoke_route_table_id.value)
 }
 
+
+# this resource block propagates the routes from the production VPC's Transit Gateway (TGW) attachment into the main route table of the Transit Gateway (TGW) in the network account,
+# allowing the production VPC to announce its routes to other spoke accounts through the TGW
 resource "aws_ec2_transit_gateway_route_table_propagation" "main" {
   count = var.networking_enabled ? 1 : 0
 
@@ -203,20 +242,28 @@ resource "aws_ec2_transit_gateway_route_table_propagation" "main" {
 # for something that doesn't exist yet when it runs. depends_on below is
 # the entire reason this lives out here instead.
 # ============================================================
+
+# this resource block creates routes in the private route tables of the production VPC to send outbound traffic destined for the internet 
 resource "aws_route" "private_to_tgw" {
-  # Comes out empty when disabled — module.vpc doesn't exist then, so
-  # there's nothing to route from anyway.
+
   for_each = var.networking_enabled ? { for idx, az in var.azs : az => idx } : {}
 
-  # Safe to reference module.vpc[0]/module.tgw_attachment[0] here: this
-  # whole resource is empty exactly when networking is off, so it never
-  # actually tries to look at either one when they don't exist.
-  route_table_id         = module.vpc[0].private_route_table_ids[each.value]
-  destination_cidr_block = "0.0.0.0/0"
-  transit_gateway_id     = nonsensitive(data.aws_ssm_parameter.tgw_id.value)
+  # this route_table_id variable retrieves the private route table IDs from the production VPC module, 
+  # allowing the creation of routes in each private route table for outbound traffic to the Transit Gateway (TGW).
+  route_table_id = module.vpc[0].private_route_table_ids[each.value]
 
+  # this destination_cidr_block variable defines the CIDR block for the route, which is set to "0.0.0.0/0" — a catch-all for all internet-bound traffic.
+  destination_cidr_block = "0.0.0.0/0"
+
+  # this transit_gateway_id variable retrieves the Transit Gateway (TGW) ID from the SSM parameter store in the network account, 
+  # allowing the route to point to the TGW for outbound traffic.
+  transit_gateway_id = nonsensitive(data.aws_ssm_parameter.tgw_id.value)
+
+  # this depends_on variable ensures that the route creation waits for the Transit Gateway (TGW) attachment to be created before creating the routes,  
+  # preventing any potential issues with routing traffic to the TGW before the attachment is established.
   depends_on = [module.tgw_attachment]
 
+  # this lifecycle block defines a precondition that checks if the number of private route tables in the production VPC matches the number of availability zones (AZs) specified in the var.azs variable.
   lifecycle {
     precondition {
       condition     = length(module.vpc[0].private_route_table_ids) == length(var.azs)
@@ -236,14 +283,23 @@ resource "aws_route" "private_to_tgw" {
 #
 # TEARDOWN FLAG: turns off with everything else that depends on the VPC.
 # ============================================================
+
+# this module creates subnets for the production workloads, including EKS, RDS, an internal ALB, and a general-purpose tier.
+# this module is kept separate from the VPC module to avoid exposing production workload details to the network and development accounts.
+# this module also configures the route tables for the subnets, allowing EKS and resources subnets to route outbound traffic through the Transit Gateway (TGW), 
+# while RDS and ALB subnets do not have outbound routes to the TGW.
 module "prod_purpose_subnets" {
   count = var.networking_enabled ? 1 : 0
 
   source = "../../modules/prod-purpose-subnets"
-
+  # this vpc_id variable retrieves the VPC ID from the production VPC module, allowing the creation of subnets within the production VPC.
   vpc_id = module.vpc[0].vpc_id
+
+  # this tgw_id variable retrieves the Transit Gateway (TGW) ID from the SSM parameter store in the network account, 
+  # allowing the production workloads to route outbound traffic through the TGW.
   tgw_id = nonsensitive(data.aws_ssm_parameter.tgw_id.value)
 
+  # this production_workload_subnets variable defines the subnets for the production workloads, including EKS, RDS, an internal ALB, and a general-purpose tier.
   production_workload_subnets = {
     eks = {
       route_table_name = "prod-eks-rtb"
@@ -280,24 +336,7 @@ module "prod_purpose_subnets" {
 
   tags = var.tags
 
-  # Same reasoning as aws_route.private_to_tgw above: a route to the TGW
-  # only works once the connection actually exists.
+  # this depends_on variable ensures that the subnet creation waits for the Transit Gateway (TGW) attachment to be created before creating the subnets,
+  # preventing any potential issues with routing traffic to the TGW before the attachment is established.
   depends_on = [module.tgw_attachment]
-}
-
-# These two blocks record a rename from an older branch. Without them,
-# Terraform would think the renamed module/resource is something brand
-# new, and plan to destroy the existing production subnets, route
-# tables, and associations, then recreate them from scratch — a real
-# outage, not a harmless rename. Safe to delete once this has actually
-# been applied and the state file has caught up (see commit 2495070 for
-# an earlier example of the same thing).
-moved {
-  from = module.purpose_subnets
-  to   = module.prod_purpose_subnets
-}
-
-moved {
-  from = aws_ec2_transit_gateway_route_table_association.this
-  to   = aws_ec2_transit_gateway_route_table_association.tgw_rtb_association
 }

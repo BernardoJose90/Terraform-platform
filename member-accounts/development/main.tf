@@ -83,6 +83,31 @@ data "aws_ssm_parameter" "main_route_table_id" {
   name     = "/transit-gateway/route_table_ids/main"
 }
 
+# Defined once, referenced by both modules below, so they can never
+# silently drift apart the way two hand-typed copies could.
+locals {
+  extra_assumable_role_arns = [
+    "arn:aws:iam::${nonsensitive(data.aws_ssm_parameter.network_account_id.value)}:role/TgwSpokeWiringDevelopment",
+  ]
+}
+
+module "terraform_deploy_boundary" {
+  source = "../../modules/terraform-deploy-boundary"
+
+  account_name          = "development"
+  management_account_id = "145678291484"
+  state_bucket_name     = "james-terraform-state-2026"
+  state_key_prefix      = "development"
+  role_name             = "TerraformDeploy"
+
+  # See production/main.tf's boundary comment for the full reasoning;
+  # this account's infrastructure shape (module.vpc, module.tgw_attachment
+  # below) is the same, minus prod-purpose-subnets.
+  enable_vpc_networking = true
+
+  extra_assumable_role_arns = local.extra_assumable_role_arns
+}
+
 module "github-oidc-roles" {
   source       = "../../modules/github-oidc-roles"
   account_name = "development"
@@ -97,9 +122,9 @@ module "github-oidc-roles" {
   state_key_prefix      = "development"
   role_name             = "TerraformDeploy"
 
-  extra_assumable_role_arns = [
-    "arn:aws:iam::${nonsensitive(data.aws_ssm_parameter.network_account_id.value)}:role/TgwSpokeWiringDevelopment",
-  ]
+  extra_assumable_role_arns = local.extra_assumable_role_arns
+
+  permissions_boundary_arn = module.terraform_deploy_boundary.arn
 }
 
 # ============================================================
