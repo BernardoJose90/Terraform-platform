@@ -128,6 +128,7 @@ data "aws_iam_policy_document" "permissions" {
       "iam:DetachRolePolicy",
       "iam:ListRolePolicies",
       "iam:ListAttachedRolePolicies",
+      "iam:PutRolePermissionsBoundary",
       "iam:GetRolePolicy",
       "iam:PutRolePolicy",
       "iam:DeleteRolePolicy",

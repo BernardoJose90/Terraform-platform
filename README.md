@@ -248,6 +248,15 @@ Four workflows in [.github/workflows/](.github/workflows/), all authenticating v
 
 **`workflow_run` and forks — read this before assuming fork PRs are exempt.** `workflow_run` always runs the version of `diagnose.yml` committed to the *default branch*, regardless of which branch or PR triggered `terraform-plan.yaml` — so editing this workflow only takes effect once merged to `main`, not from within an open PR that changes it. It is **not** true that fork PRs are skipped or that this job runs without secrets for them: `workflow_run` is exactly the pattern GitHub recommends *because* it keeps running, with full `secrets`/token access, even when the triggering `terraform-plan.yaml` run came from a fork PR that itself had no secrets. That's by design (it's how a maintainer-controlled job can safely react to fork PR activity without checking out fork code) — but it does mean a fork PR's log output (error text, resource/commit names, etc.) is the least-trusted input this job ever sees. `prompts/diagnose.md` instructs the model to treat log content as data, never as instructions, precisely for that case.
 
+### Apply failures
+
+`.github/workflows/diagnose-apply.yml` is the same idea, aimed at `terraform-apply.yaml` instead of `terraform-plan.yaml`, using its own prompt (`prompts/diagnose-apply.md`). Same read-only design — `contents: read`, `actions: read`, `pull-requests: write`, `--tools ""` on the Claude CLI call, sparse checkout of just the prompt and `.checkov.yaml` — with two differences that follow from apply being a materially different risk than plan:
+
+- **No open PR to look up by branch.** `terraform-apply.yaml` triggers on `push` to `main` after merge, so unlike the plan-side bot, this resolves the PR by tracing the pushed commit back to the merged PR that produced it (`listPullRequestsAssociatedWithCommit`, the same lookup `terraform-apply.yaml`'s own `resolve-plan-run` job does) rather than by head branch. A manual `workflow_dispatch` apply, or a push that can't be traced to a merged PR, has no PR to comment on — the diagnosis still runs, and gets posted to that run's own step summary instead of being dropped.
+- **The prompt is built around one hard rule: never suggest retrying.** An apply failure can mean AWS was partially changed before the error hit — `prompts/diagnose-apply.md` requires a dedicated "Partial-state risk" section in every diagnosis, calls out the specific log signals that mean a retry could apply an unreviewed plan (`Saved plan is stale`, `Out of retry attempts`), and is instructed to never propose a re-run, a retry, or `workflow_dispatch` as a fix under any circumstance — that call belongs to a human who has confirmed real AWS state first, same principle `terraform-apply.yaml` itself already enforces by refusing to auto-apply an unreviewed plan.
+
+**Setup:** shares the same `ANTHROPIC_API_KEY` secret as `diagnose.yml` — nothing extra to configure if that's already set up.
+
 ---
 
 ## 🧹 Teardown
