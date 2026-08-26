@@ -22,6 +22,7 @@
 - [State Management](#state-management)
 - [CI/CD Pipeline](#cicd-pipeline)
 - [CI Failure Diagnosis](#ci-failure-diagnosis)
+- [Break-Glass Bootstrap](#break-glass-bootstrap)
 - [Teardown](#teardown)
 - [Security Best Practices](#security-best-practices)
 - [Troubleshooting](#troubleshooting)
@@ -256,6 +257,35 @@ Four workflows in [.github/workflows/](.github/workflows/), all authenticating v
 - **The prompt is built around one hard rule: never suggest retrying.** An apply failure can mean AWS was partially changed before the error hit — `prompts/diagnose-apply.md` requires a dedicated "Partial-state risk" section in every diagnosis, calls out the specific log signals that mean a retry could apply an unreviewed plan (`Saved plan is stale`, `Out of retry attempts`), and is instructed to never propose a re-run, a retry, or `workflow_dispatch` as a fix under any circumstance — that call belongs to a human who has confirmed real AWS state first, same principle `terraform-apply.yaml` itself already enforces by refusing to auto-apply an unreviewed plan.
 
 **Setup:** shares the same `ANTHROPIC_API_KEY` secret as `diagnose.yml` — nothing extra to configure if that's already set up.
+
+---
+
+## 🆘 Break-Glass Bootstrap
+
+`scripts/breakglass-bootstrap.sh` exists for one specific situation neither CI nor a human with normal access can fix on their own: `TerraformDeploy` needs a permission on **itself** that it doesn't have yet. A role can never grant itself a permission it doesn't already hold — that's an AWS authorization rule, not a misconfiguration — so if a PR adds a new self-referential action (e.g. `TerraformDeploy` setting its own permissions boundary for the first time, which needs `iam:PutRolePermissionsBoundary` on itself), CI's own automated identity is structurally unable to close that gap, no matter how many times the pipeline retries or re-runs.
+
+The script uses the trust policy's `ManagementAccountBreakGlass` path (an MFA-authenticated identity in the management account can `sts:AssumeRole` straight into `TerraformDeploy`) to run one narrowly **targeted** `terraform apply` — by default just `module.github-oidc-roles.aws_iam_role_policy.terraform_deploy_policy`, nothing else — using a different identity that isn't missing the permission. That gets the grant live in AWS once; every apply after that, including CI's, works normally on its own.
+
+**MFA source: a dedicated IAM user, not your SSO login.** This originally tried to satisfy `ManagementAccountBreakGlass` with a normal `aws sso login` session. That can never work — confirmed directly against CloudTrail during a real incident (2026-08-26): IAM Identity Center does not set `aws:MultiFactorAuthPresent` on the credentials it issues, even after a genuine MFA challenge at sign-in. This is a documented, current AWS limitation ([AWS re:Post](https://repost.aws/questions/QURCTAkCd2RiugphKo3S6zIw)), not something fixable by logging in differently. The working alternative: `BreakGlassAdmin`, a plain IAM user defined in `Terraform-Org`'s `platform/breakglass-user.tf`, with its own registered MFA device — `sts:GetSessionToken` against a native IAM user's MFA device *does* correctly set that context key.
+
+**One-time setup**, before the first use:
+```bash
+aws configure --profile breakglass
+# AWS Access Key ID / Secret Access Key: BreakGlassAdmin's, from IAM
+# Default region: eu-west-2 · Default output format: (blank)
+```
+After that, the script only ever prompts for a fresh MFA code — the long-term key is never typed into the script's own prompts. (An earlier version prompted for the access key and secret directly with hand-rolled `read -s` calls; dropped after that path was confirmed, on a real run, to silently fail to capture pasted input on at least one terminal setup. `aws configure` uses the same prompt mechanism as every other AWS CLI command and doesn't have that problem.)
+
+```bash
+./scripts/breakglass-bootstrap.sh                      # all six accounts
+./scripts/breakglass-bootstrap.sh network production    # just these two
+```
+
+Prompts for one fresh MFA code, gets a single session token from the `breakglass` profile, then loops through the account(s), assumes `TerraformDeploy` in each using that one session, and runs the targeted apply — pausing for a `yes` confirmation each time (no `-auto-approve`; review each plan, it should only ever show one resource changing). Also requires a working `management` SSO profile — used only for the read-only account-ID lookups, which never needed MFA and were never the broken part.
+
+**What it's for beyond the one incident that created it:** any future PR that adds a new self-referential action to `TerraformDeploy`'s own policy hits the identical bootstrap gap — point `TARGET_RESOURCE` at whatever grants it and run the script again. It also doubles as a recovery tool if a PR ever accidentally narrows `TerraformDeploy`'s policy in a way that removes something it needs to fix itself.
+
+**What it does *not* cover:** an overly-restrictive **permissions boundary** (as opposed to the identity policy) — assuming `TerraformDeploy` via break-glass still inherits its own boundary, so a boundary that's the actual blocker needs separate admin credentials acting on `TerraformDeploy` from outside, not this script. It also doesn't bootstrap a brand-new AWS account's very first apply — there's no `TerraformDeploy` role to assume yet in an account that doesn't have one.
 
 ---
 
