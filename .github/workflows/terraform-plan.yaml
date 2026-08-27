@@ -25,9 +25,9 @@ on:
 # The three check jobs always run, so GitHub always gets a status for each check.
 #
 # If no Terraform files were changed, the jobs skip the expensive steps.
-# The jobs still finish successfully (green) because skipping a step does not
-# make the whole job fail.
-  pull_request:
+# The jobs still finish successfully (green) because skipping a step does not make the whole job fail.
+
+  pull_request: # runs automatically when a PR targets main
     branches: [main]
 
   workflow_dispatch:
@@ -46,114 +46,21 @@ env:
   TERRAFORM_VERSION: "1.11.4"
   AWS_REGION: "eu-west-2"
 
+# ──────────────────────────────────────────────────────────────────────────────
+# The jobs below are written in the order GitHub actually runs them, top to
+# bottom.
+# ──────────────────────────────────────────────────────────────────────────────
+#   1. detect-changes    (no needs — runs first)
+#   2. validate-format   needs: detect-changes
+#   3. security-scan     needs: detect-changes
+#   4. discover-accounts needs: detect-changes, validate-format
+#   5. plan              needs: discover-accounts
+#   6. infracost         needs: discover-accounts, plan
+#   7. summary           needs: discover-accounts, plan, infracost
+# ──────────────────────────────────────────────────────────────────────────────
 jobs:
   # ──────────────────────────────────────────────────────────────────────────────
-  # 1. Validate & Format
-  #
-  # This is a REQUIRED CHECK, so the job always runs and reports a result.
-  #
-  # The actual Terraform checks only run when Terraform files have changed.
-  # If the PR only changes documentation, those Terraform steps are skipped.
-  #
-  # Skipping the steps does not make the job fail, so GitHub still shows
-  # "Validate & Format" as green.
-  #
-  # This means a docs-only PR gets a green check in about a minute instead of
-  # waiting for a check that never runs.
-  # ──────────────────────────────────────────────────────────────────────────────
-  validate-format:
-    name: Validate & Format
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    needs:
-      - detect-changes
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Skipping (no Terraform changes)
-        if: needs.detect-changes.outputs.tf_changed != 'true'
-        run: echo "Docs or prose only. Nothing to format or validate."
-
-      - name: Setup Terraform
-        if: needs.detect-changes.outputs.tf_changed == 'true'
-        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
-        with:
-          terraform_version: ${{ env.TERRAFORM_VERSION }}
-      #
-      # this workflow only checks the formatting.
-      # If the code is not formatted correctly, the check fails.
-      # The author can then run `terraform fmt` locally and push the fix.
-      #
-      # This approach avoids the workflow getting stuck and matches the
-      # quick Terraform validation used in terraform-apply.yaml.
-      - name: Terraform Format Check
-        if: needs.detect-changes.outputs.tf_changed == 'true'
-        run: terraform fmt -check -recursive -diff
-
-      - name: Terraform Validate (all accounts)
-        if: needs.detect-changes.outputs.tf_changed == 'true'
-        run: |
-          for dir in member-accounts/*/; do
-            echo "Validating $dir..."
-            ( cd "$dir" && terraform init -backend=false && terraform validate )
-          done
-
-  # ──────────────────────────────────────────────────────────────────────────────
-  # 2. Security Scan (Checkov)
-  # REQUIRED CHECK.
-  # The job always runs so GitHub gets a status which is printed for us to see what failed etc.
-  # The expensive step only runs when it is needed.
-  # If it is not needed, the step is skipped but the job still passes.
-  # ──────────────────────────────────────────────────────────────────────────────
-  security-scan:
-    name: Security Scan (Checkov)
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    needs:
-      - detect-changes
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Skipping (no Terraform changes)
-        if: needs.detect-changes.outputs.tf_changed != 'true'
-        run: echo "Docs or prose only. Nothing to scan."
-
-      - name: Checkov Security Scan - All Accounts
-        id: checkov
-        if: needs.detect-changes.outputs.tf_changed == 'true'
-        uses: bridgecrewio/checkov-action@59b9d7edfcad5b87fbe3f473a9a134a721ad03f8
-        with:
-          directory: member-accounts/
-          config_file: .checkov.yaml
-          output_format: cli,sarif
-          download_external_modules: true
-          quiet: false
-       #  soft_fail: true
-
-    # These two steps also need to check if Terraform was changed.
-    # Without this check, they would run even when only documentation was changed.
-    # On a docs-only PR, there would be no results.sarif file to use,
-    # which would make the required "Security Scan" check fail.
-    #
-    # So, only run these steps when Terraform files have changed.
-      - name: Upload Checkov SARIF report
-        if: always() && needs.detect-changes.outputs.tf_changed == 'true'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: checkov-report
-          path: results.sarif
-          retention-days: 7
-          if-no-files-found: warn
-
-      - name: Upload SARIF to GitHub Security tab
-        if: always() && needs.detect-changes.outputs.tf_changed == 'true'
-        uses: github/codeql-action/upload-sarif@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4.37.8
-        with:
-          sarif_file: results.sarif
-          category: checkov
-
-  # ──────────────────────────────────────────────────────────────────────────────
-  # 3. Classify the changes(diff)
+  # 1. Classify the changes (diff)
   #
   # This is the first job that runs, so it has no "needs:" dependency.
   #
@@ -162,10 +69,6 @@ jobs:
   #
   # The Validate & Format job uses the result from this job to decide
   # whether it needs to run the Terraform checks.
-  #
-  # The old "paths-ignore" rules have also been moved here.
-  # This makes sure that required GitHub checks are always reported,
-  # even when the PR only changes files that do not need Terraform checks.
   # ──────────────────────────────────────────────────────────────────────────────
   detect-changes:
     name: Detect Changed Accounts
@@ -173,26 +76,49 @@ jobs:
     timeout-minutes: 5
 
     outputs:
-      # This checks whether there is anything that actually needs to be validated.
-      # The result is used by the Validate & Format and Security Scan jobs
-      # to decide whether their main steps should run.
+      # This checks whether any terraform files(t.f) have been changed and actually needs to be validated.
+      # The result is used by the Validate & Format and Security Scan jobs to decide whether their main steps should run.
       tf_changed: ${{ steps.classify.outputs.tf_changed }}
       # This checks which member accounts were changed.
       # The result is then used to decide which accounts need a Terraform plan.
       # Each changed account is added to the plan matrix.
       changed_accounts: ${{ steps.filter.outputs.changed_accounts }}
       has_changes: ${{ steps.filter.outputs.has_changes }}
+      # true for a same-repo PR, workflow_dispatch, or any non-PR trigger;
+      # false only for a PR opened from a fork. GitHub never mints an OIDC
+      # token or a write-scoped GITHUB_TOKEN for a fork PR, so the `plan`
+      # and `discover-accounts` jobs below are already safe — they fail at
+      # "Configure AWS credentials" before ever running `terraform init` on
+      # fork-supplied code. The one job that ISN'T gated by AWS credentials
+      # at all is validate-format's "Terraform Validate (all accounts)"
+      # step, which runs `terraform init` unconditionally to check syntax —
+      # and `terraform init` fetches whatever provider a fork's own
+      # required_providers block names, from wherever it names, before
+      # validate ever runs. This output is what stops that step from
+      # running on fork-supplied Terraform at all.
+      same_repo: ${{ steps.fork-check.outputs.same_repo }}
     steps:
+      # clone our repository onto the runner
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
+      # this step checks whether the PR is from a forked repository. If it is, it sets the same_repo output to false. 
+      # This is important because we don't want to run Terraform init/validate against code from a fork, as it could fetch untrusted providers.
+      - name: Check whether this run is from a fork
+        id: fork-check
+        env:
+      #  this environment variable is true if the PR is from a forked repository, and false otherwise.
+          IS_FORK_PR: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository }}
+        run: |
+          if [ "$IS_FORK_PR" = "true" ]; then
+            echo "same_repo=false" >> "$GITHUB_OUTPUT"
+            echo "Fork PR detected — Terraform init/validate will not run against fork-supplied code."
+          else
+            echo "same_repo=true" >> "$GITHUB_OUTPUT"
+          fi
 
-      # .drift/** is excluded because the drift-detection workflow creates PRs
-      # that only contain a drift report file in this folder.
-      #
-      # We don't need to run Terraform plans for these PRs.
-      # Without this exclusion, every drift PR would run plans for all six accounts
-      # even though no Terraform code has changed.
+      # This step checks which files were changed in the PR and whether any of them are Terraform files (not docs or prose). 
+      # It sets the tf_changed output to true if any Terraform files were changed, and false otherwise.
       - name: Classify changed files
         id: classify
         run: |
@@ -215,7 +141,7 @@ jobs:
             echo "tf_changed=false" >> "$GITHUB_OUTPUT"
             echo "-> docs or prose only. Expensive steps skip; required checks still report."
           fi
-
+      # This step checks which account folders were changed in the PR.
       - name: Detect changed account folders
         id: filter
         if: steps.classify.outputs.tf_changed == 'true'
@@ -267,6 +193,115 @@ jobs:
           echo "has_changes=true" >> "$GITHUB_OUTPUT"
 
   # ──────────────────────────────────────────────────────────────────────────────
+  # 2. Validate & Format
+  #
+  # This is a REQUIRED CHECK, so the job always runs and reports a result.
+  #
+  # The actual Terraform checks only run when Terraform files have changed.
+  # If the PR only changes documentation, those Terraform steps are skipped.
+  #
+  # Skipping the steps does not make the job fail, so GitHub still shows
+  # "Validate & Format" as green.
+  #
+  # This means a docs-only PR gets a green check in about a minute instead of
+  # waiting for a check that never runs.
+  # ──────────────────────────────────────────────────────────────────────────────
+  validate-format:
+    name: Validate & Format
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs:
+      - detect-changes
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Skipping (no Terraform changes)
+        if: needs.detect-changes.outputs.tf_changed != 'true'
+        run: echo "Docs or prose only. Nothing to format or validate."
+
+      - name: Setup Terraform
+        if: needs.detect-changes.outputs.tf_changed == 'true'
+        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
+        with:
+          terraform_version: ${{ env.TERRAFORM_VERSION }}
+
+      # this step checks the formatting of all Terraform files in the repository. 
+      # It runs `terraform fmt -check -recursive -diff` to check for formatting issues and outputs any differences.
+      - name: Terraform Format Check
+        if: needs.detect-changes.outputs.tf_changed == 'true'
+        run: terraform fmt -check -recursive -diff
+
+      # this step validates the Terraform configuration for all accounts.
+      - name: Skipping Terraform Validate (fork PR)
+        if: needs.detect-changes.outputs.tf_changed == 'true' && needs.detect-changes.outputs.same_repo != 'true'
+        run: |
+          echo "::notice::Terraform init/validate does not run against a fork PR's own code — terraform init would fetch whatever provider the fork's required_providers block names. A maintainer can re-run this via workflow_dispatch on a branch in this repo to validate it for real."
+      # this step validates the Terraform configuration for all accounts, but only if the PR is from the same repository (not a fork).
+      - name: Terraform Validate (all accounts)
+        if: needs.detect-changes.outputs.tf_changed == 'true' && needs.detect-changes.outputs.same_repo == 'true'
+        run: |
+          for dir in member-accounts/*/; do
+            echo "Validating $dir..."
+            ( cd "$dir" && terraform init -backend=false && terraform validate )
+          done
+
+  # ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  # 3. Security Scan (Checkov)
+  # ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  # this job runs a security scan using Checkov, a static code analysis tool for Terraform.
+  # It checks for security misconfigurations and best practices in the Terraform code.
+  # The job only runs the scan if Terraform files have changed, as determined by the detect-changes job.
+  # If no Terraform files have changed, the job skips the scan and reports a successful result.
+  # ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  security-scan:
+    name: Security Scan (Checkov)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs:
+      - detect-changes
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Skipping (no Terraform changes)
+        if: needs.detect-changes.outputs.tf_changed != 'true'
+        run: echo "Docs or prose only. Nothing to scan."
+
+      - name: Checkov Security Scan - All Accounts
+        id: checkov
+        if: needs.detect-changes.outputs.tf_changed == 'true'
+        # Pinned to the commit that bumps the container to checkov 3.3.11 —
+        # kept in sync with this file's own pip-installed checkov below
+        # (`pip install --quiet checkov==3.3.11`) and with Terraform-Org's
+        # terraform.yaml checkov-action pin, which had drifted to 3.3.10.
+        # Bump this comment's version number in all three places at once.
+        uses: bridgecrewio/checkov-action@1246d92f57abae29d5db5f9aeeed2a9813e52d7d # checkov 3.3.11
+        with:
+          directory: member-accounts/
+          config_file: .checkov.yaml
+          output_format: cli,sarif
+          download_external_modules: ${{ needs.detect-changes.outputs.same_repo == 'true' }}
+          quiet: false
+       #  soft_fail: true
+
+    # this step uploads the Checkov SARIF report as an artifact, so it can be downloaded and reviewed later.
+    # it only runs if Terraform files have changed, as determined by the detect-changes job.
+      - name: Upload Checkov SARIF report
+        if: always() && needs.detect-changes.outputs.tf_changed == 'true'
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: checkov-report
+          path: results.sarif
+          retention-days: 7
+          if-no-files-found: warn
+
+      - name: Upload SARIF to GitHub Security tab
+        if: always() && needs.detect-changes.outputs.tf_changed == 'true'
+        uses: github/codeql-action/upload-sarif@db488ddef3bf6cb639b32c2e9a7c0a7ea8271d28 # v4.37.8
+        with:
+          sarif_file: results.sarif
+          category: checkov
+
+  # ──────────────────────────────────────────────────────────────────────────────
   # 4. Discover accounts from SSM AND filter by changed accounts
   # ──────────────────────────────────────────────────────────────────────────────
   discover-accounts:
@@ -275,15 +310,9 @@ jobs:
     timeout-minutes: 5
     needs:
       - detect-changes
-      # validate-format used to run before this job because detect-changes depended
-      # on validate-format.
-      #
-      # That order has now been reversed.
-      # So we explicitly make this job wait for validate-format to finish first.
-      #
-      # This is important because we don't want Terraform planning to start if
-      # the HCL code is invalid or badly formatted.
+      
       - validate-format
+
     # Only run if there are actual changes
     if: needs.detect-changes.outputs.has_changes == 'true'
     outputs:
@@ -369,6 +398,25 @@ jobs:
     timeout-minutes: 20
     # Only run if we have accounts to plan
     if: needs.discover-accounts.outputs.account_count != '0' && needs.discover-accounts.outputs.account_count != ''
+    # Job-level permissions fully replace the workflow-level block above for
+    # this job, rather than adding to it — so everything this job actually
+    # uses (OIDC for AWS, checkout, the PR-comment step) has to be repeated
+    # here alongside the one addition, attestations: write, needed for
+    # "Attest plan provenance" below.
+    permissions:
+      id-token: write
+      contents: read
+      pull-requests: write
+      attestations: write
+    # Only needed here, not in validate-format's "Terraform Validate (all
+    # accounts)" step or terraform-apply.yaml: `terraform validate` doesn't
+    # fail on a required variable with no value, but `terraform plan` does
+    # (same reasoning Terraform-Org's terraform.yaml already documents for
+    # its own TF_VAR_account_emails), and terraform-apply.yaml applies the
+    # plan FILE this job produces rather than re-planning — the value is
+    # already baked into tfplan.binary by the time apply runs.
+    env:
+      TF_VAR_alert_email: ${{ secrets.ALERT_EMAIL }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.discover-accounts.outputs.matrix) }}
@@ -393,16 +441,7 @@ jobs:
         working-directory: ${{ matrix.working_directory }}
         run: terraform init -input=false
 
-      # No separate "terraform validate" step here — it's redundant with two
-      # things: the Validate & Format job already runs it for every account
-      # (see terraform validate loop above), and Terraform Plan below performs
-      # the same validation internally as part of computing the plan, so a
-      # broken config still fails loudly either way. Removed rather than kept
-      # "for a clearer error message": validate never caught anything plan
-      # wouldn't have, on this codebase, and the account matrix runs in
-      # parallel, so the seconds saved per account don't shorten the overall
-      # pipeline (gated by Terraform Plan's state refresh either way) — this
-      # is purely a cleanup, not a performance fix.
+
       - name: Terraform Plan
         id: plan
         working-directory: ${{ matrix.working_directory }}
@@ -458,9 +497,7 @@ jobs:
           echo "  3. Verify SSM parameters and provider configuration"
           exit 1
 
-      # The event_name guard is required: context.issue.number is undefined
-      # outside a pull_request event, so on workflow_dispatch this step threw
-      # and failed the whole plan job.
+      # this     
       - name: Post plan as PR comment (Success)
         if: github.event_name == 'pull_request' && steps.plan.outputs.plan_exit_code == '0'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -547,12 +584,43 @@ jobs:
           path: ${{ matrix.working_directory }}/plan_output.txt
           retention-days: 7
 
+      # Stamps this plan with the exact commit it was computed from, and
+      # hashes both files together. terraform-apply.yaml's resolve-plan-run
+      # job checks this against the merged PR's actual head commit before
+      # ever letting anything apply it without this, a plan reviewed at
+      # commit A and a later commit B pushed to the same PR are
+      # indistinguishable by filename alone; whichever one this workflow
+      # last uploaded as tfplan-<account> is what apply would use.
+      #
+      # github.event.pull_request.head.sha is empty on workflow_dispatch
+      # (no PR context) — falls back to github.sha, the commit this run
+      # itself checked out, which is what apply's own commit-based fallback
+      # path compares against in that case.
+      - name: Stamp plan with head commit SHA
+        if: steps.plan.outputs.plan_exit_code == '0'
+        working-directory: ${{ matrix.working_directory }}
+        env:
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          echo "$HEAD_SHA" > tfplan.sha
+          sha256sum tfplan.binary tfplan.sha > tfplan.sha256
+          echo "Stamped plan for ${{ matrix.account }} with commit $HEAD_SHA"
+
+      - name: Attest plan provenance
+        if: steps.plan.outputs.plan_exit_code == '0'
+        uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
+        with:
+          subject-path: ${{ matrix.working_directory }}/tfplan.binary
+
       - name: Upload plan file for apply reuse
         if: steps.plan.outputs.plan_exit_code == '0'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: tfplan-${{ matrix.account }}
-          path: ${{ matrix.working_directory }}/tfplan.binary
+          path: |
+            ${{ matrix.working_directory }}/tfplan.binary
+            ${{ matrix.working_directory }}/tfplan.sha
+            ${{ matrix.working_directory }}/tfplan.sha256
           retention-days: 30
 
 # ── Policy scan of the RESOLVED plan ────────────────────────────────────
@@ -593,6 +661,9 @@ jobs:
           # source for this: checkov/terraform/plan_parser.py, _eval_after_unknown().
           EVAL_TF_PLAN_AFTER_UNKNOWN: "true"
         run: |
+          # 3.3.11 — kept in sync with this file's checkov-action pin above
+          # and Terraform-Org's terraform.yaml checkov-action pin. All three
+          # were on different versions (3.3.10/3.3.11/3.3.13) until 2026-08-27.
           pip install --quiet checkov==3.3.11
           checkov \
             --file "${{ matrix.working_directory }}/plan.json" \

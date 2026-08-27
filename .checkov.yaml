@@ -95,10 +95,15 @@ skip-check:
   # environments, restricted to the main branch, two of which require a
   # human to click approve first.
   #
-  # The real fix, eventually: add a permissions boundary plus an
-  # organization-level policy, so even if this role's own policy stays
-  # broad, there's a hard outer limit it can never cross. Not built yet.
-  # Tracked, not forgotten.
+  # The real fix: a permissions boundary plus an organization-level policy,
+  # so even if this role's own policy stays broad, there's a hard outer
+  # limit it can never cross. Built 2026-08 — see
+  # modules/terraform-deploy-boundary, wired into every member account's
+  # main.tf and into Terraform-Org's own copy of TerraformDeploy
+  # (terraform-deploy-boundary.tf there). This skip list stays regardless:
+  # the boundary caps what TerraformDeploy can ultimately do, it doesn't
+  # make this policy's own overly-broad grant not overly broad, which is
+  # what these 8 checks are actually flagging.
   - CKV_AWS_107  # credentials exposure
   - CKV_AWS_109  # permissions management without constraints
   - CKV_AWS_110  # privilege escalation

@@ -44,6 +44,10 @@ permissions:
   id-token: write
   contents: read
   actions: read
+  # Needed for `gh attestation verify` in resolve-plan-run's plan-integrity
+  # check (see terraform-plan.yaml's attest-build-provenance step, which is
+  # what this verifies against).
+  attestations: read
 
   pull-requests: read
 
@@ -309,8 +313,14 @@ jobs:
             });
             const match = prs.find(p => p.merged_at) || prs[0];
             core.setOutput('pr_number', match ? String(match.number) : '');
+            // head_sha is the commit the PR's plan was actually computed
+            // against — used below to confirm the downloaded plan really
+            // was computed from the code that merged, not from an earlier
+            // commit that happened to share the same PR number (see
+            // "Verify plan integrity and provenance").
+            core.setOutput('head_sha', match ? match.head.sha : '');
             core.info(match
-              ? `Commit ${context.sha} -> PR #${match.number}`
+              ? `Commit ${context.sha} -> PR #${match.number} (head ${match.head.sha})`
               : `Commit ${context.sha} has no associated PR (direct push or workflow_dispatch)`);
 
       - name: Download plan artifact from previous workflow
@@ -330,6 +340,56 @@ jobs:
           path: ${{ matrix.working_directory }}
           if_no_artifact_found: warn
 
+      # Downloading the right artifact by name isn't the same as knowing
+      # it's the right artifact. Before this, terraform-apply.yaml downloaded
+      # tfplan-<account> and applied it with no check that it was ever
+      # computed from the code that actually merged, and no proof it wasn't
+      # substituted by anything with artifact-write scope. This step closes
+      # both gaps, and discards the plan (rather than failing the job
+      # outright) on any failure — a discarded plan just flows into the
+      # exact same "Check if plan was found" / "Refuse unreviewed apply"
+      # logic below that already handles a plan that was never uploaded at
+      # all, so every tier's existing fail-safe behavior (refuse on
+      # production, fall back to a fresh plan elsewhere) applies here too,
+      # with no new failure mode to reason about.
+      - name: Verify plan integrity and provenance
+        if: steps.download.outcome == 'success'
+        working-directory: ${{ matrix.working_directory }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          EXPECTED_SHA: ${{ steps.resolve-pr.outputs.head_sha }}
+        run: |
+          if [ ! -f tfplan.binary ]; then
+            exit 0 # nothing downloaded — "Check if plan was found" below handles this
+          fi
+
+          if [ ! -f tfplan.sha256 ] || [ ! -f tfplan.sha ]; then
+            echo "::warning::${{ matrix.account }}: reviewed plan has no hash/commit stamp (tfplan.sha / tfplan.sha256) — predates the 2026-08-27 integrity fix, or something stripped it. Discarding, not applying it unverified."
+            rm -f tfplan.binary tfplan.sha tfplan.sha256
+            exit 0
+          fi
+
+          if ! sha256sum -c tfplan.sha256; then
+            echo "::error::${{ matrix.account }}: reviewed plan failed its own recorded checksum. Discarding it rather than applying something that may have been tampered with, corrupted, or substituted."
+            rm -f tfplan.binary tfplan.sha tfplan.sha256
+            exit 0
+          fi
+
+          PLAN_SHA="$(cat tfplan.sha)"
+          if [ -z "$EXPECTED_SHA" ] || [ "$PLAN_SHA" != "$EXPECTED_SHA" ]; then
+            echo "::error::${{ matrix.account }}: reviewed plan was computed at commit $PLAN_SHA, but the merged PR's actual head is ${EXPECTED_SHA:-unknown}. The reviewed plan does not match the merged code — discarding it rather than applying a stale diff."
+            rm -f tfplan.binary tfplan.sha tfplan.sha256
+            exit 0
+          fi
+
+          if ! gh attestation verify tfplan.binary --repo "$GITHUB_REPOSITORY"; then
+            echo "::error::${{ matrix.account }}: reviewed plan has no valid build provenance attestation. Discarding it."
+            rm -f tfplan.binary tfplan.sha tfplan.sha256
+            exit 0
+          fi
+
+          echo "✅ Plan hash, commit stamp, and provenance attestation all verified for ${{ matrix.account }} (commit $PLAN_SHA)."
+
       - name: Check if plan was found
         id: check
         run: |
@@ -339,7 +399,7 @@ jobs:
             ls -la "${{ matrix.working_directory }}/tfplan.binary"
           else
             echo "plan_exists=false" >> $GITHUB_OUTPUT
-            echo "ℹ️ No reviewed plan found for ${{ matrix.account }}"
+            echo "ℹ️ No reviewed (and verified) plan found for ${{ matrix.account }}"
           fi
 
       # retention-days is 30, raised up from the original 5. Now that a
@@ -349,6 +409,10 @@ jobs:
       # right before someone's week off would expire its own plan and end
       # up blocking its own merge. Keep this the same as the two upload
       # steps over in terraform-plan.yaml, which also need to stay at 30.
+      #
+      # Only tfplan.binary is re-uploaded here, not tfplan.sha/.sha256 —
+      # verification already happened once, above, centrally for every
+      # account; apply-network and apply below just need the binary itself.
       - name: Upload plan artifact (if found)
         if: steps.check.outputs.plan_exists == 'true'
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1

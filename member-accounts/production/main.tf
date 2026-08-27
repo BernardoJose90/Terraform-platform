@@ -16,9 +16,7 @@ terraform {
   required_providers {
     aws = {
       source = "hashicorp/aws"
-      # Aligned with network (see member-accounts/network/main.tf). The
-      # lock file already resolves to 6.x; this just makes it explicit
-      # instead of silently floating on whatever ">= 5.83.0" resolves to.
+
       version = "~> 6.0"
     }
   }
@@ -31,7 +29,7 @@ terraform {
   }
 }
 
-# Provider for reading SSM from the management account (account ID only).
+# Provider for reading SSM parameters from the management account (account ID only).
 provider "aws" {
   alias  = "management"
   region = var.aws_region
@@ -40,31 +38,31 @@ provider "aws" {
   }
 }
 
+# This data source retrieves the production account ID from the SSM parameter store in the management account, 
+# allowing the production account to reference its own account ID for resource creation and access control.
 data "aws_ssm_parameter" "production_account_id" {
   provider = aws.management
   name     = "/organizations/accounts/production"
 }
 
-# Needed to construct the TGW spoke-wiring role ARN below.
+# This data source retrieves the network account ID from the SSM parameter store in the management account,
+# allowing the production account to reference the network account ID for assuming the TgwSpokeWiringProduction role and accessing the Transit Gateway (TGW) resources.
 data "aws_ssm_parameter" "network_account_id" {
   provider = aws.management
   name     = "/organizations/accounts/network"
 }
 
-# Main provider for the production account itself.
-# this provider is used for creating resources in the production account, such as VPCs, subnets, and route tables.
+
 # It is configured to only allow access to the production account ID retrieved from SSM.
+# This ensures that the production account can only create resources within its own account and cannot access resources in other accounts.
 provider "aws" {
   region              = var.aws_region
   allowed_account_ids = [data.aws_ssm_parameter.production_account_id.value]
 }
 
-# Assumes a role in the network account that's locked to just this
-# account's own route table plus "main" (modules/tgw-spoke-wiring-role) —
-# this account can never touch development's route table.
-
-# this provider is used for reading SSM parameters and creating resources in the network account, such as Transit Gateway route table associations and propagations.
+# This ensures that the production account can only create resources in the network account that are necessary for routing and attachment purposes, without having full access to the network account's resources.
 # It is configured to assume a role in the network account that allows access to the production account's route table and the main route table of the Transit Gateway (TGW).
+# assume_role block specifies the ARN of the role in the network account that allows the production account to wire itself into the Transit Gateway (TGW).
 provider "aws" {
   alias  = "network"
   region = var.aws_region
@@ -136,6 +134,13 @@ module "github-oidc-roles" {
   extra_assumable_role_arns = local.extra_assumable_role_arns
 
   permissions_boundary_arn = module.terraform_deploy_boundary.arn
+}
+
+module "deploy_role_alerts" {
+  source = "../../modules/deploy-role-alerts"
+
+  account_name = "production"
+  alert_email  = var.alert_email
 }
 
 # ============================================================
