@@ -41,6 +41,11 @@ permissions:
 env:
   TERRAFORM_VERSION: "1.11.4"
   AWS_REGION: "eu-west-2"
+  # modules/deploy-role-alerts' alert_email has no default, on purpose —
+  # needed here too: `terraform plan -destroy` still has to evaluate the
+  # full configuration graph (including the SNS subscription this feeds),
+  # so it fails on a required variable with no value just like a normal plan.
+  TF_VAR_alert_email: ${{ secrets.ALERT_EMAIL }}
 
 jobs:
   # ──────────────────────────────────────────────────────────────────────────────

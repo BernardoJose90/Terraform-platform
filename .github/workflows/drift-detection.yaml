@@ -40,6 +40,10 @@ concurrency:
 env:
   TERRAFORM_VERSION: "1.11.4"
   AWS_REGION: "eu-west-2"
+  # modules/deploy-role-alerts' alert_email has no default, on purpose —
+  # needed here so this workflow's real (non-saved-plan) `terraform plan`
+  # calls don't fail on a required variable with no value.
+  TF_VAR_alert_email: ${{ secrets.ALERT_EMAIL }}
 
 jobs:
   # ──────────────────────────────────────────────────────────────────────────────
