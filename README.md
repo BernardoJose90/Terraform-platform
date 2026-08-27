@@ -35,7 +35,7 @@
 
 This repository contains Terraform configurations for the **six member accounts** of a multi-account AWS Organization — the management account, AWS Organizations setup, and org-wide SCPs live in the companion [Terraform-Org](https://github.com/BernardoJose90/Terraform-Org) repo, which this repo depends on for account IDs (via SSM) and the OIDC trust foundation.
 
-- ✅ **No long-lived AWS credentials** — every account is reached via GitHub OIDC, no IAM access keys anywhere in CI
+- ✅ **No long-lived AWS credentials in CI** — every account is reached via GitHub OIDC, no IAM access keys in any workflow. The one exception anywhere in the estate is `BreakGlassAdmin`, a single IAM user whose key is held out-of-band (not in Terraform state) for one AWS-native limitation OIDC can't cover — see [Security Best Practices](#-security-best-practices)
 - ✅ **Delegated Identity Management** — IAM Identity Center (SSO) is administered from the `security` account (AWS's recommended delegated-admin pattern, not the management account itself)
 - ✅ **Cross-Account Deployment Roles** — a shared `github-oidc-roles` module gives every account its own scoped `TerraformDeploy`/`TerraformPlan` roles
 - ✅ **Isolated VPC Networks** with a hub-and-spoke Transit Gateway topology (`network` as hub, `production`/`development` as spokes)
@@ -226,7 +226,7 @@ backend "s3" {
 
 ## 🔄 CI/CD Pipeline
 
-Four workflows in [.github/workflows/](.github/workflows/), all authenticating via GitHub OIDC — no IAM access keys anywhere:
+Four workflows in [.github/workflows/](.github/workflows/), all authenticating via GitHub OIDC — no IAM access keys in any of them:
 
 | Workflow | Trigger | What it does |
 |---|---|---|
@@ -377,8 +377,8 @@ warning rather than hiding it.
 
 ### ✅ Implemented
 
-- **No long-lived credentials** — every account is reached via GitHub OIDC (`sts:AssumeRoleWithWebIdentity`), scoped to specific GitHub Environment subjects, no IAM access keys
-- **MFA-gated break-glass** — the management account can always assume any deploy role directly, but only with `aws:MultiFactorAuthPresent`
+- **No long-lived credentials in CI** — every account is reached via GitHub OIDC (`sts:AssumeRoleWithWebIdentity`), scoped to specific GitHub Environment subjects, no IAM access keys anywhere a workflow runs
+- **One documented break-glass exception** — `BreakGlassAdmin` (Terraform-Org's `platform/breakglass-user.tf`) is a single IAM user, MFA device enrolled by hand, key kept out-of-band in a password manager rather than Terraform state. It exists only because IAM Identity Center (SSO) sessions don't set `aws:MultiFactorAuthPresent`, so a native IAM user's MFA device is the only AWS-native way to satisfy every deploy role's MFA-gated break-glass condition (`aws:MultiFactorAuthPresent = true` on the `ManagementAccountBreakGlass`/root-account statement in each role's trust policy). No rotation schedule yet — see [scripts/breakglass-bootstrap.sh](scripts/breakglass-bootstrap.sh). Any use of it, and any assumption of a deploy role by anything other than GitHub OIDC, fires a CloudTrail-driven SNS alert (`modules/deploy-role-alerts`, and Terraform-Org's `platform/security-alerts.tf` for the management account) — added 2026-08 to close what used to be a silent path
 - **State isolation** — each account's role is scoped to only its own prefix in the shared state bucket, enforced by IAM condition, not just convention
 - **Branch protection** — `main` requires Checkov + validation + plan checks and an open PR before merge (`protect-main` ruleset)
 - **Automated security scanning** — Checkov on every PR, results surfaced as SARIF in the GitHub Security tab
@@ -388,11 +388,15 @@ warning rather than hiding it.
 - **SCPs at the org level** — enforced by [Terraform-Org](https://github.com/BernardoJose90/Terraform-Org), e.g. region restriction
 - **Groups over Users** — SSO permissions managed via groups, not individuals
 
+### 🚧 Added, not yet applied
+
+- **CloudTrail + EventBridge + SNS alerting** — `modules/deploy-role-alerts`, wired into every member account's `main.tf`, plus Terraform-Org's `platform/security-alerts.tf` for the management account and `organization/cloudtrail.tf` for the org trail. Fires on any assumption of a `TerraformDeploy` role by something other than GitHub Actions OIDC, and on any use of `BreakGlassAdmin`. Written 2026-08 but not yet applied — needs a real `alert_email` supplied (`TF_VAR_alert_email` / a repo secret, or a gitignored `*.auto.tfvars`) before it can plan cleanly
+
 ### 📋 Still Open
 
 - **Repo visibility** — currently public; planned to go private once the project is stable
-- **Dependabot security updates** — currently disabled (secret scanning is on; dependency auto-PRs are not)
-- **Automated Terraform tests** — no `.tftest.hcl` yet encoding intent (e.g. "the OIDC trust policy must never accept a ref-based fallback") as a check CI runs, rather than relying on a reviewer catching a regression by eye
+- **Terraform provider/module version updates** — Dependabot covers GitHub Actions (`.github/dependabot.yml`); Terraform provider and module version bumps are still manual
+- **Automated Terraform tests** — `.tftest.hcl` now exists for the OIDC trust-policy shape (see `modules/github-oidc-roles/tests/` and Terraform-Org's `platform/tests/`); coverage is deliberately narrow (the highest-value regression to catch, not every module) rather than exhaustive
 
 ---
 

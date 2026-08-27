@@ -53,16 +53,29 @@ jobs:
     timeout-minutes: 5
     steps:
       - name: Check confirm input matches exactly
+        # inputs.confirm is free-text (type: string), not a choice like
+        # inputs.tier below — substituting it straight into the run: block
+        # would let it be parsed as shell before bash ever sees the
+        # comparison. Routing it through env: instead means it's just a
+        # string value, never shell syntax, regardless of what's typed.
+        env:
+          CONFIRM: ${{ inputs.confirm }}
         run: |
-          if [ "${{ inputs.confirm }}" != "destroy-workloads" ]; then
+          if [ "$CONFIRM" != "destroy-workloads" ]; then
             echo "::error::Confirmation phrase did not match. Expected exactly 'destroy-workloads'. Aborting — nothing was touched."
             exit 1
           fi
           echo "Confirmation phrase matched."
 
       - name: Report requested tier
+        # inputs.tier is a `choice` input, so GitHub already restricts it to
+        # one of the three declared options — but routing it through env:
+        # anyway costs nothing and means this step doesn't rely on that
+        # constraint never changing to stay safe.
+        env:
+          TIER: ${{ inputs.tier }}
         run: |
-          echo "Requested tier: ${{ inputs.tier }}"
+          echo "Requested tier: $TIER"
           echo "  spokes             -> production, development"
           echo "  spokes-and-network -> + network"
           echo "  all                -> + monitoring, security, security_analytics"
