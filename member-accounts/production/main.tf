@@ -136,13 +136,6 @@ module "github-oidc-roles" {
   permissions_boundary_arn = module.terraform_deploy_boundary.arn
 }
 
-module "deploy_role_alerts" {
-  source = "../../modules/deploy-role-alerts"
-
-  account_name = "production"
-  alert_email  = var.alert_email
-}
-
 # ============================================================
 # PRODUCTION VPC — private only, no NAT/internet gateway of its own,
 # since outbound traffic goes through the network account instead. The
