@@ -408,15 +408,6 @@ jobs:
       contents: read
       pull-requests: write
       attestations: write
-    # Only needed here, not in validate-format's "Terraform Validate (all
-    # accounts)" step or terraform-apply.yaml: `terraform validate` doesn't
-    # fail on a required variable with no value, but `terraform plan` does
-    # (same reasoning Terraform-Org's terraform.yaml already documents for
-    # its own TF_VAR_account_emails), and terraform-apply.yaml applies the
-    # plan FILE this job produces rather than re-planning — the value is
-    # already baked into tfplan.binary by the time apply runs.
-    env:
-      TF_VAR_alert_email: ${{ secrets.ALERT_EMAIL }}
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.discover-accounts.outputs.matrix) }}

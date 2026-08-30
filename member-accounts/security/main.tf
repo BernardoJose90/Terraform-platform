@@ -72,10 +72,3 @@ module "github-oidc-roles" {
 
   permissions_boundary_arn = module.terraform_deploy_boundary.arn
 }
-
-module "deploy_role_alerts" {
-  source = "../../modules/deploy-role-alerts"
-
-  account_name = "security"
-  alert_email  = var.alert_email
-}
