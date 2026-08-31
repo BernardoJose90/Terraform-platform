@@ -364,8 +364,8 @@ choice rather than a hard technical constraint — override it deliberately if
 a run genuinely needs to revoke assignments too.
 
 **A caveat worth understanding before running either tool:** both use
-`-target` (this repo's pinned Terraform version, `~> 1.11.0`, has no
-`-exclude` flag) to select "everything except the excluded set." `-target`
+`-target` (this repo's Terraform version — `>= 1.11.0`, pinned to `1.11.4`
+in `.terraform-version` — has no `-exclude` flag) to select "everything except the excluded set." `-target`
 updates state but not the `.tf` config, so a plain `terraform plan` run
 immediately after a targeted destroy will show every destroyed resource as
 "to add" again — expected, not a bug, and both tools print it as a loud
