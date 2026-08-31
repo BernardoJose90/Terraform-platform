@@ -173,7 +173,7 @@ jobs:
 
       - name: Terraform Init
         working-directory: ${{ matrix.working_directory }}
-        run: terraform init -input=false
+        run: terraform init -input=false -lockfile=readonly
 
       - name: Plan destroy (targeted, excluding module.github-oidc-roles)
         id: plan
@@ -268,7 +268,7 @@ jobs:
 
       - name: Terraform Init
         working-directory: ${{ matrix.working_directory }}
-        run: terraform init -input=false
+        run: terraform init -input=false -lockfile=readonly
 
       - name: Plan destroy (targeted)
         id: plan
@@ -366,7 +366,7 @@ jobs:
 
       - name: Terraform Init
         working-directory: ${{ matrix.working_directory }}
-        run: terraform init -input=false
+        run: terraform init -input=false -lockfile=readonly
 
       - name: Plan destroy (targeted)
         id: plan

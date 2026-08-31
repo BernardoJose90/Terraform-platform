@@ -32,7 +32,13 @@ permissions:
 jobs:
   diagnose:
     name: Diagnose Apply Failure
-    if: github.event.workflow_run.conclusion == 'failure'
+    # Same-repo gate, matching diagnose.yml. "Terraform Apply" only triggers
+    # on push to main / workflow_dispatch, which a fork can't do — so in
+    # practice head_repository is always this repo here — but this keeps the
+    # paid API call and PR-comment step explicitly fork-proof either way.
+    if: >-
+      github.event.workflow_run.conclusion == 'failure' &&
+      github.event.workflow_run.head_repository.full_name == github.repository
     runs-on: ubuntu-latest
     timeout-minutes: 10
     steps:

@@ -167,6 +167,37 @@ jobs:
             exit 0
           fi
 
+          # Repo-wide files that change how EVERY account plans or gets
+          # scanned, but live outside modules/ and member-accounts/ so the
+          # diffs above miss them entirely. Without this, a PR that only
+          # bumps the Terraform version in the plan/apply workflows, edits
+          # the Checkov policy, or touches .terraform-version / the root
+          # provider config would pass Validate & Security Scan and merge
+          # green having never planned a single account. Same "can't map to
+          # one account, so plan them all" logic as modules/ above.
+          #
+          #   .github/workflows/terraform-{plan,apply}.yaml — carry the
+          #     authoritative TERRAFORM_VERSION and the plan/apply logic
+          #   .checkov.yaml                — the security-scan policy
+          #   .terraform-version           — Terraform version pin
+          #   providers.tf / .terraform.lock.hcl — root provider config
+          CHANGED_GLOBAL=$(git diff --name-only origin/main...HEAD -- \
+            .github/workflows/terraform-plan.yaml \
+            .github/workflows/terraform-apply.yaml \
+            .checkov.yaml \
+            .terraform-version \
+            providers.tf \
+            .terraform.lock.hcl || echo "")
+
+          if [ -n "$CHANGED_GLOBAL" ]; then
+            echo "Changed repo-wide files:"
+            echo "$CHANGED_GLOBAL"
+            echo "-> treating every discovered account as changed"
+            echo "changed_accounts=ALL" >> "$GITHUB_OUTPUT"
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           # Get list of changed files in member-accounts/ compared to base branch
           CHANGED_FILES=$(git diff --name-only origin/main...HEAD -- member-accounts/ || echo "")
 
@@ -242,7 +273,7 @@ jobs:
         run: |
           for dir in member-accounts/*/; do
             echo "Validating $dir..."
-            ( cd "$dir" && terraform init -backend=false && terraform validate )
+            ( cd "$dir" && terraform init -backend=false -lockfile=readonly && terraform validate )
           done
 
   # ──────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -430,7 +461,7 @@ jobs:
 
       - name: Terraform Init
         working-directory: ${{ matrix.working_directory }}
-        run: terraform init -input=false
+        run: terraform init -input=false -lockfile=readonly
 
 
       - name: Terraform Plan
@@ -710,7 +741,7 @@ jobs:
 
       - name: Terraform Init
         working-directory: ${{ matrix.working_directory }}
-        run: terraform init -input=false
+        run: terraform init -input=false -lockfile=readonly
 
       - name: Convert plan to JSON
         working-directory: ${{ matrix.working_directory }}
