@@ -465,7 +465,7 @@ jobs:
 
       - name: Terraform Init
         working-directory: member-accounts/network
-        run: terraform init -input=false
+        run: terraform init -input=false -lockfile=readonly
 
     # needs.resolve-plan-run.outputs.plan_exists isn't usable here.
     # resolve-plan-run is a matrix job, so GitHub only keeps the output
@@ -522,37 +522,28 @@ jobs:
           echo "📂 Working directory: member-accounts/network"
           echo ""
 
-          # This retries on two things: IAM eventual consistency
-          # (AccessDeniedException) and a resource that AWS accepted but
-          # hasn't actually finished settling into yet (IncorrectState —
-          # e.g. attaching a VPC to a Transit Gateway that's technically
-          # "created" but still short of "available"; modules/tgw now
-          # waits for that itself, this is just a backstop for whatever it
-          # doesn't cover). Neither of these means AWS state actually
-          # changed, so recomputing and reapplying is safe. Not a blind
-          # wait — AWS's own SDK reference docs explicitly say
-          # AccessDeniedException is non-retryable at the API/provider
-          # layer (grouped alongside ValidationException and
-          # ResourceNotFoundException), meaning the SDK itself will never
-          # retry it automatically. So retrying the whole apply is the
-          # only layer left where this can be handled. It costs nothing
-          # when there's no race: the vast majority of applies succeed on
-          # the first attempt, with no delay at all — unlike a blind fixed
-          # time_sleep, which would pause every apply whether or not a
-          # race was actually happening.
+          # IAM eventual consistency (AccessDeniedException) and a resource
+          # AWS accepted but hasn't finished settling into its final state
+          # (IncorrectState — e.g. attaching a VPC to a Transit Gateway
+          # that's "created" but not yet "available"; modules/tgw waits for
+          # that itself, this is just a backstop) are transient: neither
+          # means AWS state actually changed, so re-applying the SAME
+          # reviewed plan after a short wait is safe. AWS's own SDK docs
+          # class AccessDeniedException as non-retryable at the API layer,
+          # so retrying the whole apply is the only place left to handle
+          # it. It costs nothing when there's no race — the first attempt
+          # runs with no delay.
           #
-          # "Saved plan is stale" is deliberately NOT retried here, even
-          # though a fresh plan would clear it. It means an earlier
-          # attempt in THIS SAME LOOP already partially applied (e.g.
-          # destroyed several resources before hitting one AccessDenied)
-          # — so the only way to retry is to compute a brand new plan, and
-          # that new plan would never have gone through PR review.
-          # Auto-applying it would silently defeat the entire "production
-          # only applies a reviewed plan" rule this workflow exists to
-          # enforce (see the file header). So instead this fails loudly
-          # and leaves recovery to a human: check what actually landed in
-          # AWS, then get a fresh plan through the normal reviewed path (a
-          # new PR, or workflow_dispatch).
+          # The retry re-applies the existing tfplan.binary UNCHANGED. It
+          # never runs `terraform plan` again. A plan computed here would
+          # not have gone through PR review, and auto-applying it would
+          # defeat the "production only applies a reviewed plan" rule this
+          # workflow exists to enforce (see the file header). If an earlier
+          # attempt in this loop already partially applied, Terraform
+          # rejects the saved plan as "Saved plan is stale" on the next
+          # attempt — caught below, where the step fails loudly and leaves
+          # recovery to a human (check AWS state, then get a fresh plan
+          # through a new PR or workflow_dispatch).
           MAX_ATTEMPTS=3
           attempt=1
           while true; do
@@ -574,7 +565,7 @@ jobs:
             fi
 
             if grep -qE "Saved plan is stale" apply_output.txt; then
-              echo "::error::Plan went stale mid-apply — an earlier attempt in this run already made partial changes to network. Refusing to auto-replan and apply an unreviewed plan to production. Check the account's actual state in AWS, then get a fresh plan through the normal reviewed path (a new PR, or workflow_dispatch) before continuing."
+              echo "::error::Plan went stale mid-apply — an earlier attempt in this run already made partial changes to network. The reviewed plan no longer matches reality, and this workflow will not compute a replacement. Check the account's actual state in AWS, then get a fresh plan through the normal reviewed path (a new PR, or workflow_dispatch) before continuing."
               exit "$EXIT_CODE"
             fi
 
@@ -584,9 +575,8 @@ jobs:
             fi
 
             WAIT=$((attempt * 10))
-            echo "⏳ Retryable failure detected. Waiting ${WAIT}s, then recomputing and retrying..."
+            echo "⏳ Retryable failure detected. Waiting ${WAIT}s, then re-applying the same reviewed plan..."
             sleep "$WAIT"
-            terraform plan -no-color -input=false -lock-timeout=60s -out=tfplan.binary
             attempt=$((attempt + 1))
           done
 
@@ -604,11 +594,11 @@ jobs:
           echo ""
           terraform plan -no-color -input=false -lock-timeout=60s -out=tfplan.binary
 
-          # See the "Terraform Apply (reviewed plan)" step above for why
-          # this retries specifically on AccessDeniedException / "Saved
-          # plan is stale" / IncorrectState, and why it recomputes before
-          # every retry (not just this first plan) once this loop has
-          # partial progress of its own to worry about.
+          # See the "Terraform Apply (reviewed plan)" step above. This
+          # retries the plan computed once at the top of this step — it
+          # never re-plans inside the loop. If a partial apply makes the
+          # saved plan stale, the next attempt exits loudly rather than
+          # computing and applying something new.
           MAX_ATTEMPTS=3
           attempt=1
           while true; do
@@ -625,15 +615,19 @@ jobs:
               exit "$EXIT_CODE"
             fi
 
-            if ! grep -qE "AccessDeniedException|Saved plan is stale|IncorrectState" apply_output.txt; then
+            if grep -qE "Saved plan is stale" apply_output.txt; then
+              echo "::error::Plan went stale mid-apply — an earlier attempt already made partial changes. Refusing to auto-replan. Check the account's actual state in AWS before re-running this workflow."
+              exit "$EXIT_CODE"
+            fi
+
+            if ! grep -qE "AccessDeniedException|IncorrectState" apply_output.txt; then
               echo "❌ Failure doesn't match a known retryable pattern — not retrying."
               exit "$EXIT_CODE"
             fi
 
             WAIT=$((attempt * 10))
-            echo "⏳ Retryable failure detected. Waiting ${WAIT}s, then recomputing and retrying..."
+            echo "⏳ Retryable failure detected. Waiting ${WAIT}s, then re-applying the same plan..."
             sleep "$WAIT"
-            terraform plan -no-color -input=false -lock-timeout=60s -out=tfplan.binary
             attempt=$((attempt + 1))
           done
 
@@ -723,7 +717,7 @@ jobs:
 
       - name: Terraform Init
         working-directory: ${{ matrix.working_directory }}
-        run: terraform init -input=false
+        run: terraform init -input=false -lockfile=readonly
 
       # needs.resolve-plan-run.outputs.plan_exists isn't usable here either
       # — resolve-plan-run is a matrix job, so GitHub only keeps the output
@@ -782,37 +776,28 @@ jobs:
           echo "🏷️ Environment: ${{ matrix.environment }}"
           echo ""
 
-          # This retries on two things: IAM eventual consistency
-          # (AccessDeniedException) and a resource that AWS accepted but
-          # hasn't actually finished settling into yet (IncorrectState —
-          # e.g. attaching a VPC to a Transit Gateway that's technically
-          # "created" but still short of "available"; modules/tgw now
-          # waits for that itself, this is just a backstop for whatever it
-          # doesn't cover). Neither of these means AWS state actually
-          # changed, so recomputing and reapplying is safe. Not a blind
-          # wait — AWS's own SDK reference docs explicitly say
-          # AccessDeniedException is non-retryable at the API/provider
-          # layer (grouped alongside ValidationException and
-          # ResourceNotFoundException), meaning the SDK itself will never
-          # retry it automatically. So retrying the whole apply is the
-          # only layer left where this can be handled. It costs nothing
-          # when there's no race: the vast majority of applies succeed on
-          # the first attempt, with no delay at all — unlike a blind fixed
-          # time_sleep, which would pause every apply whether or not a
-          # race was actually happening.
+          # IAM eventual consistency (AccessDeniedException) and a resource
+          # AWS accepted but hasn't finished settling into its final state
+          # (IncorrectState — e.g. attaching a VPC to a Transit Gateway
+          # that's "created" but not yet "available"; modules/tgw waits for
+          # that itself, this is just a backstop) are transient: neither
+          # means AWS state actually changed, so re-applying the SAME
+          # reviewed plan after a short wait is safe. AWS's own SDK docs
+          # class AccessDeniedException as non-retryable at the API layer,
+          # so retrying the whole apply is the only place left to handle
+          # it. It costs nothing when there's no race — the first attempt
+          # runs with no delay.
           #
-          # "Saved plan is stale" is deliberately NOT retried here, even
-          # though a fresh plan would clear it. It means an earlier
-          # attempt in THIS SAME LOOP already partially applied (e.g.
-          # destroyed several resources before hitting one AccessDenied)
-          # — so the only way to retry is to compute a brand new plan, and
-          # that new plan would never have gone through PR review.
-          # Auto-applying it would silently defeat the entire "production
-          # only applies a reviewed plan" rule this workflow exists to
-          # enforce (see the file header). So instead this fails loudly
-          # and leaves recovery to a human: check what actually landed in
-          # AWS, then get a fresh plan through the normal reviewed path (a
-          # new PR, or workflow_dispatch).
+          # The retry re-applies the existing tfplan.binary UNCHANGED. It
+          # never runs `terraform plan` again. A plan computed here would
+          # not have gone through PR review, and auto-applying it would
+          # defeat the "production only applies a reviewed plan" rule this
+          # workflow exists to enforce (see the file header). If an earlier
+          # attempt in this loop already partially applied, Terraform
+          # rejects the saved plan as "Saved plan is stale" on the next
+          # attempt — caught below, where the step fails loudly and leaves
+          # recovery to a human (check AWS state, then get a fresh plan
+          # through a new PR or workflow_dispatch).
           MAX_ATTEMPTS=3
           attempt=1
           while true; do
@@ -834,7 +819,7 @@ jobs:
             fi
 
             if grep -qE "Saved plan is stale" apply_output.txt; then
-              echo "::error::Plan went stale mid-apply — an earlier attempt in this run already made partial changes to ${{ matrix.account }}. Refusing to auto-replan and apply an unreviewed plan to production. Check the account's actual state in AWS, then get a fresh plan through the normal reviewed path (a new PR, or workflow_dispatch) before continuing."
+              echo "::error::Plan went stale mid-apply — an earlier attempt in this run already made partial changes to ${{ matrix.account }}. The reviewed plan no longer matches reality, and this workflow will not compute a replacement. Check the account's actual state in AWS, then get a fresh plan through the normal reviewed path (a new PR, or workflow_dispatch) before continuing."
               exit "$EXIT_CODE"
             fi
 
@@ -844,9 +829,8 @@ jobs:
             fi
 
             WAIT=$((attempt * 10))
-            echo "⏳ Retryable failure detected. Waiting ${WAIT}s, then recomputing and retrying..."
+            echo "⏳ Retryable failure detected. Waiting ${WAIT}s, then re-applying the same reviewed plan..."
             sleep "$WAIT"
-            terraform plan -no-color -input=false -lock-timeout=60s -out=tfplan.binary
             attempt=$((attempt + 1))
           done
 
@@ -863,11 +847,11 @@ jobs:
           echo ""
           terraform plan -no-color -input=false -lock-timeout=60s -out=tfplan.binary
 
-          # See the "Terraform Apply (reviewed plan)" step above for why
-          # this retries specifically on AccessDeniedException / "Saved
-          # plan is stale" / IncorrectState, and why it recomputes before
-          # every retry (not just this first plan) once this loop has
-          # partial progress of its own to worry about.
+          # See the "Terraform Apply (reviewed plan)" step above. This
+          # retries the plan computed once at the top of this step — it
+          # never re-plans inside the loop. If a partial apply makes the
+          # saved plan stale, the next attempt exits loudly rather than
+          # computing and applying something new.
           MAX_ATTEMPTS=3
           attempt=1
           while true; do
@@ -884,15 +868,19 @@ jobs:
               exit "$EXIT_CODE"
             fi
 
-            if ! grep -qE "AccessDeniedException|Saved plan is stale|IncorrectState" apply_output.txt; then
+            if grep -qE "Saved plan is stale" apply_output.txt; then
+              echo "::error::Plan went stale mid-apply — an earlier attempt already made partial changes. Refusing to auto-replan. Check the account's actual state in AWS before re-running this workflow."
+              exit "$EXIT_CODE"
+            fi
+
+            if ! grep -qE "AccessDeniedException|IncorrectState" apply_output.txt; then
               echo "❌ Failure doesn't match a known retryable pattern — not retrying."
               exit "$EXIT_CODE"
             fi
 
             WAIT=$((attempt * 10))
-            echo "⏳ Retryable failure detected. Waiting ${WAIT}s, then recomputing and retrying..."
+            echo "⏳ Retryable failure detected. Waiting ${WAIT}s, then re-applying the same plan..."
             sleep "$WAIT"
-            terraform plan -no-color -input=false -lock-timeout=60s -out=tfplan.binary
             attempt=$((attempt + 1))
           done
 

@@ -167,6 +167,37 @@ jobs:
             exit 0
           fi
 
+          # Repo-wide files that change how EVERY account plans or gets
+          # scanned, but live outside modules/ and member-accounts/ so the
+          # diffs above miss them entirely. Without this, a PR that only
+          # bumps the Terraform version in the plan/apply workflows, edits
+          # the Checkov policy, or touches .terraform-version / the root
+          # provider config would pass Validate & Security Scan and merge
+          # green having never planned a single account. Same "can't map to
+          # one account, so plan them all" logic as modules/ above.
+          #
+          #   .github/workflows/terraform-{plan,apply}.yaml — carry the
+          #     authoritative TERRAFORM_VERSION and the plan/apply logic
+          #   .checkov.yaml                — the security-scan policy
+          #   .terraform-version           — Terraform version pin
+          #   providers.tf / .terraform.lock.hcl — root provider config
+          CHANGED_GLOBAL=$(git diff --name-only origin/main...HEAD -- \
+            .github/workflows/terraform-plan.yaml \
+            .github/workflows/terraform-apply.yaml \
+            .checkov.yaml \
+            .terraform-version \
+            providers.tf \
+            .terraform.lock.hcl || echo "")
+
+          if [ -n "$CHANGED_GLOBAL" ]; then
+            echo "Changed repo-wide files:"
+            echo "$CHANGED_GLOBAL"
+            echo "-> treating every discovered account as changed"
+            echo "changed_accounts=ALL" >> "$GITHUB_OUTPUT"
+            echo "has_changes=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
           # Get list of changed files in member-accounts/ compared to base branch
           CHANGED_FILES=$(git diff --name-only origin/main...HEAD -- member-accounts/ || echo "")
 
@@ -242,8 +273,31 @@ jobs:
         run: |
           for dir in member-accounts/*/; do
             echo "Validating $dir..."
-            ( cd "$dir" && terraform init -backend=false && terraform validate )
+            ( cd "$dir" && terraform init -backend=false -lockfile=readonly && terraform validate )
           done
+
+      # Runs `terraform test` for any module that ships a tests/ directory
+      # (currently modules/github-oidc-roles/tests/trust_policy.tftest.hcl).
+      # -backend=false keeps it self-contained; same fork gate as validate
+      # above, since `terraform init` here fetches the providers named by
+      # the module's own required_providers block. No -lockfile=readonly:
+      # module lock files are deliberately not committed (see .gitignore),
+      # so the module resolves providers from its version constraints at
+      # test time. A module with no tests/ dir is skipped, so adding the
+      # first test to another module wires it in automatically.
+      - name: Module tests (terraform test)
+        if: needs.detect-changes.outputs.tf_changed == 'true' && needs.detect-changes.outputs.same_repo == 'true'
+        run: |
+          ran_any=false
+          for d in modules/*/; do
+            [ -d "${d}tests" ] || continue
+            ran_any=true
+            echo "Testing ${d}..."
+            ( cd "$d" && terraform init -backend=false && terraform test )
+          done
+          if [ "$ran_any" = "false" ]; then
+            echo "No modules/*/tests/ directories found — nothing to test."
+          fi
 
   # ──────────────────────────────────────────────────────────────────────────────────────────────────────────
   # 3. Security Scan (Checkov)
@@ -430,7 +484,7 @@ jobs:
 
       - name: Terraform Init
         working-directory: ${{ matrix.working_directory }}
-        run: terraform init -input=false
+        run: terraform init -input=false -lockfile=readonly
 
 
       - name: Terraform Plan
@@ -710,7 +764,7 @@ jobs:
 
       - name: Terraform Init
         working-directory: ${{ matrix.working_directory }}
-        run: terraform init -input=false
+        run: terraform init -input=false -lockfile=readonly
 
       - name: Convert plan to JSON
         working-directory: ${{ matrix.working_directory }}
