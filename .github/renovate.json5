@@ -54,6 +54,20 @@
       schedule: ['before 6am on monday'],
       labels: ['dependencies', 'terraform'],
     },
+    {
+      // NEVER bump the Terraform CLI itself. CI's Terraform version comes
+      // from `TERRAFORM_VERSION` hard-coded in the workflow YAML, which
+      // Renovate can't see — so a core bump gives a PR where
+      // .terraform-version / required_version say one version and CI still
+      // runs another, and CI fails on its own PR. (This is exactly what the
+      // "Update dependency hashicorp/terraform to v1.16.0" PR did.)
+      //
+      // A Terraform CLI upgrade stays a deliberate manual change: bump
+      // TERRAFORM_VERSION in every workflow file, .terraform-version, and
+      // every required_version constraint together, then test.
+      matchDepNames: ['terraform', 'hashicorp/terraform'],
+      enabled: false,
+    },
   ],
 
   // Keep the number of open update PRs low so they actually get read.
