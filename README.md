@@ -2,7 +2,7 @@
 
 > A production-ready, multi-account AWS infrastructure managed with Terraform, featuring centralized identity management, cross-account IAM roles, and isolated VPC environments.
 
-![Terraform](https://img.shields.io/badge/Terraform-1.11.4-623CE4?style=flat&logo=terraform)
+![Terraform](https://img.shields.io/badge/Terraform-1.11-623CE4?style=flat&logo=terraform)
 ![AWS](https://img.shields.io/badge/AWS-EU--West--2-FF9900?style=flat&logo=amazon-aws)
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![Status](https://img.shields.io/badge/Status-Production_Ready-brightgreen)
@@ -121,7 +121,7 @@ Before you begin, ensure you have:
 
 | Tool | Version | Installation |
 |------|---------|--------------|
-| **Terraform** | 1.11.4 (pinned in `.terraform-version`) | [Install Terraform](https://developer.hashicorp.com/terraform/downloads) |
+| **Terraform** | exact version in [`.terraform-version`](.terraform-version) (the single source CI reads); `required_version` is `>= 1.11.0` | [Install Terraform](https://developer.hashicorp.com/terraform/downloads) |
 | **AWS CLI** | >= 2.0 | [Install AWS CLI](https://aws.amazon.com/cli/) |
 | **Git** | Latest | [Install Git](https://git-scm.com/downloads) |
 
@@ -364,8 +364,8 @@ choice rather than a hard technical constraint — override it deliberately if
 a run genuinely needs to revoke assignments too.
 
 **A caveat worth understanding before running either tool:** both use
-`-target` (this repo's Terraform version — `>= 1.11.0`, pinned to `1.11.4`
-in `.terraform-version` — has no `-exclude` flag) to select "everything except the excluded set." `-target`
+`-target` (this repo's Terraform version — `required_version >= 1.11.0`, exact
+pin in `.terraform-version` — has no `-exclude` flag) to select "everything except the excluded set." `-target`
 updates state but not the `.tf` config, so a plain `terraform plan` run
 immediately after a targeted destroy will show every destroyed resource as
 "to add" again — expected, not a bug, and both tools print it as a loud
@@ -395,8 +395,8 @@ warning rather than hiding it.
 ### 📋 Still Open
 
 - **Repo visibility** — currently public; planned to go private once the project is stable
-- **Terraform provider/module version updates** — Dependabot covers GitHub Actions (`.github/dependabot.yml`); Terraform provider and module version bumps are still manual
-- **Automated Terraform tests** — `.tftest.hcl` now exists for the OIDC trust-policy shape (see `modules/github-oidc-roles/tests/` and Terraform-Org's `platform/tests/`); coverage is deliberately narrow (the highest-value regression to catch, not every module) rather than exhaustive. Not yet wired into CI — the one test still needs an offline `provider "aws"` block before it can run without credentials on a runner
+- **Terraform provider/module version updates** — Renovate (`.github/renovate.json5`, `enabledManagers: ['terraform']`) opens one grouped PR per week for Terraform provider + module updates (lockfile-only, within each `providers.tf`'s existing `~> 6.0` range) and runs weekly `lockFileMaintenance`; Dependabot (`.github/dependabot.yml`) still owns the GitHub Actions SHA pins. The Terraform **CLI** version (`.terraform-version`) is deliberately excluded from Renovate — a CLI bump stays a manual, coordinated change across `.terraform-version` and every `required_version` constraint.
+- **Automated Terraform tests** — one `.tftest.hcl` exists, for the OIDC trust-policy shape (`modules/github-oidc-roles/tests/`); coverage is deliberately narrow (the highest-value regression to catch, not every module). Not yet wired into CI — it still needs an offline `provider "aws"` block so it can run without credentials on a runner. Terraform-Org has no Terraform tests.
 
 ---
 
