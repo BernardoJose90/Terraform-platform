@@ -396,7 +396,7 @@ warning rather than hiding it.
 
 - **Repo visibility** — currently public; planned to go private once the project is stable
 - **Terraform provider/module version updates** — Dependabot covers GitHub Actions (`.github/dependabot.yml`); Terraform provider and module version bumps are still manual
-- **Automated Terraform tests** — `.tftest.hcl` exists for the OIDC trust-policy shape (see `modules/github-oidc-roles/tests/` and Terraform-Org's `platform/tests/`) and runs in CI via the "Module tests (terraform test)" step in `terraform-plan.yaml`, which `terraform test`s every `modules/*/` that ships a `tests/` directory. Coverage is deliberately narrow (the highest-value regression to catch, not every module) rather than exhaustive
+- **Automated Terraform tests** — `.tftest.hcl` now exists for the OIDC trust-policy shape (see `modules/github-oidc-roles/tests/` and Terraform-Org's `platform/tests/`); coverage is deliberately narrow (the highest-value regression to catch, not every module) rather than exhaustive. Not yet wired into CI — the one test still needs an offline `provider "aws"` block before it can run without credentials on a runner
 
 ---
 

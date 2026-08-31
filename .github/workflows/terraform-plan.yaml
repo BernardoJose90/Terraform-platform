@@ -276,29 +276,6 @@ jobs:
             ( cd "$dir" && terraform init -backend=false -lockfile=readonly && terraform validate )
           done
 
-      # Runs `terraform test` for any module that ships a tests/ directory
-      # (currently modules/github-oidc-roles/tests/trust_policy.tftest.hcl).
-      # -backend=false keeps it self-contained; same fork gate as validate
-      # above, since `terraform init` here fetches the providers named by
-      # the module's own required_providers block. No -lockfile=readonly:
-      # module lock files are deliberately not committed (see .gitignore),
-      # so the module resolves providers from its version constraints at
-      # test time. A module with no tests/ dir is skipped, so adding the
-      # first test to another module wires it in automatically.
-      - name: Module tests (terraform test)
-        if: needs.detect-changes.outputs.tf_changed == 'true' && needs.detect-changes.outputs.same_repo == 'true'
-        run: |
-          ran_any=false
-          for d in modules/*/; do
-            [ -d "${d}tests" ] || continue
-            ran_any=true
-            echo "Testing ${d}..."
-            ( cd "$d" && terraform init -backend=false && terraform test )
-          done
-          if [ "$ran_any" = "false" ]; then
-            echo "No modules/*/tests/ directories found — nothing to test."
-          fi
-
   # ──────────────────────────────────────────────────────────────────────────────────────────────────────────
   # 3. Security Scan (Checkov)
   # ──────────────────────────────────────────────────────────────────────────────────────────────────────────
