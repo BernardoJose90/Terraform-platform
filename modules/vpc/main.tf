@@ -11,7 +11,7 @@ terraform {
   # variable, and Terraform only gained the ability to do that in 1.9. On
   # an older version, those blocks fail outright with "Invalid reference in
   # variable validation".
-  required_version = "~> 1.11.0"
+  required_version = "~> 1.16.0"
 
   required_providers {
     aws = {
