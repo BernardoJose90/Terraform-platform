@@ -46,3 +46,17 @@ variable "networking_enabled" {
   type        = bool
   default     = true
 }
+
+variable "tgw_attachment_enabled" {
+  description = <<-EOT
+    Wire this account's VPC into the network account's Transit Gateway.
+    Independent of networking_enabled (which gates the VPC itself).
+
+    Set false to run development as a standalone, fully isolated VPC:
+    no TGW attachment, no cross-account routing, no dependency on the
+    network account being applied. The attachment/routing code stays in
+    main.tf — flip back to true and re-apply to reattach.
+  EOT
+  type        = bool
+  default     = true
+}

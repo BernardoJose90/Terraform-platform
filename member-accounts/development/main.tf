@@ -55,22 +55,37 @@ provider "aws" {
 # account's own route table plus "main" (modules/tgw-spoke-wiring-role) —
 # this account can never touch production's route table. See
 # member-accounts/network/main.tf for the other half of this setup.
+#
+# The assume_role is only present while wired into the TGW. Detached
+# (local.tgw_wiring = false) the provider falls back to this account's own
+# credentials and nothing ever uses it — which is what lets an isolated
+# development VPC run with no dependency on the network account at all,
+# and without every plan trying to assume a cross-account role it doesn't
+# need.
 provider "aws" {
   alias  = "network"
   region = var.aws_region
-  assume_role {
-    role_arn = "arn:aws:iam::${nonsensitive(data.aws_ssm_parameter.network_account_id.value)}:role/TgwSpokeWiringDevelopment"
+
+  dynamic "assume_role" {
+    for_each = local.tgw_wiring ? [1] : []
+    content {
+      role_arn = "arn:aws:iam::${nonsensitive(data.aws_ssm_parameter.network_account_id.value)}:role/TgwSpokeWiringDevelopment"
+    }
   }
 }
 
-# TGW ID published by the network account.
+# TGW plumbing published by the network account. Only read when this
+# account is actually wired into the TGW (local.tgw_wiring) — a standalone
+# isolated VPC has no need for any of it and shouldn't depend on the
+# network account being up.
 data "aws_ssm_parameter" "tgw_id" {
+  count    = local.tgw_wiring ? 1 : 0
   provider = aws.network
   name     = "/transit-gateway/id"
 }
 
-# TGW_attachement route table ID published by the network account.
 data "aws_ssm_parameter" "dev_spoke_route_table_id" {
+  count    = local.tgw_wiring ? 1 : 0
   provider = aws.network
   name     = "/transit-gateway/route_table_ids/dev_spoke"
 }
@@ -79,13 +94,24 @@ data "aws_ssm_parameter" "dev_spoke_route_table_id" {
 # write access to — used only so each can publish its own return route,
 # never to reach into the other's own table.
 data "aws_ssm_parameter" "main_route_table_id" {
+  count    = local.tgw_wiring ? 1 : 0
   provider = aws.network
   name     = "/transit-gateway/route_table_ids/main"
 }
 
-# Defined once, referenced by both modules below, so they can never
-# silently drift apart the way two hand-typed copies could.
 locals {
+  # The VPC (var.networking_enabled) and the TGW attachment
+  # (var.tgw_attachment_enabled) are gated separately, so development can
+  # run a standalone isolated VPC with no dependency on the network
+  # account. Everything that talks to the network account keys off this.
+  tgw_wiring = var.networking_enabled && var.tgw_attachment_enabled
+
+  # Defined once, referenced by both modules below, so they can never
+  # silently drift apart the way two hand-typed copies could. Kept
+  # unconditional on purpose: it only reads the network account ID from
+  # the management account (aws.management), not the TGW itself, and
+  # changing it would alter TerraformDeploy's permissions boundary — a
+  # separate, more involved change.
   extra_assumable_role_arns = [
     "arn:aws:iam::${nonsensitive(data.aws_ssm_parameter.network_account_id.value)}:role/TgwSpokeWiringDevelopment",
   ]
@@ -128,10 +154,10 @@ module "github-oidc-roles" {
 }
 
 # ============================================================
-# DEVELOPMENT VPC — private only, no NAT/internet gateway of its own,
-# since outbound traffic goes through the network account instead. The
-# catch-all route to the TGW is added further down, after the connection
-# to the TGW actually exists.
+# DEVELOPMENT VPC — private only. When wired to the TGW (tgw_attachment_
+# enabled = true) outbound traffic leaves via the network account and the
+# catch-all route is added further down. When detached, it's a fully
+# isolated VPC: no NAT, no IGW, no default route at all.
 # ============================================================
 module "vpc" {
   count = var.networking_enabled ? 1 : 0
@@ -150,24 +176,26 @@ module "vpc" {
   private_subnets = var.private_subnets
 
   enable_nat_gateway = false
-  tgw_id             = nonsensitive(data.aws_ssm_parameter.tgw_id.value)
+  # Set only while wired into the TGW. Null when detached — paired with
+  # allow_no_default_route below so the module permits a route-less VPC.
+  tgw_id                 = local.tgw_wiring ? nonsensitive(data.aws_ssm_parameter.tgw_id[0].value) : null
+  allow_no_default_route = !local.tgw_wiring
 
   tags = var.tags
 }
-/*
+
 # This account and network are in the same AWS Organization with sharing
 # turned on, so the TGW connection gets approved automatically — no
 # separate invitation step needed.
 module "tgw_attachment" {
-  count = var.networking_enabled ? 1 : 0
+  count = local.tgw_wiring ? 1 : 0
 
   source = "../../modules/tgw-attachment"
 
   name = "dev-spoke"
-  # This block turns on/off with the exact same condition as module.vpc
-  # above, so whenever it exists, the VPC definitely exists too — safe
-  # to reference module.vpc[0] below.
-  tgw_id     = nonsensitive(data.aws_ssm_parameter.tgw_id.value)
+  # local.tgw_wiring implies var.networking_enabled, so module.vpc[0]
+  # definitely exists whenever this block does — safe to reference below.
+  tgw_id     = nonsensitive(data.aws_ssm_parameter.tgw_id[0].value)
   vpc_id     = module.vpc[0].vpc_id
   subnet_ids = module.vpc[0].private_subnet_ids
 
@@ -184,30 +212,30 @@ module "tgw_attachment" {
 # here.
 # ============================================================
 resource "aws_ec2_transit_gateway_route_table_association" "this" {
-  count = var.networking_enabled ? 1 : 0
+  count = local.tgw_wiring ? 1 : 0
 
   provider = aws.network
 
   transit_gateway_attachment_id  = module.tgw_attachment[0].attachment_id
-  transit_gateway_route_table_id = nonsensitive(data.aws_ssm_parameter.dev_spoke_route_table_id.value)
+  transit_gateway_route_table_id = nonsensitive(data.aws_ssm_parameter.dev_spoke_route_table_id[0].value)
 }
 
 resource "aws_ec2_transit_gateway_route_table_propagation" "spoke" {
-  count = var.networking_enabled ? 1 : 0
+  count = local.tgw_wiring ? 1 : 0
 
   provider = aws.network
 
   transit_gateway_attachment_id  = module.tgw_attachment[0].attachment_id
-  transit_gateway_route_table_id = nonsensitive(data.aws_ssm_parameter.dev_spoke_route_table_id.value)
+  transit_gateway_route_table_id = nonsensitive(data.aws_ssm_parameter.dev_spoke_route_table_id[0].value)
 }
 
 resource "aws_ec2_transit_gateway_route_table_propagation" "main" {
-  count = var.networking_enabled ? 1 : 0
+  count = local.tgw_wiring ? 1 : 0
 
   provider = aws.network
 
   transit_gateway_attachment_id  = module.tgw_attachment[0].attachment_id
-  transit_gateway_route_table_id = nonsensitive(data.aws_ssm_parameter.main_route_table_id.value)
+  transit_gateway_route_table_id = nonsensitive(data.aws_ssm_parameter.main_route_table_id[0].value)
 }
 
 # ============================================================
@@ -223,18 +251,19 @@ resource "aws_ec2_transit_gateway_route_table_propagation" "main" {
 # keying off those directly would fail with "cannot be determined until
 # apply".
 # ============================================================
-/*
+
 resource "aws_route" "private_to_tgw" {
-  # Comes out empty when disabled — module.vpc doesn't exist then, so
-  # there's nothing to route from anyway.
-  for_each = var.networking_enabled ? { for idx, az in var.azs : az => idx } : {}
+  # Empty unless this account is wired into the TGW — an isolated VPC has
+  # no default route by design, and module.tgw_attachment doesn't exist
+  # then either.
+  for_each = local.tgw_wiring ? { for idx, az in var.azs : az => idx } : {}
 
   # Safe to reference module.vpc[0]/module.tgw_attachment[0] here: this
-  # whole resource is empty exactly when networking is off, so it never
-  # actually tries to look at either one when they don't exist.
+  # whole resource is empty exactly when the TGW wiring is off, so it
+  # never actually tries to look at either one when they don't exist.
   route_table_id         = module.vpc[0].private_route_table_ids[each.value]
   destination_cidr_block = "0.0.0.0/0"
-  transit_gateway_id     = nonsensitive(data.aws_ssm_parameter.tgw_id.value)
+  transit_gateway_id     = nonsensitive(data.aws_ssm_parameter.tgw_id[0].value)
 
   depends_on = [module.tgw_attachment]
 
@@ -245,4 +274,3 @@ resource "aws_route" "private_to_tgw" {
     }
   }
 }
-*/

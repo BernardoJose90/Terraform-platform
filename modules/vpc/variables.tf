@@ -99,13 +99,20 @@ variable "tgw_id" {
   }
 
   # This one's a policy choice, not a safety check: it insists every VPC
-  # from this module has some way out to the internet. That's true for all
-  # three accounts today, but it would get in the way of a VPC meant to be
-  # fully isolated on purpose. Delete this block if that's ever needed.
+  # from this module has some way out to the internet — unless the caller
+  # explicitly opts out with allow_no_default_route = true (a deliberately
+  # isolated VPC). True for network and production today; development sets
+  # the opt-out while it's temporarily detached from the Transit Gateway.
   validation {
-    condition     = var.tgw_id != null || var.enable_nat_gateway
-    error_message = "Set either tgw_id (spoke VPC) or enable_nat_gateway (egress VPC). Neither means private subnets have no default route to anywhere."
+    condition     = var.tgw_id != null || var.enable_nat_gateway || var.allow_no_default_route
+    error_message = "Set tgw_id (spoke VPC), enable_nat_gateway (egress VPC), or allow_no_default_route (deliberately isolated). Otherwise private subnets have no default route to anywhere."
   }
+}
+
+variable "allow_no_default_route" {
+  description = "Permit a VPC with no default route at all — no tgw_id, no NAT. For a deliberately isolated VPC (e.g. development while detached from the Transit Gateway). Leave false for a normal spoke or egress VPC."
+  type        = bool
+  default     = false
 }
 
 variable "tags" {
