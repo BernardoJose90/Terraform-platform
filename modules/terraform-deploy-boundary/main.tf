@@ -250,6 +250,27 @@ data "aws_iam_policy_document" "terraform_deploy_boundary" {
     }
   }
 
+  dynamic "statement" {
+    for_each = var.enable_vpc_networking ? [1] : []
+    content {
+      sid    = "ManageFlowLogCloudWatchPolicy"
+      effect = "Allow"
+      actions = [
+        "iam:CreatePolicy",
+        "iam:GetPolicy",
+        "iam:DeletePolicy",
+        "iam:CreatePolicyVersion",
+        "iam:DeletePolicyVersion",
+        "iam:ListPolicyVersions",
+        "iam:TagPolicy",
+        "iam:UntagPolicy",
+        "iam:ListPolicyTags",
+      ]
+      resources = ["*"]
+    }
+  }
+
+
   # modules/vpc's flow-log encryption key — manage the key, never use it
   # to encrypt/decrypt, never hand out access to it (no kms:CreateGrant).
   dynamic "statement" {

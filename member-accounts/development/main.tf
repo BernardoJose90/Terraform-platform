@@ -150,7 +150,7 @@ module "vpc" {
   private_subnets = var.private_subnets
 
   enable_nat_gateway = false
-  tgw_id             = nonsensitive(data.aws_ssm_parameter.tgw_id.value)
+  // tgw_id             = nonsensitive(data.aws_ssm_parameter.tgw_id.value)
 
   tags = var.tags
 }
