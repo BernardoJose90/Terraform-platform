@@ -154,7 +154,7 @@ module "vpc" {
 
   tags = var.tags
 }
-
+/*
 # This account and network are in the same AWS Organization with sharing
 # turned on, so the TGW connection gets approved automatically — no
 # separate invitation step needed.
@@ -223,6 +223,7 @@ resource "aws_ec2_transit_gateway_route_table_propagation" "main" {
 # keying off those directly would fail with "cannot be determined until
 # apply".
 # ============================================================
+/*
 resource "aws_route" "private_to_tgw" {
   # Comes out empty when disabled — module.vpc doesn't exist then, so
   # there's nothing to route from anyway.
@@ -244,3 +245,4 @@ resource "aws_route" "private_to_tgw" {
     }
   }
 }
+*/
