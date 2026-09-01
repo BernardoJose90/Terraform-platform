@@ -24,6 +24,11 @@ on:
     # 02:00 UTC daily
     - cron: '0 2 * * *'
   workflow_dispatch:
+    inputs:
+      account:
+        description: 'Single account to check (blank = all)'
+        required: false
+        type: string
 
 # There's no top-level permissions block on purpose — each job below asks
 # for exactly what it needs, so a step added later to discover-accounts or
