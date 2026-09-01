@@ -121,7 +121,7 @@ module "vpc" {
 
   # Only the network account's VPC should ever set these to true — spoke
   # VPCs (production, development) stay private-only and send their
-  # outbound traffic out through the TGW instead.
+  # outbound traffic out through the TGW instead
   enable_nat_gateway     = var.enable_nat_gateway
   single_nat_gateway     = var.single_nat_gateway
   one_nat_gateway_per_az = var.one_nat_gateway_per_az
