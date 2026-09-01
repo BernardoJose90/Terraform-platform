@@ -262,6 +262,7 @@ data "aws_iam_policy_document" "terraform_deploy_boundary" {
         "iam:CreatePolicyVersion",
         "iam:DeletePolicyVersion",
         "iam:ListPolicyVersions",
+        "iam:GetPolicyVersion",
         "iam:TagPolicy",
         "iam:UntagPolicy",
         "iam:ListPolicyTags",
