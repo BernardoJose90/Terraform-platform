@@ -156,11 +156,23 @@ jobs:
         working-directory: ${{ matrix.working_directory }}
         run: terraform init -input=false -lockfile=readonly
 
-      # -detailed-exitcode is what makes this whole check possible. Without
-      # it, terraform plan always exits 0, whether or not there's a diff —
-      # so there'd be no way to tell "clean" from "drifted" afterwards. With
-      # it: 0 means clean, 1 means terraform itself hit an error, 2 means
-      # drift was found.
+      # Drift is decided from TWO signals, not one:
+      #
+      #   1. resource_drift[] in the plan's own JSON (terraform show -json) —
+      #      the authoritative, machine-readable list of resources the refresh
+      #      found changed outside Terraform. This is what the decision keys
+      #      off.
+      #   2. -detailed-exitcode (0 = clean, 1 = terraform error, 2 = drift) —
+      #      used only to catch the "terraform itself errored" case, and as a
+      #      cross-check that logs a ::warning:: if it disagrees with the JSON.
+      #
+      # Why not the exit code alone: `terraform plan -refresh-only
+      # -detailed-exitcode` has a documented history of returning the wrong
+      # code — 0 when there IS drift (hashicorp/terraform#35117, fixed 1.12,
+      # hit here on 1.11.4 — real drift silently passed) and 2 when there
+      # ISN'T (#36403, still open). The JSON never lied in either case. Keeping
+      # both means a future regression of that flag can't make drift invisible
+      # again.
       #
       # -lock=false is deliberate, not a gap: a refresh-only plan never
       # writes to state, so there's nothing a lock would protect here — and
@@ -169,36 +181,49 @@ jobs:
       - name: Terraform Plan (refresh-only drift check)
         id: plan
         working-directory: ${{ matrix.working_directory }}
-        
         run: |
           set +e
           terraform plan -no-color -input=false -lock=false \
-            -refresh-only -detailed-exitcode 2>&1 | tee drift_output.txt
+            -refresh-only -detailed-exitcode -out=drift.tfplan 2>&1 | tee drift_output.txt
           exit_code=${PIPESTATUS[0]}
           set -e
 
           echo "drift_exit_code=$exit_code" >> "$GITHUB_OUTPUT"
-          echo "Exit code $exit_code  (0 = clean, 1 = terraform error, 2 = drift)"
+          echo "Plan exit code: $exit_code  (0 = flag says clean, 1 = terraform error, 2 = flag says drift)"
 
           if [ "$exit_code" -eq 1 ]; then
             echo "::error::terraform plan itself failed for ${{ matrix.account }}. This is not drift, it is a broken plan."
             exit 1
           fi
 
-          if [ "$exit_code" -eq 0 ]; then
+          # Authoritative signal: the plan's own resource_drift list.
+          terraform show -json drift.tfplan > drift.json
+          drift_count=$(jq '(.resource_drift // []) | length' drift.json)
+          echo "resource_drift entries: $drift_count"
+          echo "drift_count=$drift_count" >> "$GITHUB_OUTPUT"
+
+          if [ "$exit_code" -eq 2 ] && [ "$drift_count" -eq 0 ]; then
+            echo "::warning::${{ matrix.account }}: -detailed-exitcode returned 2 but resource_drift is empty (known flaky flag — hashicorp/terraform#36403). Treating as NO drift, per the JSON."
+          fi
+          if [ "$exit_code" -eq 0 ] && [ "$drift_count" -gt 0 ]; then
+            echo "::warning::${{ matrix.account }}: -detailed-exitcode returned 0 but resource_drift has $drift_count entr(y/ies) (known flaky flag — hashicorp/terraform#35117). Treating as DRIFT, per the JSON."
+          fi
+
+          if [ "$drift_count" -gt 0 ]; then
+            echo "has_drift=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "has_drift=false" >> "$GITHUB_OUTPUT"
             echo "### Clean: \`${{ matrix.account }}\`" >> "$GITHUB_STEP_SUMMARY"
           fi
 
-      # Pulls just the resource addresses out of the plan text, e.g.
-      # "aws_x.y" from a line like "  # aws_x.y has changed" or
-      # "has been deleted", so the report below stays short and readable.
+      # Resource addresses only, pulled from the plan JSON's resource_drift[]
+      # — never the raw plan text (which can carry real attribute values).
       - name: Summarise drift
         id: summary
-        if: steps.plan.outputs.drift_exit_code == '2'
+        if: steps.plan.outputs.has_drift == 'true'
         working-directory: ${{ matrix.working_directory }}
         run: |
-          CHANGED=$(grep -E '^[[:space:]]*# .* (has changed|has been deleted)' drift_output.txt \
-            | sed 's/^[[:space:]]*# //' || true)
+          CHANGED=$(jq -r '(.resource_drift // [])[].address' drift.json)
           COUNT=$(printf '%s' "$CHANGED" | grep -c . || true)
 
           echo "count=$COUNT" >> "$GITHUB_OUTPUT"
@@ -221,7 +246,9 @@ jobs:
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: drift-report-${{ matrix.account }}
-          path: ${{ matrix.working_directory }}/drift_output.txt
+          path: |
+            ${{ matrix.working_directory }}/drift_output.txt
+            ${{ matrix.working_directory }}/drift.json
           retention-days: 30
           if-no-files-found: warn
 
@@ -236,7 +263,7 @@ jobs:
       # the classic way these workflows get script-injected, so this keeps
       # that path closed, even though these particular values come from AWS.
       - name: Open or update drift PR
-        if: steps.plan.outputs.drift_exit_code == '2'
+        if: steps.plan.outputs.has_drift == 'true'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           ACCOUNT: ${{ matrix.account }}
@@ -319,7 +346,7 @@ jobs:
       # If no Slack webhook secret is configured, this step just skips
       # itself — nothing else in the file needs to change either way.
       - name: Notify Slack
-        if: steps.plan.outputs.drift_exit_code == '2' && env.SLACK_WEBHOOK_URL != ''
+        if: steps.plan.outputs.has_drift == 'true' && env.SLACK_WEBHOOK_URL != ''
         env:
           ACCOUNT: ${{ matrix.account }}
           DRIFT_COUNT: ${{ steps.summary.outputs.count }}
@@ -344,7 +371,7 @@ jobs:
       # one signal that still gets through even if Slack or the PR step
       # above happens to break.
       - name: Fail the job on drift
-        if: steps.plan.outputs.drift_exit_code == '2'
+        if: steps.plan.outputs.has_drift == 'true'
         run: |
           echo "::error::Drift detected in ${{ matrix.account }} (${{ steps.summary.outputs.count }} resource(s)). See the drift/${{ matrix.account }} pull request."
           exit 1
