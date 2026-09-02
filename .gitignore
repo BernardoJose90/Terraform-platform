@@ -40,6 +40,10 @@ plan_output.txt
 apply_output.txt
 tfplan
 *.tfplan
+# drift-detection.yaml scratch: refresh-only plan + its JSON (resource_drift
+# holds real attribute values) and the raw plan text.
+drift.json
+drift_output.txt
 .terraform/
 
 # Variable files that typically hold secrets/environment-specific values.
