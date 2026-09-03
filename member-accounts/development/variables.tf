@@ -27,7 +27,7 @@ variable "tags" {
   description = "Tags applied to all resources in this account"
   type        = map(string)
   default = {
-    ManagedBy   = "Terraform"
+    ManagedBy   = "TerraformS"
     Environment = "development"
     Service     = "development"
   }
