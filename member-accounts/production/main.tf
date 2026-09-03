@@ -1,4 +1,4 @@
-#############################################################################################################
+#########################################################################################################
 # Account: Production
 # Runs the live app — EKS, RDS, an internal ALB. This VPC is private
 # only, with no direct internet gateway or NAT of its own: all outbound
@@ -9,7 +9,7 @@
 # details come from SSM parameters the network account publishes, not
 # from reading its Terraform state directly. Everything in this file can
 # be switched off with var.networking_enabled.
-#############################################################################################################
+##########################################################################################################
 
 terraform {
   required_version = ">= 1.15.0"
