@@ -434,6 +434,7 @@ data "aws_iam_policy_document" "terraform_deploy_boundary" {
         "iam:DeleteRolePolicy",
         "iam:ListRolePolicies",
         "iam:ListAttachedRolePolicies",
+        "iam:ListInstanceProfilesForRole",
         "iam:UpdateRole",
         "iam:UpdateAssumeRolePolicy",
       ]
