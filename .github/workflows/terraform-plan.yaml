@@ -88,23 +88,23 @@ jobs:
       # true for a same-repo PR, workflow_dispatch, or any non-PR trigger;
       # false only for a PR opened from a fork. GitHub never mints an OIDC
       # token or a write-scoped GITHUB_TOKEN for a fork PR, so the `plan`
-      # and `discover-accounts` jobs below are already safe — they fail at
+      # and `discover-accounts` jobs are already safe — they fail at
       # "Configure AWS credentials" before ever running `terraform init` on
-      # fork-supplied code. The one job that ISN'T gated by AWS credentials
-      # at all is validate-format's "Terraform Validate (all accounts)"
-      # step, which runs `terraform init` unconditionally to check syntax —
-      # and `terraform init` fetches whatever provider a fork's own
-      # required_providers block names, from wherever it names, before
-      # validate ever runs. This output is what stops that step from
-      # running on fork-supplied Terraform at all.
+      # fork-supplied code. validate-format no longer runs `terraform init`
+      # at all (it's fmt-only now — per-account validity is covered by the
+      # `plan` matrix and the `tflint` job). The one remaining consumer of
+      # this output is security-scan's Checkov step: `download_external_modules`
+      # is gated on it, so a fork PR can't make Checkov fetch a module from
+      # a source the fork chose.
       same_repo: ${{ steps.fork-check.outputs.same_repo }}
     steps:
       # clone our repository onto the runner
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      # this step checks whether the PR is from a forked repository. If it is, it sets the same_repo output to false.
-      # This is important because we don't want to run Terraform init/validate against code from a fork, as it could fetch untrusted providers.
+      # Sets same_repo=false for a PR opened from a fork. Used to stop
+      # security-scan's Checkov from downloading external modules a fork
+      # could point anywhere (see the same_repo output comment above).
       - name: Check whether this run is from a fork
         id: fork-check
         env:
@@ -113,7 +113,7 @@ jobs:
         run: |
           if [ "$IS_FORK_PR" = "true" ]; then
             echo "same_repo=false" >> "$GITHUB_OUTPUT"
-            echo "Fork PR detected — Terraform init/validate will not run against fork-supplied code."
+            echo "Fork PR detected — Checkov will not download external modules."
           else
             echo "same_repo=true" >> "$GITHUB_OUTPUT"
           fi
@@ -231,15 +231,16 @@ jobs:
   # 2. Validate & Format
   #
   # This is a REQUIRED CHECK, so the job always runs and reports a result.
+  # The fmt step only runs when Terraform files changed; a docs-only PR gets
+  # a green check in seconds.
   #
-  # The actual Terraform checks only run when Terraform files have changed.
-  # If the PR only changes documentation, those Terraform steps are skipped.
-  #
-  # Skipping the steps does not make the job fail, so GitHub still shows
-  # "Validate & Format" as green.
-  #
-  # This means a docs-only PR gets a green check in about a minute instead of
-  # waiting for a check that never runs.
+  # This job used to also loop `terraform init && terraform validate` over
+  # every account directory, serially. That was removed: it scaled with the
+  # account count instead of the PR, and per-account validity is already
+  # covered — the `plan` matrix inits and plans every changed account in
+  # parallel (invalid HCL fails it), and the `tflint` job parses and checks
+  # references for everyone, forks included, without fetching providers.
+  # What's left here is the one thing neither of those does: `terraform fmt`.
   # ──────────────────────────────────────────────────────────────────────────────
   validate-format:
     name: Validate & Format
@@ -252,7 +253,7 @@ jobs:
 
       - name: Skipping (no Terraform changes)
         if: needs.detect-changes.outputs.tf_changed != 'true'
-        run: echo "Docs or prose only. Nothing to format or validate."
+        run: echo "Docs or prose only. Nothing to format."
 
       - name: Resolve Terraform version
         id: tfver
@@ -264,25 +265,12 @@ jobs:
         with:
           terraform_version: ${{ steps.tfver.outputs.version }}
 
-      # this step checks the formatting of all Terraform files in the repository.
-      # It runs `terraform fmt -check -recursive -diff` to check for formatting issues and outputs any differences.
+      # Format is the one check not covered by `plan` or `tflint`. `-recursive`
+      # walks every directory, so this stays a single fast step regardless of
+      # how many accounts exist.
       - name: Terraform Format Check
         if: needs.detect-changes.outputs.tf_changed == 'true'
         run: terraform fmt -check -recursive -diff
-
-      # this step validates the Terraform configuration for all accounts.
-      - name: Skipping Terraform Validate (fork PR)
-        if: needs.detect-changes.outputs.tf_changed == 'true' && needs.detect-changes.outputs.same_repo != 'true'
-        run: |
-          echo "::notice::Terraform init/validate does not run against a fork PR's own code — terraform init would fetch whatever provider the fork's required_providers block names. A maintainer can re-run this via workflow_dispatch on a branch in this repo to validate it for real."
-      # this step validates the Terraform configuration for all accounts, but only if the PR is from the same repository (not a fork).
-      - name: Terraform Validate (all accounts)
-        if: needs.detect-changes.outputs.tf_changed == 'true' && needs.detect-changes.outputs.same_repo == 'true'
-        run: |
-          for dir in member-accounts/*/; do
-            echo "Validating $dir..."
-            ( cd "$dir" && terraform init -backend=false -lockfile=readonly && terraform validate )
-          done
 
   # ──────────────────────────────────────────────────────────────────────────────────────────────────────────
   # 3. Security Scan (Checkov)
