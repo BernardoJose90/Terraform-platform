@@ -18,6 +18,7 @@ on:
 #
 # This workflow handles the required checks for the main branch:
 # - Check Terraform formatting and validity
+# - Lint the account code with tflint
 # - Run a security scan
 # - Show a summary of the Terraform plan
 #
@@ -52,10 +53,11 @@ env:
 #   1. detect-changes    (no needs — runs first)
 #   2. validate-format   needs: detect-changes
 #   3. security-scan     needs: detect-changes
-#   4. discover-accounts needs: detect-changes, validate-format
-#   5. plan              needs: discover-accounts
-#   6. infracost         needs: discover-accounts, plan
-#   7. summary           needs: discover-accounts, plan, infracost
+#   4. lint              needs: detect-changes
+#   5. discover-accounts needs: detect-changes, validate-format
+#   6. plan              needs: discover-accounts
+#   7. infracost         needs: discover-accounts, plan
+#   8. summary           needs: discover-accounts, plan, infracost
 # ──────────────────────────────────────────────────────────────────────────────
 jobs:
   # ──────────────────────────────────────────────────────────────────────────────
@@ -101,7 +103,7 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-      # this step checks whether the PR is from a forked repository. If it is, it sets the same_repo output to false. 
+      # this step checks whether the PR is from a forked repository. If it is, it sets the same_repo output to false.
       # This is important because we don't want to run Terraform init/validate against code from a fork, as it could fetch untrusted providers.
       - name: Check whether this run is from a fork
         id: fork-check
@@ -116,7 +118,7 @@ jobs:
             echo "same_repo=true" >> "$GITHUB_OUTPUT"
           fi
 
-      # This step checks which files were changed in the PR and whether any of them are Terraform files (not docs or prose). 
+      # This step checks which files were changed in the PR and whether any of them are Terraform files (not docs or prose).
       # It sets the tf_changed output to true if any Terraform files were changed, and false otherwise.
       - name: Classify changed files
         id: classify
@@ -178,6 +180,7 @@ jobs:
           #   .github/workflows/terraform-{plan,apply}.yaml — carry the
           #     plan/apply logic and the setup-terraform pin
           #   .checkov.yaml                — the security-scan policy
+          #   .tflint.hcl                  — the lint-job policy
           #   .terraform-version           — the single source of the
           #     Terraform version (CI reads it via setup-terraform)
           #   providers.tf / .terraform.lock.hcl — root provider config
@@ -185,6 +188,7 @@ jobs:
             .github/workflows/terraform-plan.yaml \
             .github/workflows/terraform-apply.yaml \
             .checkov.yaml \
+            .tflint.hcl \
             .terraform-version \
             providers.tf \
             .terraform.lock.hcl || echo "")
@@ -260,7 +264,7 @@ jobs:
         with:
           terraform_version: ${{ steps.tfver.outputs.version }}
 
-      # this step checks the formatting of all Terraform files in the repository. 
+      # this step checks the formatting of all Terraform files in the repository.
       # It runs `terraform fmt -check -recursive -diff` to check for formatting issues and outputs any differences.
       - name: Terraform Format Check
         if: needs.detect-changes.outputs.tf_changed == 'true'
@@ -336,8 +340,63 @@ jobs:
           sarif_file: results.sarif
           category: checkov
 
+  # ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  # 4. Lint (tflint)
+  # ──────────────────────────────────────────────────────────────────────────────────────────────────────────
+  # Catches Terraform mistakes that `terraform validate` and Checkov both
+  # miss: invalid AWS values (instance types, AMI attributes), deprecated
+  # syntax, unused declarations, missing version/provider constraints.
+  #
+  # Same required-check pattern as Validate & Format and Security Scan: the
+  # job always runs so GitHub always gets a status, and the expensive steps
+  # skip on a docs-only PR (a skipped step doesn't fail the job).
+  #
+  # Scoped to member-accounts/ on purpose — same as `directory:
+  # member-accounts/` in the Checkov job and `files: ^member-accounts/` in
+  # the pre-commit hooks. modules/ is covered indirectly, through whatever
+  # account calls it. Widening this to the repo root would first need the
+  # pre-existing warnings under modules/ and providers.tf cleaned up.
+  #
+  # The tflint binary version is pinned below; the aws ruleset version is
+  # pinned in .tflint.hcl. TFLint has no lock file — the ruleset is pinned
+  # by its exact `version` (ranges are rejected) plus `signature =
+  # "attestation"`, which makes `tflint --init` verify the plugin's GitHub
+  # build-provenance attestation before installing it (the same provenance
+  # mechanism this repo already uses for tfplan artifacts).
+  lint:
+    name: Lint (tflint)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    needs:
+      - detect-changes
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Skipping (no Terraform changes)
+        if: needs.detect-changes.outputs.tf_changed != 'true'
+        run: echo "Docs or prose only. Nothing to lint."
+
+      - name: Setup TFLint
+        if: needs.detect-changes.outputs.tf_changed == 'true'
+        uses: terraform-linters/setup-tflint@6e1e0642c0289bd619021bf6b34e3c08ed1e005a # v6.3.0
+        with:
+          tflint_version: v0.64.0   # keep compatible with .tflint.hcl's aws ruleset version
+
+      - name: tflint
+        if: needs.detect-changes.outputs.tf_changed == 'true'
+        env:
+          # --init downloads the aws ruleset from GitHub releases and
+          # verifies its provenance attestation via the API — both are
+          # rate-limited without a token.
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          tflint --init --config "$GITHUB_WORKSPACE/.tflint.hcl"
+          tflint --chdir member-accounts --recursive \
+            --config "$GITHUB_WORKSPACE/.tflint.hcl" \
+            --format compact
+
   # ──────────────────────────────────────────────────────────────────────────────
-  # 4. Discover accounts from SSM AND filter by changed accounts
+  # 5. Discover accounts from SSM AND filter by changed accounts
   # ──────────────────────────────────────────────────────────────────────────────
   discover-accounts:
     name: Discover & Filter Accounts
@@ -345,7 +404,7 @@ jobs:
     timeout-minutes: 5
     needs:
       - detect-changes
-      
+
       - validate-format
 
     # Only run if there are actual changes
@@ -423,7 +482,7 @@ jobs:
           echo "Changed files may be in shared modules or non-account directories."
 
   # ──────────────────────────────────────────────────────────────────────────────
-  # 5. Plan ONLY for changed and discovered accounts
+  # 6. Plan ONLY for changed and discovered accounts
   # ──────────────────────────────────────────────────────────────────────────────
   plan:
     name: Terraform Plan - ${{ matrix.account }}
@@ -527,7 +586,7 @@ jobs:
           echo "  3. Verify SSM parameters and provider configuration"
           exit 1
 
-      # this     
+      # this
       - name: Post plan as PR comment (Success)
         if: github.event_name == 'pull_request' && steps.plan.outputs.plan_exit_code == '0'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -702,7 +761,7 @@ jobs:
             --config-file .checkov.yaml \
             --compact --quiet
   # ──────────────────────────────────────────────────────────────────────────────
-  # 6. Cost Estimation (Infracost)
+  # 7. Cost Estimation (Infracost)
   # ──────────────────────────────────────────────────────────────────────────────
   infracost:
     name: Cost Estimation - ${{ matrix.account }}
@@ -899,7 +958,7 @@ jobs:
           if-no-files-found: ignore
 
   # ──────────────────────────────────────────────────────────────────────────────
-  # 7. Summary
+  # 8. Summary
   # ──────────────────────────────────────────────────────────────────────────────
   summary:
     name: Plan Summary

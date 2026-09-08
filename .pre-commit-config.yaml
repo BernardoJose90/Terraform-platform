@@ -6,8 +6,9 @@
 # that before it ever reaches CI.
 #
 # Install once, per clone:
-#   brew install pre-commit terraform-docs   # macOS
+#   brew install pre-commit terraform-docs tflint   # macOS
 #   pre-commit install
+#   tflint --init --config "$(git rev-parse --show-toplevel)/.tflint.hcl"
 #
 # Run against everything on demand:
 #   pre-commit run --all-files
@@ -42,6 +43,15 @@ repos:
         args:
           - --init-args=-backend=false
         exclude: ^modules/ # modules get validated through whatever account calls them
+
+      # Same tflint policy the `lint` job in terraform-plan.yaml runs, from
+      # the same .tflint.hcl — a clean run here means a clean run in CI.
+      # Scoped to member-accounts/ to match that job and the checkov hook
+      # below. Needs `tflint --init` run once per clone (see the header).
+      - id: terraform_tflint
+        args:
+          - --args=--config=__GIT_WORKING_DIR__/.tflint.hcl
+        files: ^member-accounts/.*\.tf$
 
   - repo: https://github.com/bridgecrewio/checkov.git
     rev: '3.3.11'
