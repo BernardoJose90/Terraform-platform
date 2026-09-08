@@ -38,7 +38,7 @@ provider "aws" {
   }
 }
 
-# This data source retrieves the production account ID from the SSM parameter store in the management account, 
+# This data source retrieves the production account ID from the SSM parameter store in the management account,
 # allowing the production account to reference its own account ID for resource creation and access control.
 data "aws_ssm_parameter" "production_account_id" {
   provider = aws.management
@@ -71,7 +71,7 @@ provider "aws" {
   }
 }
 
-# this data source retrieves the Transit Gateway (TGW) ID from the SSM parameter store in the network account, 
+# this data source retrieves the Transit Gateway (TGW) ID from the SSM parameter store in the network account,
 # allowing the production account to reference the TGW for routing and attachment purposes.
 data "aws_ssm_parameter" "tgw_id" {
   provider = aws.network
@@ -199,7 +199,7 @@ module "tgw_attachment" {
 # ============================================================
 
 
-# this resource block associates the Transit Gateway (TGW) attachment for the production VPC with the production spoke route table in the network account, 
+# this resource block associates the Transit Gateway (TGW) attachment for the production VPC with the production spoke route table in the network account,
 # allowing traffic from the production VPC to be routed through the TGW and reach other spoke accounts.
 resource "aws_ec2_transit_gateway_route_table_association" "tgw_rtb_association" {
   count = var.networking_enabled ? 1 : 0
@@ -241,23 +241,23 @@ resource "aws_ec2_transit_gateway_route_table_propagation" "main" {
 # the entire reason this lives out here instead.
 # ============================================================
 
-# this resource block creates routes in the private route tables of the production VPC to send outbound traffic destined for the internet 
+# this resource block creates routes in the private route tables of the production VPC to send outbound traffic destined for the internet
 resource "aws_route" "private_to_tgw" {
 
   for_each = var.networking_enabled ? { for idx, az in var.azs : az => idx } : {}
 
-  # this route_table_id variable retrieves the private route table IDs from the production VPC module, 
+  # this route_table_id variable retrieves the private route table IDs from the production VPC module,
   # allowing the creation of routes in each private route table for outbound traffic to the Transit Gateway (TGW).
   route_table_id = module.vpc[0].private_route_table_ids[each.value]
 
   # this destination_cidr_block variable defines the CIDR block for the route, which is set to "0.0.0.0/0" — a catch-all for all internet-bound traffic.
   destination_cidr_block = "0.0.0.0/0"
 
-  # this transit_gateway_id variable retrieves the Transit Gateway (TGW) ID from the SSM parameter store in the network account, 
+  # this transit_gateway_id variable retrieves the Transit Gateway (TGW) ID from the SSM parameter store in the network account,
   # allowing the route to point to the TGW for outbound traffic.
   transit_gateway_id = nonsensitive(data.aws_ssm_parameter.tgw_id.value)
 
-  # this depends_on variable ensures that the route creation waits for the Transit Gateway (TGW) attachment to be created before creating the routes,  
+  # this depends_on variable ensures that the route creation waits for the Transit Gateway (TGW) attachment to be created before creating the routes,
   # preventing any potential issues with routing traffic to the TGW before the attachment is established.
   depends_on = [module.tgw_attachment]
 
@@ -284,7 +284,7 @@ resource "aws_route" "private_to_tgw" {
 
 # this module creates subnets for the production workloads, including EKS, RDS, an internal ALB, and a general-purpose tier.
 # this module is kept separate from the VPC module to avoid exposing production workload details to the network and development accounts.
-# this module also configures the route tables for the subnets, allowing EKS and resources subnets to route outbound traffic through the Transit Gateway (TGW), 
+# this module also configures the route tables for the subnets, allowing EKS and resources subnets to route outbound traffic through the Transit Gateway (TGW),
 # while RDS and ALB subnets do not have outbound routes to the TGW.
 module "prod_purpose_subnets" {
   count = var.networking_enabled ? 1 : 0
@@ -293,7 +293,7 @@ module "prod_purpose_subnets" {
   # this vpc_id variable retrieves the VPC ID from the production VPC module, allowing the creation of subnets within the production VPC.
   vpc_id = module.vpc[0].vpc_id
 
-  # this tgw_id variable retrieves the Transit Gateway (TGW) ID from the SSM parameter store in the network account, 
+  # this tgw_id variable retrieves the Transit Gateway (TGW) ID from the SSM parameter store in the network account,
   # allowing the production workloads to route outbound traffic through the TGW.
   tgw_id = nonsensitive(data.aws_ssm_parameter.tgw_id.value)
 

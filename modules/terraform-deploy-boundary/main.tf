@@ -2,12 +2,12 @@
 # Because permissions in github-oidc-roles is shared and wide, an account like monitoring
 # which has no infrastructure at all yet — still technically holds ec2:*, IAM role creation, RAM sharing, etc.
 # purely because it uses the same module as network, which genuinely needs all of that.
-# 
-# This module doesn't touch the shared policy document(github_actions_trust_policy), Instead, it creates a second, separate IAM policy(permissions boundary) which is attached to the same TerraformDeploy role. 
-# AWS enforces both policies(github_actions_trust_policy and terraform_deploy_boundary) at once and only allows what's permitted by both 
-# So even though the shared policy(github_actions_trust_policy) still grants ec2:* to every account, an account whose boundary doesn't 
+#
+# This module doesn't touch the shared policy document(github_actions_trust_policy), Instead, it creates a second, separate IAM policy(permissions boundary) which is attached to the same TerraformDeploy role.
+# AWS enforces both policies(github_actions_trust_policy and terraform_deploy_boundary) at once and only allows what's permitted by both
+# So even though the shared policy(github_actions_trust_policy) still grants ec2:* to every account, an account whose boundary doesn't
 # include enable_vpc_networking = true can never actually use it network accounts related IAM permissions.
-# 
+#
 # In short: this file answers "of everything that role could possibly do, what should THIS specific account actually be allowed to use."
 #
 # ==========================================================================================================================================================================================

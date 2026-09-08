@@ -117,7 +117,7 @@ module "terraform_deploy_boundary" {
   ]
 }
 
-# This module creates the actual deploy role in this account, which is assumed by the GitHub OIDC workflow. 
+# This module creates the actual deploy role in this account, which is assumed by the GitHub OIDC workflow.
 # It uses the permissions boundary created above to limit what the deploy role can do.
 module "github-oidc-roles" {
   source       = "../../modules/github-oidc-roles"
@@ -142,7 +142,7 @@ module "github-oidc-roles" {
 # doc calls for: private -> local + 0.0.0.0/0 via NAT (AZ-local),
 # public -> local + 0.0.0.0/0 via IGW.
 # -----------------------------------------------------------------------
-# This whole module is gated by var.networking_enabled, so it doesn't even try to create a VPC when networking is off. 
+# This whole module is gated by var.networking_enabled, so it doesn't even try to create a VPC when networking is off.
 # That makes all the references to module.egress_vpc[0] below safe: they only run when the VPC actually exists.
 module "egress_vpc" {
   count = var.networking_enabled ? 1 : 0
@@ -161,7 +161,7 @@ module "egress_vpc" {
   private_subnets = var.private_subnets
   public_subnets  = var.public_subnets
 
-  # This account's egress VPC is the only one that needs NAT gateways, so the module's default of "one per AZ" is fine. 
+  # This account's egress VPC is the only one that needs NAT gateways, so the module's default of "one per AZ" is fine.
   # The design doc's subnet table already has the public subnets in the right AZ order for that.
   enable_nat_gateway     = true
   one_nat_gateway_per_az = true
@@ -212,8 +212,8 @@ resource "aws_ec2_tag" "nat_gateway_name" {
   value       = each.value
 }
 
-# This resource block creates private route table Name tags for each private route table in the egress VPC, 
-# using the names defined in local.private_tgw_route_table_names. 
+# This resource block creates private route table Name tags for each private route table in the egress VPC,
+# using the names defined in local.private_tgw_route_table_names.
 resource "aws_ec2_tag" "private_tgw_route_table_name" {
   for_each = local.private_tgw_route_table_names
 
@@ -226,7 +226,7 @@ resource "aws_ec2_tag" "private_tgw_route_table_name" {
 resource "aws_ec2_tag" "public_nat_route_table_name" {
   count = var.networking_enabled ? 1 : 0
 
-  # This resource_id is set to the public route table ID from module.egress_vpc[0].public_route_table_ids, 
+  # This resource_id is set to the public route table ID from module.egress_vpc[0].public_route_table_ids,
   # and the key is set to "Name" with the value being "public-nat-egress-rtb".
   resource_id = module.egress_vpc[0].public_route_table_ids[0]
   key         = "Name"
@@ -234,7 +234,7 @@ resource "aws_ec2_tag" "public_nat_route_table_name" {
 }
 
 # -----------------------------------------------------------------------
-# This resource block creates routes in the public route tables of the egress VPC 
+# This resource block creates routes in the public route tables of the egress VPC
 # to send traffic destined for spoke CIDRs back into the Transit Gateway (TGW).
 # -----------------------------------------------------------------------
 resource "aws_route" "public_to_spokes" {
@@ -320,8 +320,8 @@ resource "aws_ec2_transit_gateway_route_table_association" "egress" {
 # which turn off during a teardown, so these have to as well.
 # -----------------------------------------------------------------------
 
-# This module creates static routes in the production spoke's route table of the Transit Gateway (TGW) 
-# this allows the production spoke to route traffic through the TGW and reach the egress VPC. 
+# This module creates static routes in the production spoke's route table of the Transit Gateway (TGW)
+# this allows the production spoke to route traffic through the TGW and reach the egress VPC.
 # The blackhole_cidrs parameter is used to specify the CIDRs that should be blackholed (dropped) in the production spoke's route table, preventing traffic from being routed to the development spoke.
 
 module "routes_prod_spoke" {
@@ -339,7 +339,7 @@ module "routes_prod_spoke" {
 }
 
 # This module creates static routes in the development spoke's route table of the Transit Gateway (TGW)
-# this allows the development spoke to route traffic through the TGW and reach the egress VPC. 
+# this allows the development spoke to route traffic through the TGW and reach the egress VPC.
 # The blackhole_cidrs parameter is used to specify the CIDRs that should be blackholed (dropped) in the development spoke's route table,
 # This preventing traffic from being routed to the production spoke.
 module "routes_dev_spoke" {
