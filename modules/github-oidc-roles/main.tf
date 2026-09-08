@@ -2,16 +2,16 @@
 # This is the module that creates the IAM identities GitHub Actions uses to run Terraform solving two problems:
 
 # 1. Secure login (authentication), with no stored secrets.
-# It creates an OIDC trust relationship between AWS and GitHub — GitHub proves its identity with a short-lived token on every workflow run, 
-# instead of a long-lived AWS access key sitting in a GitHub secret forever (which would be a standing target if ever leaked). 
-# The trust policy is scoped tightly: only specific GitHub Environment names (production-approval, automated, teardown-approval) 
+# It creates an OIDC trust relationship between AWS and GitHub — GitHub proves its identity with a short-lived token on every workflow run,
+# instead of a long-lived AWS access key sitting in a GitHub secret forever (which would be a standing target if ever leaked).
+# The trust policy is scoped tightly: only specific GitHub Environment names (production-approval, automated, teardown-approval)
 # are trusted, plus a break-glass path for a human with MFA in the management account.
 
 # 2. What that identity is allowed to do (authorization).
-# Once logged in, the role needs permissions to actually create/manage infrastructure — VPCs, TGW attachments, IAM roles it needs to hand off to other AWS services, 
-# SSM parameters, its own state file in S3, etc. That's the permissions policy document in this file — one shared, wide policy, 
+# Once logged in, the role needs permissions to actually create/manage infrastructure — VPCs, TGW attachments, IAM roles it needs to hand off to other AWS services,
+# SSM parameters, its own state file in S3, etc. That's the permissions policy document in this file — one shared, wide policy,
 # written to cover whatever any account calling this module might need (since network needs far more than monitoring does, but they both call the same module).
-#   
+#
 # It also creates a second, read-only role (TerraformPlan) for PR-time plans, so a plan run can never accidentally write anything.
 # =======================================================================================================================================================================
 
@@ -43,16 +43,16 @@ resource "aws_iam_openid_connect_provider" "github" {
   }
 }
 
-# locals is just a block of named shortcuts which are values computed once, 
-# then reused by name later in the file, instead of writing out the full expression every time. 
+# locals is just a block of named shortcuts which are values computed once,
+# then reused by name later in the file, instead of writing out the full expression every time.
 locals {
   # This is just a short alias for the OIDC provider resource's ARN
-  # used in the TerraformDeploy & TerraformPlan trust_policy below in the GitHubActionsCI statement, 
+  # used in the TerraformDeploy & TerraformPlan trust_policy below in the GitHubActionsCI statement,
   # so we don't have to write out the full resource reference every time.
   github_oidc_provider_arn = aws_iam_openid_connect_provider.github.arn
 
   # Every caller trusts these three GitHub Environments.
-  # allow-list of which three GitHub Environments are trusted to log in as this role. 
+  # allow-list of which three GitHub Environments are trusted to log in as this role.
   trusted_environment_subs = [
     "repo:${var.github_org}/${var.github_repo}:environment:production-approval",
     "repo:${var.github_org}/${var.github_repo}:environment:automated",
@@ -378,7 +378,7 @@ data "aws_iam_policy_document" "permissions" {
   }
 
 }
-# 
+#
 # resource block - creates the TerraformDeploy role, which is the identity GitHub Actions uses to run Terraform.
 resource "aws_iam_role" "terraform_deploy" {
   name                 = var.role_name
@@ -410,8 +410,8 @@ resource "aws_iam_role_policy" "terraform_deploy_policy" {
 }
 
 # ======================================================================================
-# Trust policy for the terraform_plan role it answers who is allowed to log in as this role at all? 
-# this role is used for PR-time plans, so it can read resources but not modify them. 
+# Trust policy for the terraform_plan role it answers who is allowed to log in as this role at all?
+# this role is used for PR-time plans, so it can read resources but not modify them.
 # ======================================================================================
 data "aws_iam_policy_document" "github_oidc_trust_plan" {
   statement {
@@ -489,7 +489,7 @@ resource "aws_iam_role_policy" "terraform_plan_assume_ssm_readonly" {
 # but only for accounts that actually pass something in that list which in our case like for production account below
 #   extra_assumable_role_arns = [
 #     "arn:aws:iam::${nonsensitive(data.aws_ssm_parameter.network_account_id.value)}:role/TgwSpokeWiringProduction",
-#   ]. 
+#   ].
 resource "aws_iam_role_policy" "terraform_plan_assume_extra_roles" {
   count = length(var.extra_assumable_role_arns) > 0 ? 1 : 0
 
