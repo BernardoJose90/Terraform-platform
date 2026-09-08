@@ -56,23 +56,45 @@
 # account in ~/.aws/config, each with an AdministratorAccess permission set,
 # plus a `management` profile for the read-only account-ID cross-check.
 #
+# The account list is derived from the member-accounts/ directories, so a
+# new account is picked up automatically once its directory exists.
+#
 # Usage:
 #   ./scripts/apply-boundary.sh development                 # one account
 #   ./scripts/apply-boundary.sh development production       # several
-#   ./scripts/apply-boundary.sh                             # all six
-#   ./scripts/apply-boundary.sh --yes development            # no prompt
+#   ./scripts/apply-boundary.sh                             # every member account
+#   ./scripts/apply-boundary.sh --interactive development    # prompt before applying
 #   TARGET='module.terraform_deploy_boundary' \
 #     ./scripts/apply-boundary.sh network                    # different target
+#
+# It applies without prompting by default (each account's plan is still
+# printed, and any plan that touches resources outside the boundary module
+# is refused). Use --interactive, or BOUNDARY_APPLY_YES=0, to confirm each.
 #
 # After it finishes: re-run (or let CI run) the normal Terraform Apply for
 # the merged PR — no separate step needed, the boundary is already live.
 
 set -euo pipefail
 
-ALL_ACCOUNTS=(network development monitoring production security security_analytics)
+REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
+[ -n "$REPO_ROOT" ] || { echo "❌ Run this from inside the Terraform-platform repo." >&2; exit 1; }
+
+# The set of member accounts is just the directories under member-accounts/.
+# Add an account by adding its directory — no need to edit this script.
+ALL_ACCOUNTS=()
+for _dir in "$REPO_ROOT"/member-accounts/*/; do
+  [ -d "$_dir" ] || continue
+  ALL_ACCOUNTS+=("$(basename "$_dir")")
+done
+[ "${#ALL_ACCOUNTS[@]}" -gt 0 ] || { echo "❌ No member-accounts/*/ directories found." >&2; exit 1; }
+
 MGMT_PROFILE="${MGMT_PROFILE:-management}"
 TARGET="${TARGET:-module.terraform_deploy_boundary.aws_iam_policy.terraform_deploy_boundary}"
-AUTO_APPROVE="${BOUNDARY_APPLY_YES:-0}"
+# Applies without an interactive "type yes" prompt by default. The plan is
+# still shown, and the "refuse if the plan touches anything outside the
+# boundary module" guard below still runs. Pass --interactive (or set
+# BOUNDARY_APPLY_YES=0) to be prompted per account.
+AUTO_APPROVE="${BOUNDARY_APPLY_YES:-1}"
 
 # A plan may only touch resources inside this module. Anything else means
 # -target pulled in something unexpected, and that account is skipped.
@@ -82,6 +104,7 @@ ACCOUNTS=()
 for a in "$@"; do
   case "$a" in
     --yes|-y) AUTO_APPROVE=1 ;;
+    --interactive|--no-yes) AUTO_APPROVE=0 ;;
     -*) echo "Unknown flag: $a" >&2; exit 2 ;;
     *) ACCOUNTS+=("$a") ;;
   esac
@@ -93,9 +116,6 @@ fi
 for bin in aws terraform jq; do
   command -v "$bin" >/dev/null 2>&1 || { echo "❌ '$bin' not found on PATH." >&2; exit 1; }
 done
-
-REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
-[ -n "$REPO_ROOT" ] || { echo "❌ Run this from inside the Terraform-platform repo." >&2; exit 1; }
 
 PLAN_FILE="$(mktemp)"
 JSON_FILE="$(mktemp)"
