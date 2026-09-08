@@ -172,10 +172,10 @@ jobs:
           # scanned, but live outside modules/ and member-accounts/ so the
           # diffs above miss them entirely. Without this, a PR that only
           # bumps the Terraform version in .terraform-version, edits the
-          # Checkov policy, or touches the plan/apply workflows or the root
-          # provider config would pass Validate & Security Scan and merge
-          # green having never planned a single account. Same "can't map to
-          # one account, so plan them all" logic as modules/ above.
+          # Checkov policy, or touches the plan/apply workflows would pass
+          # Validate & Security Scan and merge green having never planned a
+          # single account. Same "can't map to one account, so plan them
+          # all" logic as modules/ above.
           #
           #   .github/workflows/terraform-{plan,apply}.yaml — carry the
           #     plan/apply logic and the setup-terraform pin
@@ -183,14 +183,20 @@ jobs:
           #   .tflint.hcl                  — the lint-job policy
           #   .terraform-version           — the single source of the
           #     Terraform version (CI reads it via setup-terraform)
-          #   providers.tf / .terraform.lock.hcl — root provider config
+          #   .terraform.lock.hcl          — root provider lock
+          #
+          # NOT here: the root providers.tf. Terraform only reads .tf files
+          # in the directory it runs in, and every member-accounts/<account>
+          # carries its own complete terraform{} / provider blocks — nothing
+          # loads the root file during a per-account plan, so editing it
+          # changes no account's plan and must not force an all-account
+          # replan + reapply.
           CHANGED_GLOBAL=$(git diff --name-only origin/main...HEAD -- \
             .github/workflows/terraform-plan.yaml \
             .github/workflows/terraform-apply.yaml \
             .checkov.yaml \
             .tflint.hcl \
             .terraform-version \
-            providers.tf \
             .terraform.lock.hcl || echo "")
 
           if [ -n "$CHANGED_GLOBAL" ]; then
@@ -341,9 +347,18 @@ jobs:
   #
   # Scoped to member-accounts/ on purpose — same as `directory:
   # member-accounts/` in the Checkov job and `files: ^member-accounts/` in
-  # the pre-commit hooks. modules/ is covered indirectly, through whatever
-  # account calls it. Widening this to the repo root would first need the
-  # pre-existing warnings under modules/ and providers.tf cleaned up.
+  # the pre-commit hooks.
+  #
+  # modules/ is NOT linted here. `--chdir member-accounts` keeps the
+  # recursion inside member-accounts/, and .tflint.hcl's
+  # `call_module_type = "none"` stops tflint descending into a called
+  # module's body — so nothing runs tflint's rules over modules/*.tf.
+  # Module *validity* is still caught: `terraform plan` (below) evaluates
+  # every called module, and a modules/ change fans the plan matrix out to
+  # every account. What's missing for modules/ is only the lint layer
+  # (unused declarations, deprecated syntax, missing version constraints).
+  # Widening the scope to cover it needs the pre-existing warnings under
+  # modules/ (and providers.tf) cleaned up first.
   #
   # The tflint binary version is pinned below; the aws ruleset version is
   # pinned in .tflint.hcl. TFLint has no lock file — the ruleset is pinned
