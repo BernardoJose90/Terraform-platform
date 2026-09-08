@@ -5,10 +5,13 @@
 # formatting instead of quietly fixing it, so this hook is what catches
 # that before it ever reaches CI.
 #
-# Install once, per clone:
-#   brew install pre-commit terraform-docs tflint   # macOS
+# Install once, per clone (macOS):
+#   brew install pre-commit
+#   brew install terraform-linters/tap/tflint   # not in homebrew-core; or grab
+#                                               # the binary from GitHub releases
 #   pre-commit install
 #   tflint --init --config "$(git rev-parse --show-toplevel)/.tflint.hcl"
+# (terraform itself is assumed already installed — terraform_fmt/validate use it.)
 #
 # Run against everything on demand:
 #   pre-commit run --all-files
