@@ -5,10 +5,13 @@
 # formatting instead of quietly fixing it, so this hook is what catches
 # that before it ever reaches CI.
 #
-# Install once, per clone:
-#   brew install pre-commit terraform-docs tflint   # macOS
+# Install once, per clone (macOS):
+#   brew install pre-commit
+#   brew install terraform-linters/tap/tflint   # not in homebrew-core; or grab
+#                                               # the binary from GitHub releases
 #   pre-commit install
 #   tflint --init --config "$(git rev-parse --show-toplevel)/.tflint.hcl"
+# (terraform itself is assumed already installed — terraform_fmt/validate use it.)
 #
 # Run against everything on demand:
 #   pre-commit run --all-files
@@ -26,9 +29,20 @@ repos:
       - id: check-yaml
         args: [--allow-multiple-documents]
       # A second safety net against accidentally committing a state or plan
-      # file — .gitignore is the first one.
+      # file — .gitignore is the first one. NOTE: this is a SIZE check, not a
+      # content check — it catches a big .tfstate, never a 40-char API key.
+      # That's what the gitleaks hook below is for.
       - id: check-added-large-files
         args: [--maxkb=500]
+
+  # Scans staged changes for committed credentials (AWS keys, tokens, private
+  # keys, webhook URLs, high-entropy strings). Mirrors the Secret Scan CI
+  # workflow — a clean run here means a clean run there. `language: golang`,
+  # so pre-commit builds the pinned gitleaks itself; no manual install.
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.30.1
+    hooks:
+      - id: gitleaks
 
   - repo: https://github.com/antonbabenko/pre-commit-terraform
     rev: v1.108.1
