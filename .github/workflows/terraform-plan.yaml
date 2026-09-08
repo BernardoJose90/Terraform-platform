@@ -56,8 +56,8 @@ env:
 #   4. lint              needs: detect-changes
 #   5. discover-accounts needs: detect-changes, validate-format
 #   6. plan              needs: discover-accounts
-#   7. infracost         needs: discover-accounts, plan
-#   8. summary           needs: discover-accounts, plan, infracost
+#     (the Infracost cost estimate runs as steps inside `plan`, not its own job)
+#   7. summary           needs: discover-accounts, plan
 # ──────────────────────────────────────────────────────────────────────────────
 jobs:
   # ──────────────────────────────────────────────────────────────────────────────
@@ -505,6 +505,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix: ${{ fromJson(needs.discover-accounts.outputs.matrix) }}
+    env:
+      # Read directly by the `infracost` CLI in the cost-estimate steps below.
+      # The setup action's api-key input is also set, but Infracost recommends
+      # the env var as the more reliable path.
+      INFRACOST_API_KEY: ${{ secrets.INFRACOST_API_KEY }}
 
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -760,167 +765,71 @@ jobs:
             --framework terraform_plan \
             --config-file .checkov.yaml \
             --compact --quiet
-  # ──────────────────────────────────────────────────────────────────────────────
-  # 7. Cost Estimation (Infracost)
-  # ──────────────────────────────────────────────────────────────────────────────
-  infracost:
-    name: Cost Estimation - ${{ matrix.account }}
-    needs:
-      - discover-accounts
-      - plan
-    runs-on: ubuntu-latest
-    timeout-minutes: 10
-    # Only run on PRs when we have accounts to estimate
-    if: |
-      github.event_name == 'pull_request' &&
-      needs.discover-accounts.outputs.account_count != '0' &&
-      needs.discover-accounts.outputs.account_count != ''
-    strategy:
-      fail-fast: false
-      matrix: ${{ fromJson(needs.discover-accounts.outputs.matrix) }}
-    env:
-      # Set globally rather than via the setup action's api-key input — some users
-      # hit "Invalid API key" errors with the input param, the global env var is
-      # the more reliable path recommended by Infracost.
-      INFRACOST_API_KEY: ${{ secrets.INFRACOST_API_KEY }}
 
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-
-      - name: Download Terraform plan artifact from plan job
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
-        with:
-          name: tfplan-${{ matrix.account }}
-          path: ${{ matrix.working_directory }}
-
-      - name: Resolve Terraform version
-        id: tfver
-        run: echo "version=$(cat "$GITHUB_WORKSPACE/.terraform-version")" >> "$GITHUB_OUTPUT"
-
-      - name: Setup Terraform
-        uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4.0.1
-        with:
-          terraform_version: ${{ steps.tfver.outputs.version }}
-
-      - name: Configure AWS credentials (${{ matrix.account }})
-        uses: aws-actions/configure-aws-credentials@e6de054238d6b7531b4efff3b6587d9aade6a06c # v6.2.3
-        with:
-          role-to-assume: ${{ matrix.role_arn }}
-          aws-region: ${{ env.AWS_REGION }}
-          role-session-name: gha-infracost-${{ matrix.account }}
-          retry-max-attempts: 3
-
-      - name: Terraform Init
-        working-directory: ${{ matrix.working_directory }}
-        run: terraform init -input=false -lockfile=readonly
-
-      - name: Convert plan to JSON
-        working-directory: ${{ matrix.working_directory }}
-        run: terraform show -no-color -json tfplan.binary > plan.json
-
+# ── Cost estimate of the RESOLVED plan ─────────────────────────────────
+      # Folded into the plan job for the same reason as the Checkov plan scan
+      # above: plan.json already exists on disk here, so a standalone job would
+      # just repeat checkout + setup-terraform + an OIDC assume + a terraform
+      # init once per account for no extra coverage. Unlike the old standalone
+      # job this needs NO AWS credentials — Infracost only reads plan.json,
+      # it never calls AWS.
+      #
+      # Advisory only. Every step here is continue-on-error, and none of it is
+      # wired into Plan Summary, so a flaky estimate or a missing API key can
+      # never fail a PR. There is deliberately no cost threshold — this posts
+      # a number, nothing more. A real gate would be Infracost Cloud plus
+      # `infracost comment` with a policy; that needs an owner for the policy.
       - name: Setup Infracost
+        if: github.event_name == 'pull_request' && steps.plan.outputs.plan_exit_code == '0'
         uses: infracost/actions/setup@fb736a8f219195d6efdca58682069b16fe1bc280 # v4.2.0
         with:
           api-key: ${{ secrets.INFRACOST_API_KEY }}
           version: latest
 
-      - name: Verify Infracost installation
-        run: |
-          echo "✅ Infracost installed successfully"
-          infracost --version
-
-      - name: Verify plan JSON exists
-        working-directory: ${{ matrix.working_directory }}
-        run: |
-          echo "Checking for plan.json..."
-          if [ -s plan.json ]; then
-            echo "✅ plan.json exists"
-            echo "File size: $(du -h plan.json | cut -f1)"
-          else
-            echo "❌ plan.json not found or empty!"
-            exit 1
-          fi
-
-      - name: Run Infracost
+      - name: Infracost cost estimate
         id: infracost
+        if: github.event_name == 'pull_request' && steps.plan.outputs.plan_exit_code == '0'
         working-directory: ${{ matrix.working_directory }}
         continue-on-error: true
         run: |
-          echo "💰 Generating cost estimate for ${{ matrix.account }}..."
-          echo ""
+          echo "💰 Cost estimate for ${{ matrix.account }}"
+          infracost breakdown --path plan.json --format table --out-file cost_output.txt 2>&1 || true
+          cat cost_output.txt 2>/dev/null || true
 
-          infracost breakdown --path plan.json \
-            --format table \
-            --out-file cost_output.txt 2>&1
-
-          if [ -s cost_output.txt ]; then
-            echo "✅ Cost estimate generated successfully"
-            echo "cost_generated=true" >> "$GITHUB_OUTPUT"
-            cat cost_output.txt
-
-            echo "## 💰 Cost Estimate — \`${{ matrix.account }}\`" > infracost_output.md
-            echo "" >> infracost_output.md
-            echo "\`\`\`" >> infracost_output.md
-            cat cost_output.txt >> infracost_output.md
-            echo "\`\`\`" >> infracost_output.md
-          else
-            echo "⚠️ No cost estimate generated"
-            echo "cost_generated=false" >> "$GITHUB_OUTPUT"
-
-            echo "🔍 Checking plan.json contents for debugging..."
-            infracost breakdown --path plan.json --format json --out-file cost_debug.json 2>&1 || true
-
-            if [ -f cost_debug.json ]; then
-              RESOURCE_COUNT=$(jq '.projects[0].breakdown.resources | length' cost_debug.json 2>/dev/null || echo "0")
-              echo "Resources found: $RESOURCE_COUNT"
+          {
+            echo "<!-- infracost-account:${{ matrix.account }} -->"
+            if [ -s cost_output.txt ]; then
+              echo "## 💰 Cost Estimate — \`${{ matrix.account }}\`"
+              echo ""
+              echo '```'
+              cat cost_output.txt
+              echo '```'
+            else
+              echo "## ⚠️ Cost Estimate — \`${{ matrix.account }}\`"
+              echo ""
+              echo "No estimate generated — no billable resources in the plan, or INFRACOST_API_KEY is missing/invalid (Settings → Secrets and variables → Actions)."
             fi
-
-            cat > infracost_output.md << EOF
-          ## ⚠️ Cost Estimate — \`${{ matrix.account }}\`
-
-          No cost estimate could be generated for this account.
-
-          **Possible reasons:**
-          - INFRACOST_API_KEY secret is missing or invalid — check repo Settings → Secrets and variables → Actions
-          - No billable resources were found in the Terraform plan
-          - plan.json failed to generate correctly
-
-          **Debug information:**
-          - plan.json exists: \`$(test -s plan.json && echo "Yes" || echo "No")\`
-          - plan.json size: \`$(du -h plan.json 2>/dev/null | cut -f1 || echo "N/A")\`
-          EOF
-          fi
+          } > infracost_output.md
 
       - name: Post Infracost comment to PR
-        if: always()
+        if: github.event_name == 'pull_request' && steps.plan.outputs.plan_exit_code == '0'
+        continue-on-error: true
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const fs = require('fs');
-            const path = `${{ matrix.working_directory }}/infracost_output.md`;
-            let output = '⚠️ No cost estimate available.';
-            try {
-              if (fs.existsSync(path)) {
-                output = fs.readFileSync(path, 'utf8');
-              }
-            } catch (e) {
-              output = `⚠️ Error reading cost estimate: ${e.message}`;
-            }
-
-            // Truncate if too long
-            if (output.length > 60000) {
-              output = output.slice(0, 60000) + '\n... (truncated)';
-            }
-
             const marker = `<!-- infracost-account:${{ matrix.account }} -->`;
-            const body = `${marker}\n${output}`;
+            let body = `${marker}\n⚠️ No cost estimate available.`;
+            try {
+              body = fs.readFileSync(`${{ matrix.working_directory }}/infracost_output.md`, 'utf8');
+            } catch (e) {}
+            if (body.length > 60000) body = body.slice(0, 60000) + '\n... (truncated)';
 
             const { data: comments } = await github.rest.issues.listComments({
               owner: context.repo.owner,
               repo: context.repo.repo,
               issue_number: context.issue.number,
             });
-
             const existing = comments.find(c => c.body.includes(marker));
 
             if (existing) {
@@ -946,26 +855,16 @@ jobs:
           name: cost-report-${{ matrix.account }}
           path: ${{ matrix.working_directory }}/infracost_output.md
           retention-days: 7
-          if-no-files-found: warn
-
-      - name: Upload Infracost debug JSON
-        if: failure() || steps.infracost.outputs.cost_generated == 'false'
-        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        with:
-          name: infracost-debug-${{ matrix.account }}
-          path: ${{ matrix.working_directory }}/cost_debug.json
-          retention-days: 3
           if-no-files-found: ignore
 
   # ──────────────────────────────────────────────────────────────────────────────
-  # 8. Summary
+  # 7. Summary
   # ──────────────────────────────────────────────────────────────────────────────
   summary:
     name: Plan Summary
     needs:
       - discover-accounts
       - plan
-      - infracost
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -989,12 +888,8 @@ jobs:
             echo "No plan matrix (no Terraform changes in this PR)."
           fi
           echo ""
-          echo "════════════════════════════════════════════════════════════"
-          echo "📊 Infracost Status:"
-          echo "  - Authenticated via INFRACOST_API_KEY secret"
-          echo "  - Cost estimates posted as PR comments"
-          echo "  - Reports saved as artifacts"
-          echo "════════════════════════════════════════════════════════════"
+          echo "Infracost cost estimates run as steps inside the plan job and"
+          echo "are posted as PR comments (advisory — they never fail the check)."
 
       # This job always has the same name, no matter which accounts are in the matrix.
       # That makes it safe to use as a required status check.
