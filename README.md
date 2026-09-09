@@ -21,7 +21,7 @@
 - [Deployment Order](#deployment-order)
 - [State Management](#state-management)
 - [CI/CD Pipeline](#cicd-pipeline)
-- [CI Failure Diagnosis](#ci-failure-diagnosis)
+- [AI-Assisted CI Failure Diagnosis](#ai-assisted-ci-failure-diagnosis)
 - [Break-Glass Bootstrap](#break-glass-bootstrap)
 - [Teardown](#teardown)
 - [Security Best Practices](#security-best-practices)
@@ -41,6 +41,7 @@ This repository contains Terraform configurations for the **six member accounts*
 - ✅ **Isolated VPC Networks** with a hub-and-spoke Transit Gateway topology (`network` as hub, `production`/`development` as spokes)
 - ✅ **Single S3 State Bucket** with isolated state files per account, each role scoped to only its own prefix
 - ✅ **SSM Parameter Store** for sharing account IDs and TGW info across accounts and repos
+- ✅ **AI-assisted CI failure triage** — when a Terraform plan or apply fails, a **read-only LLM agent** (Claude) reads the error logs *and* the repository and posts a root-cause diagnosis on the PR. Advisory only: it runs no commands, changes no code, touches no AWS, and never blocks a merge — see [AI-Assisted CI Failure Diagnosis](#ai-assisted-ci-failure-diagnosis)
 - ✅ **Modular Design** for reusability and maintainability
 
 ### ✨ Key Features
@@ -53,6 +54,7 @@ This repository contains Terraform configurations for the **six member accounts*
 | 📦 **Modular Infrastructure** | Reusable modules for VPC, Transit Gateway, IAM/OIDC roles, and per-account permissions boundaries |
 | 🗂️ **State Isolation** | Each account's role can only touch its own prefix in the shared state bucket |
 | 🛡️ **CI-Enforced Guardrails** | Checkov scanning, required approvals on production/teardown, branch protection on `main` |
+| 🤖 **AI CI Triage** | Read-only LLM agent (Claude) diagnoses failed plans/applies from the logs + repo source; advisory, never mutates anything |
 
 
 ---
@@ -225,7 +227,7 @@ backend "s3" {
 
 ## 🔄 CI/CD Pipeline
 
-The core workflows in [.github/workflows/](.github/workflows/) all authenticate via GitHub OIDC — no IAM access keys in any of them. The two `diagnose*` workflows are covered under [CI Failure Diagnosis](#-ci-failure-diagnosis):
+The core workflows in [.github/workflows/](.github/workflows/) all authenticate via GitHub OIDC — no IAM access keys in any of them. The two `diagnose*` workflows are covered under [AI-Assisted CI Failure Diagnosis](#ai-assisted-ci-failure-diagnosis):
 
 | Workflow | Trigger | What it does |
 |---|---|---|
@@ -239,24 +241,43 @@ The core workflows in [.github/workflows/](.github/workflows/) all authenticate 
 
 ---
 
-## 🩺 CI Failure Diagnosis
+## 🤖 AI-Assisted CI Failure Diagnosis
 
-`.github/workflows/diagnose.yml` fires after `terraform-plan.yaml` finishes with `conclusion: failure`, fetches that run's failed-step logs, and posts a best-effort diagnosis (what failed / root cause / suggested fix / confidence) as a comment on the PR — described in prose only, never as a patch. It is read-only by design: `contents: read`, `actions: read`, `pull-requests: write` and nothing else. It never checks out anything but `prompts/diagnose.md` and `.checkov.yaml` (the latter so the model reads the real, current Checkov skip-list instead of a paraphrase of it) — never module source, never account-specific infrastructure, never AWS, never a push, never a PR edit.
+**A read-only LLM agent that explains CI failures.** When a Terraform plan or apply fails, Claude looks at the error logs *and* opens the repo to see the actual code. It works like a person debugging — read the error, open the file it points to, follow it into the module, check related spots — then writes up what went wrong. It decides which files to read on its own; it isn't a fixed script. It can only read: no commands, no file changes, no AWS, and it doesn't post anything itself. The result is unverified advice — a human still reads it and decides. It never blocks a merge or fixes anything.
 
-**Setup:** add an `ANTHROPIC_API_KEY` repository secret (Settings → Secrets and variables → Actions) with a key that has API access. Nothing else to configure.
+`.github/workflows/diagnose.yml` fires after `terraform-plan.yaml` finishes with `conclusion: failure` and posts a best-effort diagnosis (what failed / root cause / suggested fix / confidence) as a PR comment — prose only, never a patch. Claude reads the failed-step logs **and the PR's Terraform source**, so it can name the exact file and line rather than guessing from the error text. It has **file-reading tools only** (`--tools "Read,Grep,Glob"`) — no shell, no write/edit, no network, no AWS. It cannot run `terraform`, change anything, or retry the run.
 
-**Scope note:** `terraform-plan.yaml` plans against every changed member account, including `production` and `security` — so failure logs (and therefore this bot's diagnosis) can reference resources from those accounts. `prompts/diagnose.md` instructs the model not to repeat account IDs, ARNs, or other credential-shaped strings verbatim, but nothing here redacts logs before they leave the repo. Treat this the same as any other CI log output that touches those accounts.
+**Two jobs, so the untrusted input never meets a write token:**
 
-**`workflow_run`, forks, and the same-repo gate.** `workflow_run` always runs the version of `diagnose.yml` committed to the *default branch*, regardless of which branch or PR triggered `terraform-plan.yaml` — so editing this workflow only takes effect once merged to `main`, not from within an open PR that changes it. `workflow_run` also keeps running with full `secrets`/token access even when the triggering `terraform-plan.yaml` run came from a fork PR that itself had no secrets. Because the job spends `ANTHROPIC_API_KEY` and posts a PR comment with `pull-requests: write`, the job is gated with `if: github.event.workflow_run.head_repository.full_name == github.repository` — it only runs for `terraform-plan.yaml` runs on a branch in this repo, never for a fork PR. This closes both the "open a fork PR, fail the plan, drain the API key on repeat" cost path and the "craft log text to steer the LLM-authored PR comment" injection path. `prompts/diagnose.md` still instructs the model to treat log content as data, never as instructions, as defence in depth.
+| Job | Permissions | What it does |
+|---|---|---|
+| `analyze` | `contents: read`, `actions: read`, `pull-requests: read` | Checks out the code, runs Claude over logs + source, writes `diagnosis.md`, uploads it as an artifact. Holds the Claude credential. **Cannot comment.** |
+| `comment` | `pull-requests: write` | Downloads `diagnosis.md` and posts it. **Never runs Claude** — only handles the finished file. |
+
+**Two checkouts.** The prompt (`prompts/diagnose.md`) and `.checkov.yaml` come from the **default branch** (so a PR can't rewrite its own diagnosis instructions); the code Claude reads comes from the **PR's commit** (`head_sha`), in a separate directory that Claude's file tools are scoped to.
+
+**`workflow_run` + same-repo gate.** `workflow_run` always runs the default-branch copy of this file, with full secrets/token access, even for fork-triggered runs — so `analyze` is gated with `if: github.event.workflow_run.head_repository.full_name == github.repository`. Fork PRs never reach it (`actions/checkout@v7` also refuses fork PR code under `workflow_run`).
+
+**Residual risk, accepted.** A collaborator with write access could craft `.tf` content or log text to steer the diagnosis comment. Claude has no tools beyond reading files and cannot post anything itself, so the worst case is a misleading comment — bounded, and low for a near-solo repo. The GitHub-recommended alternative (fold diagnosis into `terraform-plan.yaml` as a `failure()` job so there's no `workflow_run` privilege boundary at all) is the next step if this repo takes on untrusted contributors.
+
+**Auth / cost.** Claude authenticates with `CLAUDE_CODE_OAUTH_TOKEN` (a subscription token from `claude setup-token`), so runs count against a Claude subscription rather than incurring per-token API charges. There must be **no Anthropic API key** in the job — a static key outranks the OAuth token in `-p` mode and silently bills API instead.
+
+**Scope note:** `terraform-plan.yaml` plans against every changed member account, including `production` and `security` — failure logs (and the diagnosis) can reference those accounts. The prompt instructs the model not to repeat account IDs, ARNs, or credential-shaped strings verbatim, but nothing redacts logs before they leave the repo. Treat it like any other CI log output touching those accounts.
+
+**Setup:**
+1. Locally, `claude setup-token` → copy the printed `sk-ant-oat...` token.
+2. `gh secret set CLAUDE_CODE_OAUTH_TOKEN --repo <org>/<repo>`
+3. `gh secret delete ANTHROPIC_API_KEY --repo <org>/<repo>` (if it exists — it would override the OAuth token).
+4. Set a reminder to regenerate the token before its ~1-year expiry.
 
 ### Apply failures
 
-`.github/workflows/diagnose-apply.yml` is the same idea, aimed at `terraform-apply.yaml` instead of `terraform-plan.yaml`, using its own prompt (`prompts/diagnose-apply.md`). Same read-only design — `contents: read`, `actions: read`, `pull-requests: write`, `--tools ""` on the Claude CLI call, sparse checkout of just the prompt and `.checkov.yaml` — with two differences that follow from apply being a materially different risk than plan:
+`.github/workflows/diagnose-apply.yml` is the same two-job design aimed at `terraform-apply.yaml`, with its own prompt (`prompts/diagnose-apply.md`), and two differences that follow from apply being a materially different risk than plan:
 
-- **No open PR to look up by branch.** `terraform-apply.yaml` triggers on `push` to `main` after merge, so unlike the plan-side bot, this resolves the PR by tracing the pushed commit back to the merged PR that produced it (`listPullRequestsAssociatedWithCommit`, the same lookup `terraform-apply.yaml`'s own `resolve-plan-run` job does) rather than by head branch. A manual `workflow_dispatch` apply, or a push that can't be traced to a merged PR, has no PR to comment on — the diagnosis still runs, and gets posted to that run's own step summary instead of being dropped.
-- **The prompt is built around one hard rule: never suggest retrying.** An apply failure can mean AWS was partially changed before the error hit — `prompts/diagnose-apply.md` requires a dedicated "Partial-state risk" section in every diagnosis, calls out the specific log signals that mean a retry could apply an unreviewed plan (`Saved plan is stale`, `Out of retry attempts`), and is instructed to never propose a re-run, a retry, or `workflow_dispatch` as a fix under any circumstance — that call belongs to a human who has confirmed real AWS state first, same principle `terraform-apply.yaml` itself already enforces by refusing to auto-apply an unreviewed plan.
+- **Single checkout.** Apply runs on `push` to `main` after merge, so the commit is already reviewed — prompt and code come from one checkout of `head_sha`. The PR is resolved by tracing the pushed commit back to its merged PR (`listPullRequestsAssociatedWithCommit`); a manual `workflow_dispatch` apply, or an untraceable push, has no PR, so the `comment` job posts to the run's step summary instead.
+- **Never suggest retrying.** An apply failure can mean AWS was partially changed before the error. `prompts/diagnose-apply.md` requires a dedicated "Partial-state risk" section, calls out the log signals that mean a retry could apply an unreviewed plan (`Saved plan is stale`, `Out of retry attempts`), and forbids proposing a re-run, retry, or `workflow_dispatch` as a fix — that call belongs to a human who has confirmed real AWS state first.
 
-**Setup:** shares the same `ANTHROPIC_API_KEY` secret as `diagnose.yml` — nothing extra to configure if that's already set up.
+**Setup:** shares the `CLAUDE_CODE_OAUTH_TOKEN` secret with `diagnose.yml` — nothing extra.
 
 ---
 
