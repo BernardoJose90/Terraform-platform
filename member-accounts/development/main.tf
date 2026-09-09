@@ -129,7 +129,7 @@ module "terraform_deploy_boundary" {
   # See production/main.tf's boundary comment for the full reasoning;
   # this account's infrastructure shape (module.vpc, module.tgw_attachment
   # below) is the same, minus prod-purpose-subnets.
-  enable_vpc_networking = true
+  # enable_vpc_networking = true
 
   extra_assumable_role_arns = local.extra_assumable_role_arns
 }
