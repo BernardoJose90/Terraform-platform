@@ -136,7 +136,7 @@ jobs:
       # tag. Keep this in sync with diagnose-apply.yml's pin.
       - name: Install Claude Code CLI
         if: steps.find-pr.outputs.pr_number != ''
-        run: npm install -g @anthropic-ai/claude-code@2.1.241
+        run: npm install -g @anthropic-ai/claude-code@2.1.266
 
       - name: Run diagnosis
         if: steps.find-pr.outputs.pr_number != ''
@@ -165,12 +165,16 @@ jobs:
 
           # --tools "Read,Grep,Glob": Claude can read the checked-out source
           # and nothing else — no shell, no write/edit, no network, no AWS.
-          # Run from ./code so the file tools are scoped to the PR's source
-          # and can't reach ./_trusted or the runner's home.
+          # --max-turns 20: hard ceiling on the agent loop (a normal
+          # diagnosis takes well under 10 tool calls), so a confused or
+          # injection-driven run stops instead of grinding to the job
+          # timeout. Run from ./code so the file tools are scoped to the
+          # PR's source and can't reach ./_trusted or the runner's home.
           cd code
           claude -p "$(cat "$RUNNER_TEMP/combined_prompt.txt")" \
             --model claude-sonnet-5 \
             --tools "Read,Grep,Glob" \
+            --max-turns 20 \
             --output-format text \
             > "$RUNNER_TEMP/diagnosis.md"
 

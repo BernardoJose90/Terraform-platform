@@ -1,0 +1,30 @@
+# Code owners. GitHub requests a review from the owner(s) of any path a PR
+# touches. This only becomes a MERGE REQUIREMENT once branch protection on
+# `main` has "Require review from Code Owners" turned on
+# (Settings -> Rules -> the `protect-main` ruleset).
+#
+# One owner today (@BernardoJose90). When a GitHub team exists, replace it
+# with @<org>/<team> — ideally a security-minded reviewer for the entries
+# below, since a bad change to any of them widens blast radius rather than
+# just breaking a build.
+#
+# Ordering: later patterns win, so broad rules are listed first and narrow
+# overrides last.
+
+# --- CI/CD pipeline, OIDC trust, IAM, security scanning ---
+/.github/                             @BernardoJose90
+/modules/github-oidc-roles/           @BernardoJose90
+/modules/terraform-deploy-boundary/   @BernardoJose90
+/member-accounts/security/            @BernardoJose90
+/.checkov.yaml                        @BernardoJose90
+/.tflint.hcl                          @BernardoJose90
+/.pre-commit-config.yaml              @BernardoJose90
+
+# --- AI CI failure diagnosis ---
+# These control what the LLM agent is allowed to do (`--tools`, `--max-turns`,
+# the auth model) and its prompt-injection guardrails. A change here can turn
+# "posts a misleading comment" into "has a shell in CI". Review as a security
+# change, not as docs.
+/.github/workflows/diagnose.yml        @BernardoJose90
+/.github/workflows/diagnose-apply.yml  @BernardoJose90
+/prompts/                             @BernardoJose90
