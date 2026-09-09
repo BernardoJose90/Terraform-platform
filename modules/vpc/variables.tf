@@ -38,8 +38,9 @@ variable "private_subnets" {
   description = "Private subnet CIDRs, one per AZ, in the same order as var.azs."
   type        = list(string)
 
-  # aws_route.private_to_tgw matches each AZ to a private route table by
-  # position in the list — that only works if both lists are the same length.
+  # The caller's own 0.0.0.0/0-to-TGW route (in each spoke account's
+  # main.tf) matches each AZ to a private route table by position in the
+  # list — that only works if there's exactly one private subnet per AZ.
   validation {
     condition     = length(var.private_subnets) == length(var.azs)
     error_message = "private_subnets and azs must be the same length (one private subnet per AZ)."
@@ -84,25 +85,27 @@ variable "one_nat_gateway_per_az" {
 }
 
 variable "tgw_id" {
-  description = "If set, adds a 0.0.0.0/0 route from private subnets to this TGW (spoke VPCs)"
+  description = "Transit Gateway ID for a spoke VPC. This module doesn't create the route itself — the caller adds the 0.0.0.0/0-to-TGW route in its own main.tf. Passed here only so the validation blocks below can confirm the caller declared a coherent egress setup. Leave null for the egress VPC or a deliberately isolated VPC."
   type        = string
   default     = null
 
-  # Both of these write a 0.0.0.0/0 route into the same private route
-  # tables, and AWS only allows one default route per table. Setting both
-  # would fail partway through apply with RouteAlreadyExists, leaving a
-  # half-built VPC behind — with its NAT gateways already running (and
-  # billing).
+  # enable_nat_gateway makes the upstream module write a 0.0.0.0/0 route
+  # via NAT into the private route tables; a non-null tgw_id means the
+  # caller will write its own 0.0.0.0/0 route to the TGW into those same
+  # tables. AWS only allows one default route per table, so doing both
+  # fails partway through apply with RouteAlreadyExists — leaving a
+  # half-built VPC behind, NAT gateways already running (and billing).
   validation {
     condition     = !(var.tgw_id != null && var.enable_nat_gateway)
-    error_message = "tgw_id and enable_nat_gateway are mutually exclusive — both write a 0.0.0.0/0 route to the private route tables."
+    error_message = "tgw_id and enable_nat_gateway are mutually exclusive — each drives a 0.0.0.0/0 route into the same private route tables."
   }
 
   # This one's a policy choice, not a safety check: it insists every VPC
   # from this module has some way out to the internet — unless the caller
   # explicitly opts out with allow_no_default_route = true (a deliberately
-  # isolated VPC). True for network and production today; development sets
-  # the opt-out while it's temporarily detached from the Transit Gateway.
+  # isolated VPC). tgw_id for production today, enable_nat_gateway for
+  # network; development sets the opt-out while it's detached from the
+  # Transit Gateway.
   validation {
     condition     = var.tgw_id != null || var.enable_nat_gateway || var.allow_no_default_route
     error_message = "Set tgw_id (spoke VPC), enable_nat_gateway (egress VPC), or allow_no_default_route (deliberately isolated). Otherwise private subnets have no default route to anywhere."

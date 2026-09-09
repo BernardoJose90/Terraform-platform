@@ -2,7 +2,7 @@
 
 > A production-ready, multi-account AWS infrastructure managed with Terraform, featuring centralized identity management, cross-account IAM roles, and isolated VPC environments.
 
-![Terraform](https://img.shields.io/badge/Terraform-1.11-623CE4?style=flat&logo=terraform)
+![Terraform](https://img.shields.io/badge/Terraform-1.15-623CE4?style=flat&logo=terraform)
 ![AWS](https://img.shields.io/badge/AWS-EU--West--2-FF9900?style=flat&logo=amazon-aws)
 ![License](https://img.shields.io/badge/License-MIT-green)
 ![Status](https://img.shields.io/badge/Status-Production_Ready-brightgreen)
@@ -50,7 +50,7 @@ This repository contains Terraform configurations for the **six member accounts*
 | 🔐 **Delegated SSO** | Users, groups, and permission sets managed from the `security` account |
 | 🔑 **Least Privilege** | Environment-scoped OIDC trust, optional IAM permissions boundaries, MFA-gated break-glass |
 | 🔄 **Cross-Account Roles** | Scoped `TerraformDeploy`/`TerraformPlan` roles per account, assumed only via GitHub Actions OIDC |
-| 📦 **Modular Infrastructure** | Reusable modules for VPC, TGW, IAM/OIDC roles, and EKS |
+| 📦 **Modular Infrastructure** | Reusable modules for VPC, Transit Gateway, IAM/OIDC roles, and per-account permissions boundaries |
 | 🗂️ **State Isolation** | Each account's role can only touch its own prefix in the shared state bucket |
 | 🛡️ **CI-Enforced Guardrails** | Checkov scanning, required approvals on production/teardown, branch protection on `main` |
 
@@ -94,18 +94,17 @@ Terraform-platform/
 │
 ├── 📂 modules/                    # Reusable Terraform modules
 │ ├── 📂 github-oidc-roles/        # OIDC trust policy + deploy/plan roles (every account)
-│ ├── 📂 vpc/                      # VPC with private subnets
+│ ├── 📂 terraform-deploy-boundary/ # Permissions boundary capping TerraformDeploy per account
+│ ├── 📂 vpc/                      # VPC with private subnets (+ optional NAT, flow logs)
 │ ├── 📂 tgw/                      # Transit Gateway (network account)
 │ ├── 📂 tgw-attachment/           # Spoke VPC → TGW attachment
 │ ├── 📂 tgw-static-routes/        # Static routes on the TGW route table
 │ ├── 📂 tgw-spoke-wiring-role/    # Cross-account role network uses to wire a spoke
-│ ├── 📂 prod-purpose-subnets/     # Purpose-tagged subnets (EKS/RDS/ALB) for production
-│ ├── 📂 iam/                      # Shared IAM helpers
-│ └── 📂 eks/                      # EKS cluster module — not yet called by any account
+│ └── 📂 prod-purpose-subnets/     # Per-workload subnets + route tables (EKS/RDS/ALB) for production
 │
-├── 📂 scripts/                    # teardown.sh (interactive full teardown)
-├── 📂 docs/                       # teardown.md and other reference docs
-├── 📂 .github/workflows/          # terraform-plan / terraform-apply / terraform-teardown / drift-detection
+├── 📂 scripts/                    # teardown.sh, breakglass-bootstrap.sh, apply-boundary.sh
+├── 📂 docs/                       # teardown.md
+├── 📂 .github/workflows/          # terraform-plan / terraform-apply / terraform-teardown / drift-detection / secret-scan / diagnose(-apply)
 ├── 📄 providers.tf                # One aliased aws provider per account (root-level)
 ├── 📄 README.md                   # This file
 └── 📄 .gitignore
@@ -121,7 +120,7 @@ Before you begin, ensure you have:
 
 | Tool | Version | Installation |
 |------|---------|--------------|
-| **Terraform** | exact version in [`.terraform-version`](.terraform-version) (the single source CI reads); `required_version` is `>= 1.11.0` | [Install Terraform](https://developer.hashicorp.com/terraform/downloads) |
+| **Terraform** | exact version in [`.terraform-version`](.terraform-version) (the single source CI reads); `required_version` is `>= 1.15.0` | [Install Terraform](https://developer.hashicorp.com/terraform/downloads) |
 | **AWS CLI** | >= 2.0 | [Install AWS CLI](https://aws.amazon.com/cli/) |
 | **Git** | Latest | [Install Git](https://git-scm.com/downloads) |
 
@@ -226,14 +225,15 @@ backend "s3" {
 
 ## 🔄 CI/CD Pipeline
 
-Four workflows in [.github/workflows/](.github/workflows/), all authenticating via GitHub OIDC — no IAM access keys in any of them:
+The core workflows in [.github/workflows/](.github/workflows/) all authenticate via GitHub OIDC — no IAM access keys in any of them. The two `diagnose*` workflows are covered under [CI Failure Diagnosis](#-ci-failure-diagnosis):
 
 | Workflow | Trigger | What it does |
 |---|---|---|
-| `terraform-plan.yaml` | PR opened/updated against `main` | Discovers changed account folders from the PR diff (accounts come from SSM at runtime — adding a new account needs no workflow change), runs `Validate & Format`, Checkov (`Security Scan`, uploaded as SARIF to the Security tab), and a `plan` per changed account. The plan file is uploaded as an artifact. |
-| `terraform-apply.yaml` | Push to `main` (i.e. a PR merge) | Re-applies the **exact same plan artifact** reviewed in the PR, traced back through the merge commit — never a freshly-computed plan, so what was reviewed is what ships. A production apply refuses to run if that reviewed plan can't be found, rather than silently planning fresh. Each account applies behind its own GitHub Environment approval gate (`production-approval` by default, per-account tier from SSM). |
+| `terraform-plan.yaml` | PR opened/updated against `main` | Discovers changed account folders from the PR diff (accounts come from SSM at runtime — adding a new account needs no workflow change), runs `Validate & Format`, Checkov (`Security Scan`, uploaded as SARIF to the Security tab), `Lint (tflint)`, and a `plan` per changed account (Infracost cost diff folded into the plan job). The plan file is uploaded as an artifact. |
+| `terraform-apply.yaml` | Push to `main` (i.e. a PR merge) | Re-applies the **exact same plan artifact** reviewed in the PR, traced back through the merge commit — never a freshly-computed plan, so what was reviewed is what ships. A production apply refuses to run if that reviewed plan can't be found, rather than silently planning fresh. Each account applies behind its own GitHub Environment approval gate (`production-approval` by default, per-account tier from SSM). On failure, posts to Slack if configured. |
 | `terraform-teardown.yaml` | `workflow_dispatch` only | Full `terraform destroy` in strict dependency order — see [Teardown](#teardown). Requires typing `destroy-workloads` as a confirm input. |
 | `drift-detection.yaml` | Scheduled, daily | Refresh-only plan per account (never mutates anything). On drift: opens/updates a PR on a `drift/<account>` branch, posts to Slack if configured, then fails the job as a last-resort notification. |
+| `secret-scan.yaml` | PR against `main`, and pushes to `main` | Runs gitleaks over the diff for committed credentials — mirrors the local `gitleaks` pre-commit hook. |
 
 `main` is protected by a GitHub ruleset (`protect-main`) requiring `Validate & Format`, `Security Scan (Checkov)`, and `Plan Summary` to pass, plus an open PR, before merge.
 
@@ -364,7 +364,7 @@ choice rather than a hard technical constraint — override it deliberately if
 a run genuinely needs to revoke assignments too.
 
 **A caveat worth understanding before running either tool:** both use
-`-target` (this repo's Terraform version — `required_version >= 1.11.0`, exact
+`-target` (this repo's Terraform version — `required_version >= 1.15.0`, exact
 pin in `.terraform-version` — has no `-exclude` flag) to select "everything except the excluded set." `-target`
 updates state but not the `.tf` config, so a plain `terraform plan` run
 immediately after a targeted destroy will show every destroyed resource as
