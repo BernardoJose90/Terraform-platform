@@ -2,31 +2,32 @@
 ## Requirements
 
 | Name | Version |
-|------|---------|
-| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.11.0 |
+| ---- | ------- |
+| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.15.0 |
 | <a name="requirement_aws"></a> [aws](#requirement\_aws) | ~> 6.0 |
 
 ## Providers
 
 | Name | Version |
-|------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.58.0 |
-| <a name="provider_aws.management"></a> [aws.management](#provider\_aws.management) | 6.58.0 |
-| <a name="provider_aws.network"></a> [aws.network](#provider\_aws.network) | 6.58.0 |
+| ---- | ------- |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.62.0 |
+| <a name="provider_aws.management"></a> [aws.management](#provider\_aws.management) | 6.62.0 |
+| <a name="provider_aws.network"></a> [aws.network](#provider\_aws.network) | 6.62.0 |
 
 ## Modules
 
 | Name | Source | Version |
-|------|--------|---------|
+| ---- | ------ | ------- |
 | <a name="module_github-oidc-roles"></a> [github-oidc-roles](#module\_github-oidc-roles) | ../../modules/github-oidc-roles | n/a |
 | <a name="module_prod_purpose_subnets"></a> [prod\_purpose\_subnets](#module\_prod\_purpose\_subnets) | ../../modules/prod-purpose-subnets | n/a |
+| <a name="module_terraform_deploy_boundary"></a> [terraform\_deploy\_boundary](#module\_terraform\_deploy\_boundary) | ../../modules/terraform-deploy-boundary | n/a |
 | <a name="module_tgw_attachment"></a> [tgw\_attachment](#module\_tgw\_attachment) | ../../modules/tgw-attachment | n/a |
 | <a name="module_vpc"></a> [vpc](#module\_vpc) | ../../modules/vpc | n/a |
 
 ## Resources
 
 | Name | Type |
-|------|------|
+| ---- | ---- |
 | [aws_ec2_transit_gateway_route_table_association.tgw_rtb_association](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ec2_transit_gateway_route_table_association) | resource |
 | [aws_ec2_transit_gateway_route_table_propagation.main](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ec2_transit_gateway_route_table_propagation) | resource |
 | [aws_ec2_transit_gateway_route_table_propagation.spoke](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ec2_transit_gateway_route_table_propagation) | resource |
@@ -40,7 +41,7 @@
 ## Inputs
 
 | Name | Description | Type | Default | Required |
-|------|-------------|------|---------|:--------:|
+| ---- | ----------- | ---- | ------- | :------: |
 | <a name="input_aws_region"></a> [aws\_region](#input\_aws\_region) | AWS region to deploy the production environment into. | `string` | `"eu-west-2"` | no |
 | <a name="input_azs"></a> [azs](#input\_azs) | AZs to deploy the production VPC and TGW attachment into | `list(string)` | <pre>[<br/>  "eu-west-2a",<br/>  "eu-west-2b"<br/>]</pre> | no |
 | <a name="input_cidr"></a> [cidr](#input\_cidr) | CIDR block for the production VPC | `string` | `"10.20.0.0/16"` | no |
@@ -51,7 +52,7 @@
 ## Outputs
 
 | Name | Description |
-|------|-------------|
+| ---- | ----------- |
 | <a name="output_tgw_attachment_id"></a> [tgw\_attachment\_id](#output\_tgw\_attachment\_id) | TGW VPC attachment ID for the production spoke. Null when networking\_enabled = false. |
 | <a name="output_vpc_cidr"></a> [vpc\_cidr](#output\_vpc\_cidr) | Null when networking\_enabled = false. |
 | <a name="output_vpc_id"></a> [vpc\_id](#output\_vpc\_id) | Null when networking\_enabled = false. |

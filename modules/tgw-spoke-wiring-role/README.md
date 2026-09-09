@@ -6,8 +6,8 @@ No requirements.
 ## Providers
 
 | Name | Version |
-|------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.58.0 |
+| ---- | ------- |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | n/a |
 
 ## Modules
 
@@ -16,7 +16,7 @@ No modules.
 ## Resources
 
 | Name | Type |
-|------|------|
+| ---- | ---- |
 | [aws_iam_role.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
 | [aws_iam_role_policy.this](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role_policy) | resource |
 | [aws_caller_identity.current](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/caller_identity) | data source |
@@ -28,7 +28,7 @@ No modules.
 ## Inputs
 
 | Name | Description | Type | Default | Required |
-|------|-------------|------|---------|:--------:|
+| ---- | ----------- | ---- | ------- | :------: |
 | <a name="input_name"></a> [name](#input\_name) | IAM role name — must be unique within the network account (e.g. TgwSpokeWiringProduction). | `string` | n/a | yes |
 | <a name="input_route_table_arns"></a> [route\_table\_arns](#input\_route\_table\_arns) | TGW route table ARNs this role may associate/propagate/route into — the spoke's own route table plus main. Never another spoke's table. | `list(string)` | n/a | yes |
 | <a name="input_spoke_account_id"></a> [spoke\_account\_id](#input\_spoke\_account\_id) | The single spoke account trusted to assume this role. | `string` | n/a | yes |
@@ -40,6 +40,6 @@ No modules.
 ## Outputs
 
 | Name | Description |
-|------|-------------|
+| ---- | ----------- |
 | <a name="output_role_arn"></a> [role\_arn](#output\_role\_arn) | n/a |
 <!-- END_TF_DOCS -->

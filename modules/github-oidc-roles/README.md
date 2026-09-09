@@ -6,8 +6,8 @@ No requirements.
 ## Providers
 
 | Name | Version |
-|------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.58.0 |
+| ---- | ------- |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | n/a |
 
 ## Modules
 
@@ -16,7 +16,7 @@ No modules.
 ## Resources
 
 | Name | Type |
-|------|------|
+| ---- | ---- |
 | [aws_iam_openid_connect_provider.github](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_openid_connect_provider) | resource |
 | [aws_iam_policy.terraform_plan_s3_role](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_policy) | resource |
 | [aws_iam_role.terraform_deploy](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/iam_role) | resource |
@@ -34,12 +34,13 @@ No modules.
 ## Inputs
 
 | Name | Description | Type | Default | Required |
-|------|-------------|------|---------|:--------:|
+| ---- | ----------- | ---- | ------- | :------: |
 | <a name="input_account_name"></a> [account\_name](#input\_account\_name) | Short name for this account, e.g. "security", "production" — used only for tagging. | `string` | n/a | yes |
 | <a name="input_extra_assumable_role_arns"></a> [extra\_assumable\_role\_arns](#input\_extra\_assumable\_role\_arns) | Additional IAM role ARNs (typically in other accounts) that this account's TerraformDeploy and TerraformPlan roles may assume — e.g. a spoke account's TGW wiring role in the network account. Empty by default; most accounts don't need this. | `list(string)` | `[]` | no |
 | <a name="input_github_org"></a> [github\_org](#input\_github\_org) | GitHub org or username that owns the repo, e.g. "your-org" | `string` | `"BernardoJose90"` | no |
 | <a name="input_github_repo"></a> [github\_repo](#input\_github\_repo) | Repository name only, no org prefix, e.g. "Terraform-platform" | `string` | `"Terraform-platform"` | no |
 | <a name="input_management_account_id"></a> [management\_account\_id](#input\_management\_account\_id) | Account ID allowed to assume this role. | `string` | `"145678291484"` | no |
+| <a name="input_permissions_boundary_arn"></a> [permissions\_boundary\_arn](#input\_permissions\_boundary\_arn) | Optional ARN of an IAM permissions boundary to attach to the<br/>TerraformDeploy role. This module's own `permissions` policy above is<br/>shared across every account that calls this module and is written wide<br/>(ec2:*, unconstrained iam:CreateRole/AttachRolePolicy, VPN logging) for<br/>accounts that actually run that kind of infrastructure. A boundary caps<br/>what's *usable* for one specific caller without narrowing the shared<br/>policy itself, so accounts that do need the wide grant are unaffected.<br/>Leave unset (the default) for no boundary — the role's effective<br/>permissions are then exactly what `permissions` above grants, unchanged<br/>from before this variable existed. | `string` | `null` | no |
 | <a name="input_role_name"></a> [role\_name](#input\_role\_name) | Name to give the Terraform deploy IAM role. | `string` | `"TerraformDeploy"` | no |
 | <a name="input_state_bucket_name"></a> [state\_bucket\_name](#input\_state\_bucket\_name) | Name of the S3 bucket holding Terraform state, which this role needs read/write access to. | `string` | `"james-terraform-state-2026"` | no |
 | <a name="input_state_key_prefix"></a> [state\_key\_prefix](#input\_state\_key\_prefix) | Folder in the state bucket this account owns. Must match the backend key. | `string` | n/a | yes |
@@ -47,7 +48,7 @@ No modules.
 ## Outputs
 
 | Name | Description |
-|------|-------------|
+| ---- | ----------- |
 | <a name="output_plan_role_arn"></a> [plan\_role\_arn](#output\_plan\_role\_arn) | n/a |
 | <a name="output_role_arn"></a> [role\_arn](#output\_role\_arn) | n/a |
 | <a name="output_role_name"></a> [role\_name](#output\_role\_name) | n/a |

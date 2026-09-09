@@ -1,16 +1,25 @@
 # ======================================================================================
-# Shared VPC module, used by all three accounts:
+# Shared VPC module, used by all three networking accounts:
 #   - network      : egress VPC with NAT gateways (enable_nat_gateway = true, tgw_id = null)
-#   - development  : private-only spoke, egress via TGW (enable_nat_gateway = false, tgw_id set)
-#   - production   : private-only spoke, egress via TGW (enable_nat_gateway = false, tgw_id set)
+#   - development  : private-only spoke (enable_nat_gateway = false, tgw_id set when
+#                    wired into the TGW, null when running detached/isolated)
+#   - production   : private-only spoke (enable_nat_gateway = false, tgw_id set)
+#
+# This module builds the VPC, subnets, route tables and (optionally) flow
+# logs. It does NOT create the 0.0.0.0/0 route to the Transit Gateway —
+# that lives in the calling account's own main.tf, because the route can't
+# be created until the TGW attachment exists, which happens after this
+# module runs. tgw_id is still passed in, but only so the validation
+# blocks in variables.tf can check the caller declared a coherent egress
+# setup.
 # ======================================================================================
 
 terraform {
-  # 1.9+ isn't just a nice-to-have here — it's required. The validation
-  # blocks in variables.tf check one variable's value against another
-  # variable, and Terraform only gained the ability to do that in 1.9. On
-  # an older version, those blocks fail outright with "Invalid reference in
-  # variable validation"
+  # Pinned to match .terraform-version (the single source CI reads). The
+  # floor matters: the validation blocks in variables.tf check one
+  # variable's value against another, which Terraform only supports from
+  # 1.9 on — on an older CLI they fail outright with "Invalid reference in
+  # variable validation".
   required_version = ">= 1.15.0"
 
   required_providers {
@@ -106,10 +115,9 @@ resource "aws_kms_alias" "flow_log" {
 
 module "vpc" {
   source = "terraform-aws-modules/vpc/aws"
-  # 6.0.0 needs AWS provider v6, which all three accounts already have.
-  # It also switches how the flow-log group's ARN gets built, away from an
-  # attribute that AWS has since deprecated — which is what stops the
-  # "Deprecated attribute" plan warning that vpc-flow-logs.tf used to show.
+  # 6.x needs AWS provider v6, which all three accounts already have. It
+  # also builds the flow-log group's ARN from a non-deprecated attribute,
+  # which is what cleared the old "Deprecated attribute" plan warning.
   version = "~> 6.0"
 
   name = var.name

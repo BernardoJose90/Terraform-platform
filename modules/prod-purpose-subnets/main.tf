@@ -52,13 +52,12 @@ resource "aws_route" "to_tgw" {
   transit_gateway_id     = var.tgw_id
 }
 
-# These record resources that got renamed from the old
-# modules/purpose-subnets module (see the module-level "moved" block over
-# in member-accounts/production/main.tf too). Without them, Terraform
-# would think these are brand-new resources and plan to destroy the
-# existing subnets, route tables, and associations, then recreate them —
-# which would break the subnet IDs that RDS, EKS, and the ALB already
-# depend on.
+# These record resources that got renamed (from "this" to the current
+# names) when this module was split out of the old modules/purpose-subnets.
+# Without them, Terraform would think these are brand-new resources and
+# plan to destroy the existing subnets, route tables, and associations,
+# then recreate them — which would break the subnet IDs that RDS, EKS, and
+# the ALB already depend on.
 moved {
   from = aws_subnet.this
   to   = aws_subnet.prod_workload_sub

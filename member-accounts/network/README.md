@@ -2,26 +2,28 @@
 ## Requirements
 
 | Name | Version |
-|------|---------|
-| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.11.0 |
+| ---- | ------- |
+| <a name="requirement_terraform"></a> [terraform](#requirement\_terraform) | >= 1.15.0 |
 | <a name="requirement_aws"></a> [aws](#requirement\_aws) | ~> 6.0 |
+| <a name="requirement_null"></a> [null](#requirement\_null) | ~> 3.2 |
 
 ## Providers
 
 | Name | Version |
-|------|---------|
-| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.58.0 |
-| <a name="provider_aws.management"></a> [aws.management](#provider\_aws.management) | 6.58.0 |
+| ---- | ------- |
+| <a name="provider_aws"></a> [aws](#provider\_aws) | 6.62.0 |
+| <a name="provider_aws.management"></a> [aws.management](#provider\_aws.management) | 6.62.0 |
 
 ## Modules
 
 | Name | Source | Version |
-|------|--------|---------|
+| ---- | ------ | ------- |
 | <a name="module_egress_tgw_attachment"></a> [egress\_tgw\_attachment](#module\_egress\_tgw\_attachment) | ../../modules/tgw-attachment | n/a |
 | <a name="module_egress_vpc"></a> [egress\_vpc](#module\_egress\_vpc) | ../../modules/vpc | n/a |
 | <a name="module_github-oidc-roles"></a> [github-oidc-roles](#module\_github-oidc-roles) | ../../modules/github-oidc-roles | n/a |
 | <a name="module_routes_dev_spoke"></a> [routes\_dev\_spoke](#module\_routes\_dev\_spoke) | ../../modules/tgw-static-routes | n/a |
 | <a name="module_routes_prod_spoke"></a> [routes\_prod\_spoke](#module\_routes\_prod\_spoke) | ../../modules/tgw-static-routes | n/a |
+| <a name="module_terraform_deploy_boundary"></a> [terraform\_deploy\_boundary](#module\_terraform\_deploy\_boundary) | ../../modules/terraform-deploy-boundary | n/a |
 | <a name="module_tgw"></a> [tgw](#module\_tgw) | ../../modules/tgw | n/a |
 | <a name="module_tgw_spoke_wiring_development"></a> [tgw\_spoke\_wiring\_development](#module\_tgw\_spoke\_wiring\_development) | ../../modules/tgw-spoke-wiring-role | n/a |
 | <a name="module_tgw_spoke_wiring_production"></a> [tgw\_spoke\_wiring\_production](#module\_tgw\_spoke\_wiring\_production) | ../../modules/tgw-spoke-wiring-role | n/a |
@@ -29,7 +31,7 @@
 ## Resources
 
 | Name | Type |
-|------|------|
+| ---- | ---- |
 | [aws_ec2_tag.nat_gateway_name](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ec2_tag) | resource |
 | [aws_ec2_tag.private_tgw_route_table_name](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ec2_tag) | resource |
 | [aws_ec2_tag.public_nat_route_table_name](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/resources/ec2_tag) | resource |
@@ -52,7 +54,7 @@
 ## Inputs
 
 | Name | Description | Type | Default | Required |
-|------|-------------|------|---------|:--------:|
+| ---- | ----------- | ---- | ------- | :------: |
 | <a name="input_amazon_side_asn"></a> [amazon\_side\_asn](#input\_amazon\_side\_asn) | Amazon side ASN for the Transit Gateway | `number` | `64512` | no |
 | <a name="input_aws_region"></a> [aws\_region](#input\_aws\_region) | AWS region to deploy the network environment into. | `string` | `"eu-west-2"` | no |
 | <a name="input_azs"></a> [azs](#input\_azs) | AZs to deploy the egress VPC and TGW attachments into | `list(string)` | <pre>[<br/>  "eu-west-2a",<br/>  "eu-west-2b"<br/>]</pre> | no |
@@ -68,7 +70,7 @@
 ## Outputs
 
 | Name | Description |
-|------|-------------|
+| ---- | ----------- |
 | <a name="output_egress_vpc_cidr"></a> [egress\_vpc\_cidr](#output\_egress\_vpc\_cidr) | Null when networking\_enabled = false. |
 | <a name="output_egress_vpc_id"></a> [egress\_vpc\_id](#output\_egress\_vpc\_id) | Null when networking\_enabled = false. |
 | <a name="output_ram_resource_share_arn"></a> [ram\_resource\_share\_arn](#output\_ram\_resource\_share\_arn) | RAM resource share ARN — also published to SSM at /transit-gateway/ram\_resource\_share\_arn. Null when networking\_enabled = false. |
