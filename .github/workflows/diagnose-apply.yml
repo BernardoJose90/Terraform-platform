@@ -99,7 +99,7 @@ jobs:
 
       # Keep this pin in sync with diagnose.yml.
       - name: Install Claude Code CLI
-        run: npm install -g @anthropic-ai/claude-code@2.1.241
+        run: npm install -g @anthropic-ai/claude-code@2.1.266
 
       - name: Run diagnosis
         env:
@@ -126,9 +126,13 @@ jobs:
 
           # --tools "Read,Grep,Glob": read the checked-out source and
           # nothing else — no shell, no write/edit, no network, no AWS.
+          # --max-turns 20: hard ceiling on the agent loop, so a confused
+          # or injection-driven run stops instead of running to the job
+          # timeout.
           claude -p "$(cat "$RUNNER_TEMP/combined_prompt.txt")" \
             --model claude-sonnet-5 \
             --tools "Read,Grep,Glob" \
+            --max-turns 20 \
             --output-format text \
             > "$RUNNER_TEMP/diagnosis.md"
 
