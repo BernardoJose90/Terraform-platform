@@ -47,7 +47,7 @@ repos:
   - repo: https://github.com/antonbabenko/pre-commit-terraform
     rev: v1.108.1
     hooks:
-      # The exact same command terraform-apply.yaml's quick-validate step
+      # The exact same command deploy-apply.yaml's quick-validate step
       # runs. If this passes on your machine, that CI job can't fail.
       - id: terraform_fmt
 
@@ -58,7 +58,7 @@ repos:
           - --init-args=-backend=false
         exclude: ^modules/ # modules get validated through whatever account calls them
 
-      # Same tflint policy the `lint` job in terraform-plan.yaml runs, from
+      # Same tflint policy the `lint` job in deploy-plan.yaml runs, from
       # the same .tflint.hcl — a clean run here means a clean run in CI.
       # Scoped to member-accounts/ to match that job and the checkov hook
       # below. Needs `tflint --init` run once per clone (see the header).
@@ -82,6 +82,6 @@ repos:
           - --compact
           - --quiet
         # Only scans member-accounts, matching `directory: member-accounts/`
-        # in terraform-plan.yaml. Modules get covered indirectly, through
+        # in deploy-plan.yaml. Modules get covered indirectly, through
         # whatever account calls them.
         files: ^member-accounts/.*\.tf$

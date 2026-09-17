@@ -48,7 +48,7 @@ env:
 jobs:
   # ──────────────────────────────────────────────────────────────────────────────
   # 1. Find every account, by reading the list stored in SSM. Same idea as
-  #    terraform-plan.yaml, but without filtering down to "only changed
+  #    deploy-plan.yaml, but without filtering down to "only changed
   #    accounts" — drift can show up in an account nobody's touched
   #    recently, so this checks every account, every night.
   # ──────────────────────────────────────────────────────────────────────────────

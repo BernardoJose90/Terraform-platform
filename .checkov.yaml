@@ -198,7 +198,7 @@ skip-check:
 
   # CKV2_AWS_35 — "The default route should go through a NAT gateway".
   # This one's a false alarm we accidentally introduced ourselves, with
-  # the EVAL_TF_PLAN_AFTER_UNKNOWN=true setting in terraform-plan.yaml
+  # the EVAL_TF_PLAN_AFTER_UNKNOWN=true setting in deploy-plan.yaml
   # (added to fix a different, real finding — CKV_AWS_158, about the
   # flow-log encryption key). Here's why: our routes never set
   # instance_id (we use nat_gateway_id/gateway_id instead), but AWS's own

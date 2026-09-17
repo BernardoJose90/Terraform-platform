@@ -27,10 +27,10 @@ already made deliberately. They may drift out of date; if the log excerpt or
 the checked-out code conflicts with something stated here, trust the log and
 the code.
 
-- **Scope — this is the only workflow you ever see:** `diagnose.yml` fires
+- **Scope — this is the only workflow you ever see:** `ai-diagnose.yml` fires
   only on completion of "Terraform Plan" (Detect Changed Accounts →
-  Validate & Format → Security Scan → Plan). `terraform-apply.yaml`,
-  `drift-detection.yaml`, and `terraform-teardown.yaml` are separate
+  Validate & Format → Security Scan → Plan). `deploy-apply.yaml`,
+  `safety-drift-detection.yaml`, and `deploy-teardown.yaml` are separate
   workflows that never trigger this diagnosis — whatever failed came from
   one of the four jobs above, not an apply, a drift check, or a teardown.
 - **Multi-account layout:** `member-accounts/<name>/` — currently
@@ -129,7 +129,7 @@ the code.
   list — not as a missing IAM permission, which is a different fix
   entirely.
 - **`Error acquiring the state lock` can be genuine concurrent access, not
-  a stuck lock.** `terraform-plan.yaml`'s concurrency group is scoped per
+  a stuck lock.** `deploy-plan.yaml`'s concurrency group is scoped per
   PR (`tf-plan-<PR number>`), not per account — two different PRs that
   both touch the same account's folder can legitimately run `terraform
   plan` at the same time, and this repo's S3-native locking

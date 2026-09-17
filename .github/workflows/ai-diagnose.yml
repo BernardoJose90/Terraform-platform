@@ -1,6 +1,6 @@
 name: CI Failure Diagnosis
 
-# Fires after "Terraform Plan" (.github/workflows/terraform-plan.yaml)
+# Fires after "Terraform Plan" (.github/workflows/deploy-plan.yaml)
 # completes with a failure. Split into two jobs so the step that handles
 # untrusted input never also holds a write permission:
 #
@@ -133,7 +133,7 @@ jobs:
 
       # ubuntu-latest doesn't ship the claude CLI. Pinned to a version
       # confirmed on the npm registry; bump deliberately, not via a floating
-      # tag. Keep this in sync with diagnose-apply.yml's pin.
+      # tag. Keep this in sync with ai-diagnose-apply.yml's pin.
       - name: Install Claude Code CLI
         if: steps.find-pr.outputs.pr_number != ''
         run: npm install -g @anthropic-ai/claude-code@2.1.266
