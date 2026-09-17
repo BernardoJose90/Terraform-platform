@@ -82,7 +82,7 @@ jobs:
   # ──────────────────────────────────────────────────────────────────────────────
   # 2. Discover account IDs from SSM (read-only), to build each account's
   # TerraformDeploy role ARN. Same discovery role pattern as
-  # terraform-apply.yaml.
+  # deploy-apply.yaml.
   # ──────────────────────────────────────────────────────────────────────────────
   discover-accounts:
     name: Discover Account IDs

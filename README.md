@@ -172,7 +172,7 @@ You MUST deploy in this order:
 4. **`production` / `development`** — TGW spokes; each reads `network`'s TGW ID via a data source, so `network` must already be applied
 5. **`monitoring` / `security_analytics`** — no dependency on the others, deploy any time after `security`
 
-In CI, this ordering is enforced automatically: `terraform-plan.yaml`/`terraform-apply.yaml` discover changed account folders from the PR diff and fan out a matrix job per account, and `terraform-teardown.yaml` runs the reverse order strictly tiered (see [Teardown](#teardown)).
+In CI, this ordering is enforced automatically: `deploy-plan.yaml`/`deploy-apply.yaml` discover changed account folders from the PR diff and fan out a matrix job per account, and `deploy-teardown.yaml` runs the reverse order strictly tiered (see [Teardown](#teardown)).
 
 ### Manual / local apply, in order
 
@@ -231,11 +231,11 @@ The core workflows in [.github/workflows/](.github/workflows/) all authenticate 
 
 | Workflow | Trigger | What it does |
 |---|---|---|
-| `terraform-plan.yaml` | PR opened/updated against `main` | Discovers changed account folders from the PR diff (accounts come from SSM at runtime — adding a new account needs no workflow change), runs `Validate & Format`, Checkov (`Security Scan`, uploaded as SARIF to the Security tab), `Lint (tflint)`, and a `plan` per changed account (Infracost cost diff folded into the plan job). The plan file is uploaded as an artifact. |
-| `terraform-apply.yaml` | Push to `main` (i.e. a PR merge) | Re-applies the **exact same plan artifact** reviewed in the PR, traced back through the merge commit — never a freshly-computed plan, so what was reviewed is what ships. A production apply refuses to run if that reviewed plan can't be found, rather than silently planning fresh. Each account applies behind its own GitHub Environment approval gate (`production-approval` by default, per-account tier from SSM). On failure, posts to Slack if configured. |
-| `terraform-teardown.yaml` | `workflow_dispatch` only | Full `terraform destroy` in strict dependency order — see [Teardown](#teardown). Requires typing `destroy-workloads` as a confirm input. |
-| `drift-detection.yaml` | Scheduled, daily | Refresh-only plan per account (never mutates anything). On drift: opens/updates a PR on a `drift/<account>` branch, posts to Slack if configured, then fails the job as a last-resort notification. |
-| `secret-scan.yaml` | PR against `main`, and pushes to `main` | Runs gitleaks over the diff for committed credentials — mirrors the local `gitleaks` pre-commit hook. |
+| `deploy-plan.yaml` | PR opened/updated against `main` | Discovers changed account folders from the PR diff (accounts come from SSM at runtime — adding a new account needs no workflow change), runs `Validate & Format`, Checkov (`Security Scan`, uploaded as SARIF to the Security tab), `Lint (tflint)`, and a `plan` per changed account (Infracost cost diff folded into the plan job). The plan file is uploaded as an artifact. |
+| `deploy-apply.yaml` | Push to `main` (i.e. a PR merge) | Re-applies the **exact same plan artifact** reviewed in the PR, traced back through the merge commit — never a freshly-computed plan, so what was reviewed is what ships. A production apply refuses to run if that reviewed plan can't be found, rather than silently planning fresh. Each account applies behind its own GitHub Environment approval gate (`production-approval` by default, per-account tier from SSM). On failure, posts to Slack if configured. |
+| `deploy-teardown.yaml` | `workflow_dispatch` only | Full `terraform destroy` in strict dependency order — see [Teardown](#teardown). Requires typing `destroy-workloads` as a confirm input. |
+| `safety-drift-detection.yaml` | Scheduled, daily | Refresh-only plan per account (never mutates anything). On drift: opens/updates a PR on a `drift/<account>` branch, posts to Slack if configured, then fails the job as a last-resort notification. |
+| `safety-secret-scan.yaml` | PR against `main`, and pushes to `main` | Runs gitleaks over the diff for committed credentials — mirrors the local `gitleaks` pre-commit hook. |
 
 `main` is protected by a GitHub ruleset (`protect-main`) requiring `Validate & Format`, `Security Scan (Checkov)`, and `Plan Summary` to pass, plus an open PR, before merge.
 
@@ -245,7 +245,7 @@ The core workflows in [.github/workflows/](.github/workflows/) all authenticate 
 
 **A read-only LLM agent that explains CI failures.** When a Terraform plan or apply fails, Claude looks at the error logs *and* opens the repo to see the actual code. It works like a person debugging — read the error, open the file it points to, follow it into the module, check related spots — then writes up what went wrong. It decides which files to read on its own; it isn't a fixed script. It can only read: no commands, no file changes, no AWS, and it doesn't post anything itself. The result is unverified advice — a human still reads it and decides. It never blocks a merge or fixes anything.
 
-`.github/workflows/diagnose.yml` fires after `terraform-plan.yaml` finishes with `conclusion: failure` and posts a best-effort diagnosis (TL;DR / what failed / root cause / suggested fix / confidence) as a PR comment — prose only, never a patch, with per-section length caps to keep it skimmable. Claude reads the failed-step logs **and the PR's Terraform source**, so it can name the exact file and line rather than guessing from the error text. It has **file-reading tools only** (`--tools "Read,Grep,Glob"`) — no shell, no write/edit, no network, no AWS — and a hard `--max-turns 20` cap on the agent loop. It cannot run `terraform`, change anything, or retry the run.
+`.github/workflows/ai-diagnose.yml` fires after `deploy-plan.yaml` finishes with `conclusion: failure` and posts a best-effort diagnosis (TL;DR / what failed / root cause / suggested fix / confidence) as a PR comment — prose only, never a patch, with per-section length caps to keep it skimmable. Claude reads the failed-step logs **and the PR's Terraform source**, so it can name the exact file and line rather than guessing from the error text. It has **file-reading tools only** (`--tools "Read,Grep,Glob"`) — no shell, no write/edit, no network, no AWS — and a hard `--max-turns 20` cap on the agent loop. It cannot run `terraform`, change anything, or retry the run.
 
 **Two jobs, so the untrusted input never meets a write token:**
 
@@ -258,11 +258,11 @@ The core workflows in [.github/workflows/](.github/workflows/) all authenticate 
 
 **`workflow_run` + same-repo gate.** `workflow_run` always runs the default-branch copy of this file, with full secrets/token access, even for fork-triggered runs — so `analyze` is gated with `if: github.event.workflow_run.head_repository.full_name == github.repository`. Fork PRs never reach it (`actions/checkout@v7` also refuses fork PR code under `workflow_run`).
 
-**Residual risk, accepted.** A collaborator with write access could craft `.tf` content or log text to steer the diagnosis comment. Claude has no tools beyond reading files and cannot post anything itself, so the worst case is a misleading comment — bounded, and low for a near-solo repo. Changes to the agent's config (`.github/workflows/diagnose*.yml`, `prompts/`) require code-owner review ([`.github/CODEOWNERS`](.github/CODEOWNERS)) so a PR can't quietly widen `--tools` past the read-only set. The GitHub-recommended alternative (fold diagnosis into `terraform-plan.yaml` as a `failure()` job so there's no `workflow_run` privilege boundary at all) is the next step if this repo takes on untrusted contributors.
+**Residual risk, accepted.** A collaborator with write access could craft `.tf` content or log text to steer the diagnosis comment. Claude has no tools beyond reading files and cannot post anything itself, so the worst case is a misleading comment — bounded, and low for a near-solo repo. Changes to the agent's config (`.github/workflows/ai-diagnose*.yml`, `prompts/`) require code-owner review ([`.github/CODEOWNERS`](.github/CODEOWNERS)) so a PR can't quietly widen `--tools` past the read-only set. The GitHub-recommended alternative (fold diagnosis into `deploy-plan.yaml` as a `failure()` job so there's no `workflow_run` privilege boundary at all) is the next step if this repo takes on untrusted contributors.
 
 **Auth / cost.** Claude authenticates with `CLAUDE_CODE_OAUTH_TOKEN` (a subscription token from `claude setup-token`), so runs count against a Claude subscription rather than incurring per-token API charges. There must be **no Anthropic API key** in the job — a static key outranks the OAuth token in `-p` mode and silently bills API instead.
 
-**Scope note:** `terraform-plan.yaml` plans against every changed member account, including `production` and `security` — failure logs (and the diagnosis) can reference those accounts. The prompt instructs the model not to repeat account IDs, ARNs, or credential-shaped strings verbatim, but nothing redacts logs before they leave the repo. Treat it like any other CI log output touching those accounts.
+**Scope note:** `deploy-plan.yaml` plans against every changed member account, including `production` and `security` — failure logs (and the diagnosis) can reference those accounts. The prompt instructs the model not to repeat account IDs, ARNs, or credential-shaped strings verbatim, but nothing redacts logs before they leave the repo. Treat it like any other CI log output touching those accounts.
 
 **Setup:**
 1. Locally, `claude setup-token` → copy the printed `sk-ant-oat...` token.
@@ -272,12 +272,12 @@ The core workflows in [.github/workflows/](.github/workflows/) all authenticate 
 
 ### Apply failures
 
-`.github/workflows/diagnose-apply.yml` is the same two-job design aimed at `terraform-apply.yaml`, with its own prompt (`prompts/diagnose-apply.md`), and two differences that follow from apply being a materially different risk than plan:
+`.github/workflows/ai-diagnose-apply.yml` is the same two-job design aimed at `deploy-apply.yaml`, with its own prompt (`prompts/diagnose-apply.md`), and two differences that follow from apply being a materially different risk than plan:
 
 - **Single checkout.** Apply runs on `push` to `main` after merge, so the commit is already reviewed — prompt and code come from one checkout of `head_sha`. The PR is resolved by tracing the pushed commit back to its merged PR (`listPullRequestsAssociatedWithCommit`); a manual `workflow_dispatch` apply, or an untraceable push, has no PR, so the `comment` job posts to the run's step summary instead.
 - **Never suggest retrying.** An apply failure can mean AWS was partially changed before the error. `prompts/diagnose-apply.md` requires a dedicated "Partial-state risk" section, calls out the log signals that mean a retry could apply an unreviewed plan (`Saved plan is stale`, `Out of retry attempts`), and forbids proposing a re-run, retry, or `workflow_dispatch` as a fix — that call belongs to a human who has confirmed real AWS state first.
 
-**Setup:** shares the `CLAUDE_CODE_OAUTH_TOKEN` secret with `diagnose.yml` — nothing extra.
+**Setup:** shares the `CLAUDE_CODE_OAUTH_TOKEN` secret with `ai-diagnose.yml` — nothing extra.
 
 ---
 
@@ -331,7 +331,7 @@ comments on that variable and around the SSM parameter resources in
 `member-accounts/network/main.tf` for exactly how that's kept safe across
 the flag flipping.
 
-### Full teardown: `scripts/teardown.sh` / `terraform-teardown.yaml`
+### Full teardown: `scripts/teardown.sh` / `deploy-teardown.yaml`
 
 For "the project is finished, fully empty the workload layer" — a real
 `terraform destroy`, run in strict dependency order, across all six member
@@ -340,7 +340,7 @@ accounts. Two implementations exist for two different contexts:
 - **`scripts/teardown.sh`** — run locally, by a human, interactively. Requires
   `--confirm` on the command line *and* typing the literal phrase
   `destroy-workloads` when prompted.
-- **`.github/workflows/terraform-teardown.yaml`** — `workflow_dispatch` only,
+- **`.github/workflows/deploy-teardown.yaml`** — `workflow_dispatch` only,
   never triggered by a push. Requires a `confirm` input matching
   `destroy-workloads` (validated in the first job, before anything else can
   run) and a `tier` input (`spokes` / `spokes-and-network` / `all`)

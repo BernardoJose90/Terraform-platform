@@ -29,24 +29,24 @@ already made deliberately. They may drift out of date; if the log excerpt or
 the checked-out code conflicts with something stated here, trust the log and
 the code.
 
-- **Scope — this is the only workflow you ever see:** `diagnose-apply.yml`
+- **Scope — this is the only workflow you ever see:** `ai-diagnose-apply.yml`
   fires only on completion of "Terraform Apply" (Quick Validate → Detect
   Changed Accounts → Discover & Filter Accounts → Locate and download
   reviewed plan → Terraform Apply - network → Terraform Apply - `<account>`
-  → Apply Summary). `terraform-plan.yaml` has its own, separate diagnosis
-  bot (`diagnose.yml` / `prompts/diagnose.md`) — don't reach for that
-  workflow's failure modes here. `drift-detection.yaml` and
-  `terraform-teardown.yaml` never trigger this diagnosis either — whatever
+  → Apply Summary). `deploy-plan.yaml` has its own, separate diagnosis
+  bot (`ai-diagnose.yml` / `prompts/diagnose.md`) — don't reach for that
+  workflow's failure modes here. `safety-drift-detection.yaml` and
+  `deploy-teardown.yaml` never trigger this diagnosis either — whatever
   failed came from an apply run, not a plan, a drift check, or a teardown.
 - **This runs on `push` to `main`, after merge — not on an open PR.** Unlike
-  `terraform-plan.yaml`'s diagnosis bot, there is no PR still open for
+  `deploy-plan.yaml`'s diagnosis bot, there is no PR still open for
   review at this point; the change already landed. If a PR comment carries
   this diagnosis, it's on the PR whose merge produced the failing commit,
   posted after the fact — not a request to change anything before merging.
 - **Reviewed-plan-or-refuse is a deliberate guardrail, not a bug to
   explain away.** For every `production-approval`-tier account (and always
   for `network`, unconditionally), the apply job downloads the exact
-  `tfplan.binary` that `terraform-plan.yaml` produced and a human reviewed
+  `tfplan.binary` that `deploy-plan.yaml` produced and a human reviewed
   on the merged PR, and applies that file byte-for-byte rather than
   computing a new plan. If that download comes back empty, the job
   deliberately **fails instead of falling back to a fresh plan** — an error
@@ -139,7 +139,7 @@ the code.
   above already accounts for this on the first automatic pass; only treat
   it as a live concern if the log shows all 3 attempts exhausted.
 - **`Error acquiring the state lock` here means genuine concurrent access
-  more often than in `terraform-plan.yaml`.** This workflow's concurrency
+  more often than in `deploy-plan.yaml`.** This workflow's concurrency
   group is scoped per account (`tf-apply-<account>`, `cancel-in-progress:
   false`), not per PR — so a second push landing while a prior apply for
   the same account is still running queues behind it rather than racing it.
@@ -148,7 +148,7 @@ the code.
   default to "clear the lock manually" without that context.
 - **Checkov skips live in `.checkov.yaml`, included in full below.** Apply
   itself doesn't run a Checkov scan — that already happened in
-  `terraform-plan.yaml` before this plan was ever reviewed — so a Checkov
+  `deploy-plan.yaml` before this plan was ever reviewed — so a Checkov
   finding should not appear in an apply failure log. If one does, that's
   unusual and worth noting as such rather than treated as routine.
 

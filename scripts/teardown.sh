@@ -116,7 +116,7 @@
 # (`aws sso login --profile X`) before running — this script switches
 # AWS_PROFILE per account as it goes. This is a local, human-run,
 # interactively-confirmed tool. The CI counterpart,
-# .github/workflows/terraform-teardown.yaml, is a deliberately separate
+# .github/workflows/deploy-teardown.yaml, is a deliberately separate
 # implementation — see that file for why it isn't just this script
 # invoked non-interactively.
 # --------------------------------------------------------------------
@@ -184,7 +184,7 @@ fi
 
 if [[ ! -t 0 ]]; then
   echo "Refusing to run without an interactive terminal — the typed confirmation phrase can't be read from a non-interactive shell." >&2
-  echo "(This is also why the CI workflow does not simply invoke this script — see terraform-teardown.yaml.)" >&2
+  echo "(This is also why the CI workflow does not simply invoke this script — see deploy-teardown.yaml.)" >&2
   exit 1
 fi
 

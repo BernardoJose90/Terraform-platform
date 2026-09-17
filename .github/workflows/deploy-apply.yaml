@@ -45,7 +45,7 @@ permissions:
   contents: read
   actions: read
   # Needed for `gh attestation verify` in resolve-plan-run's plan-integrity
-  # check (see terraform-plan.yaml's attest-build-provenance step, which is
+  # check (see deploy-plan.yaml's attest-build-provenance step, which is
   # what this verifies against).
   attestations: read
 
@@ -150,10 +150,10 @@ jobs:
           # bumps .terraform-version triggers this workflow (none of these
           # are in paths-ignore), reaches this job, matches neither diff,
           # and reports green having applied nothing — even though
-          # terraform-plan.yaml planned every account for the same change
+          # deploy-plan.yaml planned every account for the same change
           # on the PR. Same "can't map to one account, so do them all"
           # logic as modules/ above. Keep this list in sync with
-          # terraform-plan.yaml's own CHANGED_GLOBAL block — including its
+          # deploy-plan.yaml's own CHANGED_GLOBAL block — including its
           # note on why the root providers.tf is deliberately NOT listed
           # (nothing loads it during a per-account plan).
           CHANGED_GLOBAL=$(git diff --name-only "$BASE" HEAD -- \
@@ -357,7 +357,7 @@ jobs:
         continue-on-error: true
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
-          workflow: terraform-plan.yaml
+          workflow: deploy-plan.yaml
           # Only one of pr/commit can be set — the action errors if both
           # are given. pr takes priority when resolve-pr found one;
           # otherwise this falls back to matching the raw SHA directly,
@@ -369,7 +369,7 @@ jobs:
           if_no_artifact_found: warn
 
       # Downloading the right artifact by name isn't the same as knowing
-      # it's the right artifact. Before this, terraform-apply.yaml downloaded
+      # it's the right artifact. Before this, deploy-apply.yaml downloaded
       # tfplan-<account> and applied it with no check that it was ever
       # computed from the code that actually merged, and no proof it wasn't
       # substituted by anything with artifact-write scope. This step closes
@@ -436,7 +436,7 @@ jobs:
       # artifact expire early becomes a real trip hazard — a PR opened
       # right before someone's week off would expire its own plan and end
       # up blocking its own merge. Keep this the same as the two upload
-      # steps over in terraform-plan.yaml, which also need to stay at 30.
+      # steps over in deploy-plan.yaml, which also need to stay at 30.
       #
       # Only tfplan.binary is re-uploaded here, not tfplan.sha/.sha256 —
       # verification already happened once, above, centrally for every
@@ -688,7 +688,7 @@ jobs:
       # human, fast: by the time this runs, apply may have already changed
       # some resources in AWS and stopped partway — a half-applied Transit
       # Gateway change is the worst case, and network feeds every spoke. So
-      # this posts to Slack, the same way drift-detection.yaml does, instead
+      # this posts to Slack, the same way safety-drift-detection.yaml does, instead
       # of leaving the only signal as red text in a log page and GitHub's
       # failed-run email. Skips cleanly when no webhook is configured.
       - name: Apply Failure Notification

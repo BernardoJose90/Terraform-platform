@@ -25,6 +25,6 @@
 # the auth model) and its prompt-injection guardrails. A change here can turn
 # "posts a misleading comment" into "has a shell in CI". Review as a security
 # change, not as docs.
-/.github/workflows/diagnose.yml        @BernardoJose90
-/.github/workflows/diagnose-apply.yml  @BernardoJose90
+/.github/workflows/ai-diagnose.yml        @BernardoJose90
+/.github/workflows/ai-diagnose-apply.yml  @BernardoJose90
 /prompts/                             @BernardoJose90

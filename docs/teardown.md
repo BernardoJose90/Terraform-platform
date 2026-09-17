@@ -34,4 +34,4 @@ Each account carries a committed `teardown.auto.tfvars` file — that file, not 
 
 ## Related, but a different tool
 
-This is a *pause* — config still declares everything, only `count` changes, fully reversible via PR. A separate, more final tool (`scripts/teardown.sh` / the `terraform-teardown.yaml` workflow) exists for actually decommissioning the project entirely — a real `terraform destroy` across all six accounts, not just these three. Don't reach for that one expecting it to behave like this — it removes things from state, not just from AWS.
+This is a *pause* — config still declares everything, only `count` changes, fully reversible via PR. A separate, more final tool (`scripts/teardown.sh` / the `deploy-teardown.yaml` workflow) exists for actually decommissioning the project entirely — a real `terraform destroy` across all six accounts, not just these three. Don't reach for that one expecting it to behave like this — it removes things from state, not just from AWS.

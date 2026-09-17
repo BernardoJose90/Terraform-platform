@@ -192,8 +192,8 @@ jobs:
           # changes no account's plan and must not force an all-account
           # replan + reapply.
           CHANGED_GLOBAL=$(git diff --name-only origin/main...HEAD -- \
-            .github/workflows/terraform-plan.yaml \
-            .github/workflows/terraform-apply.yaml \
+            .github/workflows/deploy-plan.yaml \
+            .github/workflows/deploy-apply.yaml \
             .checkov.yaml \
             .tflint.hcl \
             .terraform-version \
@@ -682,7 +682,7 @@ jobs:
           retention-days: 7
 
       # Stamps this plan with the exact commit it was computed from, and
-      # hashes both files together. terraform-apply.yaml's resolve-plan-run
+      # hashes both files together. deploy-apply.yaml's resolve-plan-run
       # job checks this against the merged PR's actual head commit before
       # ever letting anything apply it without this, a plan reviewed at
       # commit A and a later commit B pushed to the same PR are

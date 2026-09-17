@@ -1,7 +1,7 @@
 name: CI Failure Diagnosis (Apply)
 
-# Fires after "Terraform Apply" (.github/workflows/terraform-apply.yaml)
-# completes with a failure. Same two-job shape as diagnose.yml (see that
+# Fires after "Terraform Apply" (.github/workflows/deploy-apply.yaml)
+# completes with a failure. Same two-job shape as ai-diagnose.yml (see that
 # file's header for the full reasoning):
 #
 #   analyze — reads the failed run's logs AND the repository at the merged
@@ -15,7 +15,7 @@ name: CI Failure Diagnosis (Apply)
 #
 # "Terraform Apply" triggers on push to main / workflow_dispatch, which a
 # fork can't do, so head_repository is always this repo here. The commit
-# checked out is already merged and reviewed, so — unlike diagnose.yml —
+# checked out is already merged and reviewed, so — unlike ai-diagnose.yml —
 # the prompt and the code can come from a single checkout of that commit.
 on:
   workflow_run:
@@ -57,7 +57,7 @@ jobs:
 
       # Terraform Apply runs on push, so there's no PR-flavoured head to
       # look up. Trace the pushed commit back to the PR that merged it, the
-      # same lookup terraform-apply.yaml's own resolve-plan-run job does.
+      # same lookup deploy-apply.yaml's own resolve-plan-run job does.
       # Empty for a direct push or a workflow_dispatch run.
       - name: Resolve PR number for the pushed commit
         id: find-pr
@@ -97,7 +97,7 @@ jobs:
           fi
           tail -c 40000 trimmed_log.txt > log_excerpt.txt
 
-      # Keep this pin in sync with diagnose.yml.
+      # Keep this pin in sync with ai-diagnose.yml.
       - name: Install Claude Code CLI
         run: npm install -g @anthropic-ai/claude-code@2.1.266
 
