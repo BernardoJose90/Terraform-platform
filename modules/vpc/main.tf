@@ -1,33 +1,47 @@
 # ======================================================================================
-# Shared VPC module, used by all three networking accounts:
-#   - network      : egress VPC with NAT gateways (enable_nat_gateway = true, tgw_id = null)
-#   - development  : private-only spoke (enable_nat_gateway = false, tgw_id set when
-#                    wired into the TGW, null when running detached/isolated)
-#   - production   : private-only spoke (enable_nat_gateway = false, tgw_id set)
+# Shared VPC (Virtual Private Cloud) module. All three networking accounts
+# use it:
+#   - network     : the internet-facing VPC. It has NAT (Network Address
+#                   Translation) gateways turned on (enable_nat_gateway =
+#                   true) and no Transit Gateway id (tgw_id = null).
+#   - development : a private-only "spoke" VPC (enable_nat_gateway =
+#                   false). tgw_id is set once it's wired into the
+#                   Transit Gateway (TGW), and left null while it's
+#                   running detached/isolated.
+#   - production  : a private-only spoke VPC (enable_nat_gateway = false,
+#                   tgw_id set).
 #
-# This module builds the VPC, subnets, route tables and (optionally) flow
-# logs. It does NOT create the 0.0.0.0/0 route to the Transit Gateway —
-# that lives in the calling account's own main.tf, because the route can't
-# be created until the TGW attachment exists, which happens after this
-# module runs. tgw_id is still passed in, but only so the validation
-# blocks in variables.tf can check the caller declared a coherent egress
-# setup.
+# A Transit Gateway is AWS's hub for routing traffic between VPCs and
+# on-prem networks, instead of connecting every VPC to every other VPC
+# directly.
+#
+# This module creates the VPC itself, its subnets, its route tables, and
+# (optionally) flow logs. It deliberately does NOT create the default
+# route (0.0.0.0/0, meaning "everything else") that sends outbound
+# traffic to the Transit Gateway. That route is created in the calling
+# account's own main.tf instead, because it can only be created after
+# the VPC is attached to the TGW — and that attachment happens after this
+# module has already run. tgw_id is still passed into this module, but
+# only so the checks in variables.tf can confirm the caller has set up a
+# consistent way for traffic to leave the VPC.
 # ======================================================================================
 
 terraform {
-  # Pinned to match .terraform-version (the single source CI reads). The
-  # floor matters: the validation blocks in variables.tf check one
-  # variable's value against another, which Terraform only supports from
-  # 1.9 on — on an older CLI they fail outright with "Invalid reference in
-  # variable validation".
+  # This version must match .terraform-version, which is the single
+  # source of truth that CI reads. The minimum version matters here: the
+  # validation blocks in variables.tf check one variable's value against
+  # another, and Terraform has only supported that since version 1.9. On
+  # an older CLI those checks fail outright with an "Invalid reference in
+  # variable validation" error.
   required_version = ">= 1.15.0"
 
   required_providers {
     aws = {
       source = "hashicorp/aws"
-      # All three accounts are on AWS provider 6.x now, so this is pinned
-      # to match them, rather than quietly accepting whatever major
-      # version the calling account happens to have.
+      # All three accounts now use version 6.x of the AWS provider (the
+      # plugin Terraform uses to talk to AWS), so this is pinned to match
+      # them. That's safer than silently accepting whatever major version
+      # happens to be installed in the calling account.
       version = "~> 6.0"
     }
   }
@@ -38,25 +52,30 @@ data "aws_region" "current" {}
 data "aws_caller_identity" "current" {}
 
 # ======================================================================================
-# KMS key that encrypts the VPC flow logs at rest. One key per VPC,
-# created whenever flow logs are turned on (enable_flow_log). It's scoped
-# to log groups under "/aws/vpc-flow-log/" rather than one exact log group
-# name, because the log group's name ends in the VPC's own ID — and this
-# key gets created before that VPC exists, so that ID isn't known yet.
+# KMS (Key Management Service) key used to encrypt the VPC's flow logs at
+# rest. Flow logs are records of the network traffic going in and out of
+# the VPC. One key is created per VPC, whenever flow logs are turned on
+# (enable_flow_log). The key's policy scopes it to any log group whose
+# name starts with "/aws/vpc-flow-log/", rather than to one exact log
+# group name. That's because the real log group's name ends in the VPC's
+# own ID, and this key has to be created before the VPC exists — so that
+# ID isn't known yet.
 # ======================================================================================
 locals {
-  # Has to match the upstream module's own default exactly — we never
-  # override this value ourselves.
+  # This value must exactly match the default used internally by the
+  # upstream VPC module we call below — we never override it ourselves.
   flow_log_cloudwatch_log_group_name_prefix = "/aws/vpc-flow-log/"
 }
 
 data "aws_iam_policy_document" "flow_log_kms" {
   count = var.enable_flow_log ? 1 : 0
 
-  # Every KMS key policy needs a statement like this. Without an explicit
-  # grant back to the account root, this account's own IAM policies would
-  # lose all control over the key — a key's policy is the only thing AWS
-  # checks for a principal that isn't otherwise named in it.
+  # Every KMS key policy needs a statement like this one. It grants
+  # access back to the AWS account's root user. Without it, this
+  # account's own IAM (Identity and Access Management) policies would
+  # have no control over the key at all: for any principal (user or role)
+  # not explicitly named in the key's policy, AWS checks only that
+  # policy, and ignores IAM policies entirely.
   statement {
     sid     = "EnableIAMUserPermissions"
     effect  = "Allow"
@@ -82,9 +101,10 @@ data "aws_iam_policy_document" "flow_log_kms" {
       type        = "Service"
       identifiers = ["logs.${data.aws_region.current.region}.amazonaws.com"]
     }
-    # "*" here doesn't mean "any key" — a key policy document only ever
-    # describes grants on the one key it's attached to, so "*" just means
-    # "this key". The real scoping happens in the condition below instead.
+    # This "*" does not mean "any KMS key". A key's own policy document
+    # can only ever grant permissions on the single key it's attached to,
+    # so "*" here just means "this key". The actual narrowing of access
+    # happens in the condition block below.
     resources = ["*"]
 
     condition {
@@ -115,9 +135,10 @@ resource "aws_kms_alias" "flow_log" {
 
 module "vpc" {
   source = "terraform-aws-modules/vpc/aws"
-  # 6.x needs AWS provider v6, which all three accounts already have. It
-  # also builds the flow-log group's ARN from a non-deprecated attribute,
-  # which is what cleared the old "Deprecated attribute" plan warning.
+  # Version 6.x requires v6 of the AWS provider, which all three accounts
+  # already use. It also builds the flow log group's ARN (Amazon Resource
+  # Name, AWS's unique identifier format) from a newer attribute, which
+  # is what got rid of an old "Deprecated attribute" warning during plan.
   version = "~> 6.0"
 
   name = var.name
@@ -127,28 +148,31 @@ module "vpc" {
   private_subnets = var.private_subnets
   public_subnets  = var.public_subnets
 
-  # Only the network account's VPC should ever set these to true — spoke
-  # VPCs (production, development) stay private-only and send their
-  # outbound traffic out through the TGW instead
+  # Only the network account's VPC should ever set these to true. Spoke
+  # VPCs (production, development) stay private-only, and send their
+  # outbound traffic through the Transit Gateway instead.
   enable_nat_gateway     = var.enable_nat_gateway
   single_nat_gateway     = var.single_nat_gateway
   one_nat_gateway_per_az = var.one_nat_gateway_per_az
 
-  # A spoke VPC usually has no public subnets or internet gateway at all —
-  # enable_nat_gateway = false plus an empty public_subnets list is what
-  # gives you a fully private VPC.
+  # A spoke VPC usually has no public subnets or Internet Gateway (IGW,
+  # the resource that lets a VPC reach the public internet directly) at
+  # all. Setting enable_nat_gateway = false together with an empty
+  # public_subnets list is what makes the VPC fully private.
 
   private_subnet_names = var.private_subnet_names
   public_subnet_names  = var.public_subnet_names
   igw_tags             = var.igw_tags
 
-  # Flow logs go to CloudWatch Logs and are on by default
+  # Flow logs are sent to CloudWatch Logs and are on by default
   # (var.enable_flow_log). This whole chain — the KMS key, the log group,
-  # the delivery role/policy, and the flow log itself — needs several IAM
-  # permissions on TerraformDeploy that aren't obvious just from reading
-  # this file. They all live in modules/github-oidc-roles/main.tf, under
-  # FlowLogKmsKey, CloudWatchLogGroups, and PassFlowLogDeliveryRole — check
-  # there first if a change here starts failing with AccessDenied.
+  # the IAM role/policy that delivers logs, and the flow log resource
+  # itself — depends on several IAM permissions granted to the
+  # TerraformDeploy role. Those permissions aren't visible from this file
+  # alone; they live in modules/github-oidc-roles/main.tf, under the
+  # FlowLogKmsKey, CloudWatchLogGroups, and PassFlowLogDeliveryRole
+  # sections. Check there first if a change here starts failing with an
+  # AccessDenied error.
   enable_flow_log                                 = var.enable_flow_log
   create_flow_log_cloudwatch_log_group            = var.enable_flow_log
   create_flow_log_cloudwatch_iam_role             = var.enable_flow_log

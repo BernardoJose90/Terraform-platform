@@ -1,5 +1,5 @@
 variable "name" {
-  description = "Full, exact value for the attachment's Name tag (e.g. \"tgw-attach-Egress-vpc\") — used as-is, no suffix appended."
+  description = "Exact value to use for the attachment's Name tag (e.g. \"tgw-attach-Egress-vpc\"). Used as-is — no suffix is appended."
   type        = string
 }
 
@@ -13,7 +13,7 @@ variable "vpc_id" {
 }
 
 variable "subnet_ids" {
-  description = "One subnet per AZ, dedicated to the TGW attachment"
+  description = "One subnet per Availability Zone (AZ), dedicated to the Transit Gateway (TGW) attachment."
   type        = list(string)
 }
 

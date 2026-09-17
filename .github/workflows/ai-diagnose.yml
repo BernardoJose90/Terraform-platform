@@ -4,7 +4,7 @@ name: CI Failure Diagnosis
 # completes with a failure. Split into two jobs so the step that handles
 # untrusted input never also holds a write permission:
 #
-#   analyze — reads the failed run's logs AND the PR's Terraform source
+#   analyze — reads the failed run's logs AND the PR's (Pull Request's) Terraform source
 #             (checked out read-only) and runs Claude over both. Claude gets
 #             file-reading tools ONLY (Read, Grep, Glob) — no shell, no
 #             write/edit, no network, no AWS. Writes a diagnosis and uploads

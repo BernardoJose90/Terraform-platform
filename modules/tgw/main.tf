@@ -8,39 +8,46 @@ resource "aws_ec2_transit_gateway" "tgw" {
   tags                            = merge(var.tags, { Name = var.name })
 }
 
-# This resource used to be named "this" and got renamed to "tgw". Without
-# this moved block, Terraform would read that rename as "delete the old
-# one, create a new one" instead of an in-place rename — which would tear
-# down the actual Transit Gateway, and everything attached to it in every
-# account, then rebuild it from scratch.
+# This resource used to be named "this" and was later renamed to "tgw".
+# Without this moved block, Terraform would interpret that rename as
+# "delete the old resource, then create a new one" instead of an in-place
+# rename. That would actually destroy the real Transit Gateway in AWS —
+# along with everything attached to it in every account — and then
+# rebuild it from scratch.
 moved {
   from = aws_ec2_transit_gateway.this
   to   = aws_ec2_transit_gateway.tgw
 }
 
 # ============================================================
-# Terraform considers the TGW "created" the moment AWS accepts the create
-# call, but AWS's own control plane takes real time after that to bring
-# it from "pending" to "available" — especially on a fresh build like a
-# teardown -> re-enable cycle. Anything that tries to attach a VPC to the
-# TGW before it's actually available fails with "IncorrectState: ... is
-# in invalid state" — hit for real in production/development right after
-# network published a "successful" apply (see commit 386ff6c's run).
+# Terraform considers the Transit Gateway "created" the moment AWS
+# accepts the API call to create it. But behind the scenes, AWS takes
+# real time afterward to actually bring it from a "pending" state to an
+# "available" state — especially right after a fresh build, like a
+# teardown followed by a re-enable. If anything tries to attach a VPC to
+# the Transit Gateway before it's truly available, that attachment fails
+# with an "IncorrectState: ... is in invalid state" error. This has
+# happened for real: production and development hit it right after the
+# network account's apply had already reported success (see the run for
+# commit 386ff6c).
 #
-# There's no AWS CLI waiter and no Terraform-level fix for this: the
-# provider team was asked to track attachment state for exactly this
-# reason and declined (hashicorp/terraform-provider-aws#18412). So this
-# polls AWS directly for the real state and only lets anything downstream
-# proceed once it says "available" — not a blind fixed-length sleep,
-# which either wastes time when there's no race or isn't long enough
-# when there is (the same lesson already learned once for the IAM race,
-# see the "ci: replace fixed time_sleep with retry-on-AccessDenied"
-# commit).
+# There's no built-in AWS command and no fix on the Terraform side for
+# this gap. The AWS provider's maintainers were asked to track attachment
+# state for exactly this reason and declined the request (see
+# hashicorp/terraform-provider-aws issue #18412). So instead, this
+# resource polls AWS directly to check the Transit Gateway's real state,
+# and only lets anything downstream continue once AWS reports
+# "available". This is deliberately not a fixed-length sleep/pause: a
+# fixed wait either wastes time when there's no delay to wait out, or
+# isn't long enough when there is one. (We already learned this same
+# lesson once before, for a similar timing issue with IAM — see the
+# "ci: replace fixed time_sleep with retry-on-AccessDenied" commit.)
 # ============================================================
 resource "null_resource" "wait_for_tgw_available" {
-  # Keyed on the TGW's own ID, so a genuine replacement (a new TGW) waits
-  # again, but an unrelated re-apply of this module doesn't re-run the
-  # poll for a TGW that's already available.
+  # This is keyed on the Transit Gateway's own ID. That way, if the
+  # Transit Gateway is genuinely replaced (a brand new one is created),
+  # this wait runs again. But an unrelated re-apply of this module won't
+  # re-run the poll for a Transit Gateway that's already available.
   triggers = {
     tgw_id = aws_ec2_transit_gateway.tgw.id
   }
@@ -83,35 +90,40 @@ resource "null_resource" "wait_for_tgw_available" {
 }
 
 # ============================================================
-# The mirror-image problem, on teardown. Production and development's
-# TGW attachments get destroyed first (see the CI teardown tiers — spokes
-# always finish before network starts), but the same way apply doesn't
-# wait for "available", destroy doesn't wait for "actually gone": AWS
-# reports each attachment "deleting" for a while before it's really
-# removed, even though Terraform already called the spoke's destroy
-# complete. If network then tries to delete its route tables or the TGW
-# itself while one of those is still mid-delete, AWS rejects it —
-# "IncorrectState: tgw-xxx has non-deleted Transit Gateway Attachments",
-# a real previously-reported issue
-# (hashicorp/terraform-provider-aws#7196), not a hypothetical.
+# This is the mirror-image problem, but on teardown instead of creation.
+# Production and development's Transit Gateway attachments are destroyed
+# first (see the CI teardown order — the spoke accounts always finish
+# before the network account starts). But just as apply doesn't wait for
+# "available", destroy doesn't wait for "actually gone" either: AWS keeps
+# reporting an attachment as "deleting" for a while after Terraform has
+# already marked that spoke's destroy as complete. If the network account
+# then tries to delete its route tables or the Transit Gateway itself
+# while one of those attachments is still mid-delete, AWS rejects the
+# request with an error like "IncorrectState: tgw-xxx has non-deleted
+# Transit Gateway Attachments". This is a real, previously reported
+# problem (hashicorp/terraform-provider-aws issue #7196), not a
+# hypothetical edge case.
 #
-# destroy-time provisioners can only safely reference `self` — anything
-# else may already be gone from Terraform's perspective by the time this
-# runs, or create a cycle in the destroy graph (see HashiCorp's own
-# provisioner docs). That's why the TGW ID is captured into `triggers`
-# at CREATE time and read back via self.triggers here, instead of
-# referencing aws_ec2_transit_gateway.tgw.id directly.
+# Provisioners that run at destroy time can only safely reference
+# `self` (this same resource). Referencing anything else may already be
+# gone from Terraform's perspective by the time this runs, or it can
+# create a circular dependency in the destroy order (see HashiCorp's own
+# provisioner documentation on this). That's why the Transit Gateway's ID
+# is captured into `triggers` when this resource is first created, and
+# read back here via self.triggers, instead of referencing
+# aws_ec2_transit_gateway.tgw.id directly.
 # ============================================================
 resource "null_resource" "wait_for_attachments_cleared" {
   triggers = {
     tgw_id = aws_ec2_transit_gateway.tgw.id
   }
 
-  # Depends on the TGW and every route table it owns so that, on destroy,
-  # Terraform tears THIS down first (dependents are destroyed before what
-  # they depend on) — which is the whole point: this resource's
-  # destroy-time provisioner runs, and blocks, before Terraform is
-  # allowed to touch any of them.
+  # This depends on the Transit Gateway and every route table it owns.
+  # Terraform always destroys a resource's dependents before the resource
+  # itself, so on teardown this resource gets destroyed first. That's the
+  # whole point: it means this resource's destroy-time provisioner runs
+  # and blocks first, before Terraform is allowed to touch the Transit
+  # Gateway or any of its route tables.
   depends_on = [
     aws_ec2_transit_gateway.tgw,
     aws_ec2_transit_gateway_route_table.main,
@@ -149,14 +161,18 @@ resource "null_resource" "wait_for_attachments_cleared" {
 }
 
 # ============================================================
-# ROUTE TABLES. Each spoke gets its own table that only its own automation
-# can touch — production only touches prod_spoke, development only
-# touches dev_spoke (enforced in modules/tgw-spoke-wiring-role) — and
-# routes never propagate between them, so there's no direct path between
-# the two environments. "main" is the one table both spokes are allowed to
-# write to, and only to publish their own return route; it's attached to
-# the egress VPC's connection, so that's what NAT return traffic actually
-# consults. One narrow shared spot, everything else fully isolated.
+# ROUTE TABLES. Each spoke environment gets its own Transit Gateway route
+# table that only its own automation is allowed to touch: production can
+# only touch prod_spoke, and development can only touch dev_spoke (this
+# is enforced in modules/tgw-spoke-wiring-role). Routes never propagate
+# between these two tables, so there is no direct network path between
+# the production and development environments.
+#
+# "main" is the one route table both spokes are allowed to write to, and
+# only to publish their own "return" route back to themselves. It's
+# attached to the egress VPC's Transit Gateway connection, so it's the
+# table that NAT return traffic actually looks up. This gives one narrow,
+# deliberately shared spot, while keeping everything else fully isolated.
 # ============================================================
 resource "aws_ec2_transit_gateway_route_table" "main" {
   transit_gateway_id = aws_ec2_transit_gateway.tgw.id
@@ -174,7 +190,9 @@ resource "aws_ec2_transit_gateway_route_table" "dev_spoke" {
 }
 
 # ============================================================
-# RAM SHARING
+# RAM (Resource Access Manager) SHARING — this is what lets the
+# production and development accounts attach to a Transit Gateway that
+# actually lives in the network account.
 # ============================================================
 resource "aws_ram_resource_share" "tgw" {
   name                      = "${var.name}-share"
@@ -182,13 +200,14 @@ resource "aws_ram_resource_share" "tgw" {
   tags                      = var.tags
 }
 
-# Share the TGW itself
+# Shares the Transit Gateway resource itself with the accounts below.
 resource "aws_ram_resource_association" "tgw" {
   resource_arn       = aws_ec2_transit_gateway.tgw.arn
   resource_share_arn = aws_ram_resource_share.tgw.arn
 }
 
-# Share principals (prod/dev accounts)
+# Grants the production and development accounts permission to use the
+# shared Transit Gateway.
 resource "aws_ram_principal_association" "tgw" {
   for_each           = toset(var.share_with_principals)
   principal          = each.value

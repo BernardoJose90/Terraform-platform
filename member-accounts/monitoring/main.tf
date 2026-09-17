@@ -1,6 +1,10 @@
 ###############################################################################
 # Account: Monitoring
-# Purpose: Centralized CloudWatch, dashboards, alarms, X-Ray
+# Purpose: will hold centralized observability tooling — CloudWatch
+# (AWS's metrics/logs service), dashboards, alarms, and X-Ray (AWS's
+# distributed tracing service). At the moment, this account only has its
+# baseline setup (deploy role, CI/CD roles); none of that observability
+# infrastructure exists here yet.
 ###############################################################################
 
 terraform {
@@ -12,16 +16,16 @@ terraform {
     }
   }
   backend "s3" {
-    bucket       = "james-terraform-state-2026"   # same bucket as management
-    key          = "monitoring/terraform.tfstate" # different key
+    bucket       = "james-terraform-state-2026"   # same S3 bucket used by the management account
+    key          = "monitoring/terraform.tfstate" # but a different file path (key) within that bucket
     region       = "eu-west-2"
-    use_lockfile = true # native S3 locking
+    use_lockfile = true # uses S3's built-in locking, so concurrent applies don't corrupt the state file
     encrypt      = true
 
   }
 }
 
-# Provider for reading SSM from the management account (cross-account role).
+# Provider used to read parameters from AWS Systems Manager (SSM) Parameter Store in the management account, by assuming a role in that account.
 provider "aws" {
   alias  = "management"
   region = var.aws_region
@@ -35,20 +39,22 @@ data "aws_ssm_parameter" "monitoring_account_id" {
   name     = "/organizations/accounts/monitoring"
 }
 
-# Main provider for the monitoring account itself, no profile needed.
+# The main provider for the monitoring account itself — no assumed role needed since Terraform runs directly as this account.
 provider "aws" {
   region              = var.aws_region
   allowed_account_ids = [data.aws_ssm_parameter.monitoring_account_id.value]
 }
 
-# Caps TerraformDeploy to exactly the baseline every account needs — this
-# account has no resources of its own yet (see the file header), so no
-# extra_policy_json on top. When real CloudWatch/dashboards/alarms/X-Ray
-# resources get added here, the first apply that needs new IAM actions
-# will fail against this boundary — that's the intended fail-safe: it
-# forces a deliberate boundary update alongside the new infrastructure,
-# instead of this account silently carrying permissions for infrastructure
-# it doesn't have yet.
+# Limits the TerraformDeploy role to exactly the baseline permissions
+# every account needs — nothing more. This account has no resources of
+# its own yet (see the file header above), so there's no extra permission
+# policy (extra_policy_json) added on top of the baseline. When real
+# CloudWatch, dashboard, alarm, or X-Ray resources are eventually added
+# here, the first deployment that needs a new AWS permission will fail
+# against this permissions boundary. That failure is intentional: it
+# forces someone to deliberately update the boundary at the same time as
+# adding the new infrastructure, instead of this account silently
+# carrying permissions for infrastructure it doesn't actually have yet.
 module "terraform_deploy_boundary" {
   source = "../../modules/terraform-deploy-boundary"
 

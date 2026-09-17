@@ -1,6 +1,10 @@
 ###############################################################################
 # Account: Security
-# Purpose: GuardDuty delegated admin, Security Hub, IAM Access Analyzer
+#
+# Purpose: this account is the delegated admin for GuardDuty (AWS's
+# threat detection service) and Security Hub (a dashboard that
+# aggregates security findings), and it runs IAM (Identity and Access
+# Management) Access Analyzer.
 ###############################################################################
 
 terraform {
@@ -20,7 +24,8 @@ terraform {
   }
 }
 
-# Provider for reading SSM from the management account (cross-account role).
+# Provider for reading SSM (Systems Manager) parameters from the
+# management account (cross-account role).
 provider "aws" {
   alias  = "management"
   region = var.aws_region
@@ -49,12 +54,13 @@ module "terraform_deploy_boundary" {
   state_key_prefix      = "security" # must match the backend "s3" key above
   role_name             = "TerraformDeploy"
 
-  # This account's SSO/Identity Store admin work (sso.tf,
-  # iam-supplemental.tf) — the one thing it does that no other account
-  # does. GuardDuty/Security Hub/IAM Access Analyzer (see file header)
-  # don't get a toggle: nothing in this repo manages them yet, so there's
-  # nothing to grant permissions for — same fail-safe reasoning as
-  # monitoring/main.tf's boundary comment.
+  # This turns on permissions for this account's SSO (Single Sign-On)
+  # and Identity Store admin work (see sso.tf and iam-supplemental.tf) -
+  # the one thing this account does that no other account does.
+  # GuardDuty, Security Hub, and IAM Access Analyzer (see the file
+  # header) don't get a toggle here: nothing in this repo manages them
+  # yet, so there's nothing to grant permissions for. This is the same
+  # fail-safe reasoning used in monitoring/main.tf's boundary comment.
   enable_sso_management = true
 }
 

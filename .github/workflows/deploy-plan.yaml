@@ -37,7 +37,7 @@ permissions:
   id-token: write
   contents: read
   pull-requests: write
-  security-events: write   # required for Checkov's SARIF upload to GitHub Security tab
+  security-events: write   # required so Checkov's findings (in SARIF, a standard format for security-scan results) can be uploaded to GitHub's Security tab
 
 concurrency:
   group: tf-plan-${{ github.event.pull_request.number || github.ref }}
@@ -77,7 +77,7 @@ jobs:
     timeout-minutes: 5
 
     outputs:
-      # This checks whether any terraform files(t.f) have been changed and actually needs to be validated.
+      # Whether any Terraform (.tf) files changed in this PR and need checking.
       # The result is used by the Validate & Format and Security Scan jobs to decide whether their main steps should run.
       tf_changed: ${{ steps.classify.outputs.tf_changed }}
       # This checks which member accounts were changed.
@@ -85,17 +85,24 @@ jobs:
       # Each changed account is added to the plan matrix.
       changed_accounts: ${{ steps.filter.outputs.changed_accounts }}
       has_changes: ${{ steps.filter.outputs.has_changes }}
-      # true for a same-repo PR, workflow_dispatch, or any non-PR trigger;
-      # false only for a PR opened from a fork. GitHub never mints an OIDC
-      # token or a write-scoped GITHUB_TOKEN for a fork PR, so the `plan`
-      # and `discover-accounts` jobs are already safe — they fail at
-      # "Configure AWS credentials" before ever running `terraform init` on
-      # fork-supplied code. validate-format no longer runs `terraform init`
-      # at all (it's fmt-only now — per-account validity is covered by the
-      # `plan` matrix and the `tflint` job). The one remaining consumer of
-      # this output is security-scan's Checkov step: `download_external_modules`
-      # is gated on it, so a fork PR can't make Checkov fetch a module from
-      # a source the fork chose.
+      # True for a same-repo PR, a manual run, or anything that isn't a PR
+      # at all. False only when the PR comes from a fork.
+      #
+      # GitHub refuses to hand a forked PR an OIDC token — OIDC (OpenID
+      # Connect) is the short-lived sign-in credential these workflows use
+      # to reach AWS, so no long-lived secret has to be stored — or a
+      # write-scoped GITHUB_TOKEN. That means the `plan` and
+      # `discover-accounts` jobs are already safe from a fork PR: they
+      # simply fail at "Configure AWS credentials" before `terraform init`
+      # ever touches fork-supplied code. `validate-format` no longer runs
+      # `terraform init` either — it only checks formatting now, and
+      # per-account validity is already covered by the `plan` matrix and
+      # the `tflint` job.
+      #
+      # The one place this output actually matters is the `security-scan`
+      # job's Checkov step: it uses this flag to decide whether Checkov is
+      # allowed to download external modules, which stops a fork PR from
+      # pointing Checkov at a module source of its own choosing.
       same_repo: ${{ steps.fork-check.outputs.same_repo }}
     steps:
       # clone our repository onto the runner
@@ -281,8 +288,10 @@ jobs:
   # ──────────────────────────────────────────────────────────────────────────────────────────────────────────
   # 3. Security Scan (Checkov)
   # ──────────────────────────────────────────────────────────────────────────────────────────────────────────
-  # this job runs a security scan using Checkov, a static code analysis tool for Terraform.
-  # It checks for security misconfigurations and best practices in the Terraform code.
+  # This job runs a security scan using Checkov, a static analysis tool
+  # built for Infrastructure as Code (IaC) like Terraform — it reads the
+  # .tf files and checks them for security misconfigurations and
+  # best-practice violations before anything gets deployed.
   # The job only runs the scan if Terraform files have changed, as determined by the detect-changes job.
   # If no Terraform files have changed, the job skips the scan and reports a successful result.
   # ──────────────────────────────────────────────────────────────────────────────────────────────────────────
@@ -360,12 +369,16 @@ jobs:
   # Widening the scope to cover it needs the pre-existing warnings under
   # modules/ (and providers.tf) cleaned up first.
   #
-  # The tflint binary version is pinned below; the aws ruleset version is
-  # pinned in .tflint.hcl. TFLint has no lock file — the ruleset is pinned
-  # by its exact `version` (ranges are rejected) plus `signature =
-  # "attestation"`, which makes `tflint --init` verify the plugin's GitHub
-  # build-provenance attestation before installing it (the same provenance
-  # mechanism this repo already uses for tfplan artifacts).
+  # The tflint binary version is pinned just below; the AWS ruleset version
+  # is pinned inside .tflint.hcl. TFLint has no lock file the way Terraform
+  # providers do, so the ruleset is pinned two ways instead: by its exact
+  # `version` (a version range is rejected outright), and by `signature =
+  # "attestation"`, which tells `tflint --init` to check the plugin's build
+  # provenance attestation before installing it. A build provenance
+  # attestation is a signed, verifiable record that says "this exact file
+  # was built by this exact GitHub Actions workflow, from this exact
+  # commit" — the same proof-of-origin idea this repo already uses further
+  # down for the Terraform plan files themselves.
   lint:
     name: Lint (tflint)
     runs-on: ubuntu-latest
@@ -495,11 +508,12 @@ jobs:
     timeout-minutes: 20
     # Only run if we have accounts to plan
     if: needs.discover-accounts.outputs.account_count != '0' && needs.discover-accounts.outputs.account_count != ''
-    # Job-level permissions fully replace the workflow-level block above for
-    # this job, rather than adding to it — so everything this job actually
-    # uses (OIDC for AWS, checkout, the PR-comment step) has to be repeated
-    # here alongside the one addition, attestations: write, needed for
-    # "Attest plan provenance" below.
+    # A job's own `permissions:` block completely REPLACES the
+    # workflow-level one above for that job — it doesn't add to it. So
+    # everything this job actually needs (OIDC, the credential used to sign
+    # in to AWS; checkout; the PR-comment step) has to be listed again
+    # here, plus the one new addition, `attestations: write`, needed by the
+    # "Attest plan provenance" step below.
     permissions:
       id-token: write
       contents: read
@@ -594,7 +608,10 @@ jobs:
           echo "  3. Verify SSM parameters and provider configuration"
           exit 1
 
-      # this
+      # Posts the plan's output as a comment on the PR, so a reviewer can
+      # read it right there without opening the Actions log. Updates the
+      # same comment on a re-run instead of piling up a new one each time
+      # (see the marker/existing-comment logic in the script below).
       - name: Post plan as PR comment (Success)
         if: github.event_name == 'pull_request' && steps.plan.outputs.plan_exit_code == '0'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
@@ -703,6 +720,13 @@ jobs:
           sha256sum tfplan.binary tfplan.sha > tfplan.sha256
           echo "Stamped plan for ${{ matrix.account }} with commit $HEAD_SHA"
 
+      # Signs the plan file with a build provenance attestation: a
+      # verifiable, GitHub-issued record that this exact tfplan.binary was
+      # produced by this exact workflow run, from this exact commit. This
+      # is what deploy-apply.yaml's "Verify plan integrity and provenance"
+      # step checks before ever applying a downloaded plan, so the plan
+      # file can't be quietly swapped for something else between here and
+      # apply.
       - name: Attest plan provenance
         if: steps.plan.outputs.plan_exit_code == '0'
         uses: actions/attest-build-provenance@4d101475d8b20a2381f78447822ac1eab6504dd8 # v4.2.2
@@ -721,23 +745,27 @@ jobs:
           retention-days: 30
 
 # ── Policy scan of the RESOLVED plan ────────────────────────────────────
-      # The security-scan job above only reads raw HCL, so it can't see
-      # anything that only exists after Terraform actually evaluates
-      # everything — tfvars values, module outputs, data source results,
-      # count/for_each expansion. This second pass reads the plan's JSON
-      # instead, where all of that has already been worked out, and catches
-      # what a plain source-code scan structurally can't.
+      # The `security-scan` job above only reads the raw Terraform source
+      # (HCL — HashiCorp Configuration Language, the language .tf files are
+      # written in), so it can't see anything that only exists once
+      # Terraform actually evaluates everything: tfvars values, module
+      # outputs, data source results, count/for_each expansion. This second
+      # pass instead reads the plan's JSON output, where all of that has
+      # already been worked out — so it catches things a plain source-code
+      # scan structurally cannot.
       #
-      # This runs inside the same job as the plan, rather than as its own
-      # separate job, on purpose: Terraform is already initialized here,
-      # credentials are already assumed, and tfplan.binary is already sitting
-      # on disk. A separate job would repeat checkout, setup-terraform, an
-      # OIDC assume, and a terraform init six times over — one per account —
-      # for zero extra coverage.
+      # This runs as steps inside the same job as the plan itself, rather
+      # than as its own separate job, on purpose: Terraform is already
+      # initialized here, AWS credentials are already assumed, and
+      # tfplan.binary is already sitting on disk. A separate job would have
+      # to repeat checkout, Terraform setup, the AWS sign-in, and
+      # `terraform init` all over again — once per account — for no extra
+      # coverage.
       #
-      # Placed AFTER the artifact upload on purpose too: if this scan fails,
-      # the job fails and Plan Summary blocks the merge — but the plan
-      # artifact and the PR comment are still there for someone to read.
+      # It's also placed AFTER the plan-file upload on purpose: if this
+      # scan fails, the job fails and Plan Summary blocks the merge — but
+      # the plan artifact and the PR comment are still there for someone to
+      # read and review.
       - name: Convert plan to JSON
         if: steps.plan.outputs.plan_exit_code == '0'
         working-directory: ${{ matrix.working_directory }}
@@ -746,16 +774,19 @@ jobs:
       - name: Checkov policy scan (resolved plan)
         if: steps.plan.outputs.plan_exit_code == '0'
         env:
-          # Without this, Checkov only reads the plan's `after` values. When a
-          # resource is created in the same plan as something it depends on —
-          # say, a CloudWatch log group's kms_key_id pointing at a KMS key
-          # being created right alongside it — that value shows up as
-          # `(known after apply)`, meaning `after` is null. A check like
-          # CKV_AWS_158, which just looks for "is this value set?", reads that
-          # as "not set" and fails, even though the HCL genuinely does set it.
-          # This setting tells Checkov to treat `(known after apply)` as "this
-          # will have a value" instead of "this has no value". Checkov's own
-          # source for this: checkov/terraform/plan_parser.py, _eval_after_unknown().
+          # Without this setting, Checkov only trusts a plan's `after`
+          # (final) value for each field. When a resource is created in the
+          # same plan as something it depends on — say, a CloudWatch log
+          # group's encryption key ID, pointing at a KMS key being created
+          # right alongside it — Terraform can't know that value yet, so it
+          # shows up as `(known after apply)`, which Checkov treats the
+          # same as "not set". A check that just asks "is this set?" (like
+          # CKV_AWS_158) then fails, even though the Terraform code
+          # genuinely does set it.
+          # This setting tells Checkov to treat `(known after apply)` as
+          # "this will end up with a value" instead of "this has no value",
+          # which fixes that false failure. (Checkov's own source for this
+          # behavior: checkov/terraform/plan_parser.py, _eval_after_unknown().)
           EVAL_TF_PLAN_AFTER_UNKNOWN: "true"
         run: |
           # 3.3.11 — kept in sync with this file's checkov-action pin above

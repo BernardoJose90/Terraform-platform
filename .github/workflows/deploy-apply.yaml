@@ -7,8 +7,8 @@ name: Terraform Apply
 # editing this workflow.
 #
 # Wherever possible, this applies the EXACT plan that was reviewed on the
-# PR — not a fresh one — so nothing gets applied based on state that may
-# have shifted since the review happened.
+# PR (Pull Request) — not a fresh one — so nothing gets applied based on
+# state that may have shifted since the review happened.
 #
 # If that reviewed plan can't be found, what happens depends on how this
 # run started:

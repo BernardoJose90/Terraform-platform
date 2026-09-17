@@ -30,25 +30,29 @@ output "private_route_table_ids" {
   value       = module.vpc.private_route_table_ids
 }
 
-# The network account needs this to add return routes (spoke CIDR -> TGW)
-# to the egress VPC's public route tables, so traffic coming back through
-# the NAT gateways can actually find its way to the spokes. Without it,
-# the NAT gateway has no route to 10.20.0.0/16 or 10.30.0.0/16, and return
-# traffic just gets silently dropped.
+# The network account needs this output to add "return" routes back to
+# each spoke's CIDR (its IP address range) through the Transit Gateway,
+# into the egress VPC's public route tables. Those routes are what let
+# traffic coming back through the NAT gateways actually find its way back
+# to the spoke VPCs. Without them, the NAT gateway has no route to
+# 10.20.0.0/16 or 10.30.0.0/16 (the spoke VPCs' CIDR ranges), and return
+# traffic is silently dropped.
 #
-# This is a list, not a single ID. The upstream module usually only
-# creates one shared public route table, so it'll usually have one
-# element — but don't assume that, iterate over it instead.
+# Note this is a list, not a single ID. The upstream module usually
+# creates just one shared public route table, so in practice the list
+# will usually have one element — but don't assume that. Loop over it
+# instead of indexing the first element directly.
 output "public_route_table_ids" {
   description = "Public route table IDs. Usually a single shared table. Empty for spoke VPCs, which have no public subnets."
   value       = module.vpc.public_route_table_ids
 }
 
-# This module can only pass NAT gateways one flat tags map
-# (nat_gateway_tags), so giving each one a different Name per AZ isn't
-# possible through a variable. This output exists so a caller that wants
-# that (e.g. "nat-egress-a" vs "nat-egress-b") can rename each one
-# individually afterwards, using aws_ec2_tag.
+# This module can only pass one flat map of tags to all NAT gateways at
+# once (nat_gateway_tags), so giving each one a different Name tag per
+# Availability Zone isn't possible through a variable. This output lets a
+# caller that wants that — e.g. naming them "nat-egress-a" vs
+# "nat-egress-b" — rename each NAT gateway individually afterwards, using
+# the aws_ec2_tag resource.
 output "natgw_ids" {
   description = "NAT Gateway IDs, one per AZ, same order as var.azs. Empty for spoke VPCs (enable_nat_gateway = false)."
   value       = module.vpc.natgw_ids

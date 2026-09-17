@@ -1,12 +1,15 @@
 # ======================================================================================
 # Input variables for the shared VPC module.
 #
-# The validation blocks below compare one variable against another, which
-# needs Terraform 1.9+ (see required_version in main.tf).
+# Some of the validation blocks below compare one variable's value against
+# another. That kind of check needs Terraform 1.9 or later (see
+# required_version in main.tf).
 #
-# Where to put a new check:
-#   - only comparing variables to each other -> a validation block here
-#   - needs a resource or module output      -> a precondition block in main.tf
+# Where to add a new check:
+#   - if it only compares variables to each other, add a validation block
+#     here
+#   - if it needs a resource or module output (something not known until
+#     apply time), add a precondition block in main.tf instead
 # ======================================================================================
 
 variable "name" {
@@ -38,9 +41,11 @@ variable "private_subnets" {
   description = "Private subnet CIDRs, one per AZ, in the same order as var.azs."
   type        = list(string)
 
-  # The caller's own 0.0.0.0/0-to-TGW route (in each spoke account's
-  # main.tf) matches each AZ to a private route table by position in the
-  # list — that only works if there's exactly one private subnet per AZ.
+  # Each spoke account's own main.tf creates a default route (0.0.0.0/0)
+  # to the Transit Gateway, and matches it to a private route table by
+  # position in this list. That matching only works correctly if there is
+  # exactly one private subnet per Availability Zone (AZ, an isolated
+  # physical data center location within an AWS region).
   validation {
     condition     = length(var.private_subnets) == length(var.azs)
     error_message = "private_subnets and azs must be the same length (one private subnet per AZ)."
@@ -52,9 +57,10 @@ variable "public_subnets" {
   type        = list(string)
   default     = []
 
-  # NAT gateways get placed in public subnets by the upstream module. Turning
-  # NAT on without any public subnets would only fail at apply time, after
-  # the VPC already exists — this catches it earlier instead.
+  # The upstream module places NAT gateways into public subnets. Turning
+  # NAT on without defining any public subnets would only fail later, at
+  # apply time, after the VPC already exists. This check catches that
+  # mistake earlier instead.
   validation {
     condition     = !var.enable_nat_gateway || length(var.public_subnets) > 0
     error_message = "enable_nat_gateway requires at least one public subnet — NAT gateways must be placed in public subnets."
@@ -89,22 +95,25 @@ variable "tgw_id" {
   type        = string
   default     = null
 
-  # enable_nat_gateway makes the upstream module write a 0.0.0.0/0 route
-  # via NAT into the private route tables; a non-null tgw_id means the
-  # caller will write its own 0.0.0.0/0 route to the TGW into those same
-  # tables. AWS only allows one default route per table, so doing both
-  # fails partway through apply with RouteAlreadyExists — leaving a
-  # half-built VPC behind, NAT gateways already running (and billing).
+  # Setting enable_nat_gateway = true makes the upstream module write a
+  # default route (0.0.0.0/0) through NAT into the private route tables.
+  # Setting a non-null tgw_id means the caller will later write its own
+  # default route to the Transit Gateway into those same tables. AWS only
+  # allows one default route per route table, so doing both would fail
+  # partway through apply with a "RouteAlreadyExists" error — leaving a
+  # half-built VPC behind, with NAT gateways already running (and already
+  # costing money).
   validation {
     condition     = !(var.tgw_id != null && var.enable_nat_gateway)
     error_message = "tgw_id and enable_nat_gateway are mutually exclusive — each drives a 0.0.0.0/0 route into the same private route tables."
   }
 
-  # This one's a policy choice, not a safety check: it insists every VPC
-  # from this module has some way out to the internet — unless the caller
-  # explicitly opts out with allow_no_default_route = true (a deliberately
-  # isolated VPC). tgw_id for production today, enable_nat_gateway for
-  # network; development sets the opt-out while it's detached from the
+  # This check is a deliberate policy choice, not a safety guard against
+  # breakage: it insists every VPC built by this module has some way to
+  # reach the internet, unless the caller explicitly opts out by setting
+  # allow_no_default_route = true for a deliberately isolated VPC. Today,
+  # production sets tgw_id, network sets enable_nat_gateway, and
+  # development sets the opt-out while it's temporarily detached from the
   # Transit Gateway.
   validation {
     condition     = var.tgw_id != null || var.enable_nat_gateway || var.allow_no_default_route
@@ -125,11 +134,12 @@ variable "tags" {
 }
 
 # ======================================================================================
-# Optional name overrides — leave empty and the upstream module just uses
-# its own generated names. Only these three are exposed as per-AZ lists;
-# NAT gateways and route tables only accept one flat tags map each, so
-# giving those per-AZ names is done separately by the caller, via
-# aws_ec2_tag (see member-accounts/network).
+# Optional name overrides. Leave these empty and the upstream module just
+# uses its own auto-generated names. Only the three below can be set as a
+# list with one name per Availability Zone. NAT gateways and route tables
+# each only accept a single flat map of tags, so giving those per-AZ
+# names has to be done separately by the caller, using the aws_ec2_tag
+# resource (see member-accounts/network).
 # ======================================================================================
 variable "private_subnet_names" {
   description = "Explicit Name tag per private subnet, same order as var.azs. Leave empty to use the upstream module's generated names."
@@ -150,9 +160,10 @@ variable "igw_tags" {
 }
 
 # ======================================================================================
-# VPC Flow Logs, on by default for every account that uses this module.
-# They go to CloudWatch Logs, and the upstream module creates both the log
-# group and the IAM role that delivers logs into it.
+# VPC Flow Logs — records of network traffic in and out of the VPC — are
+# on by default for every account that uses this module. They're sent to
+# CloudWatch Logs, and the upstream module creates both the log group and
+# the IAM role that delivers logs into it.
 # ======================================================================================
 variable "enable_flow_log" {
   description = "Enable VPC Flow Logs for this VPC. On by default so every account using this module gets flow logs without opting in."

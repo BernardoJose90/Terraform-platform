@@ -1,14 +1,17 @@
 # ===============================================================================================================================================================================================================
-# Because permissions in github-oidc-roles is shared and wide, an account like monitoring
-# which has no infrastructure at all yet — still technically holds ec2:*, IAM role creation, RAM sharing, etc.
-# purely because it uses the same module as network, which genuinely needs all of that.
+# The shared permissions policy in github-oidc-roles is wide on purpose: it's written to cover whatever any account
+# might need. That means an account like monitoring, which has no infrastructure at all yet, still technically holds
+# ec2:* (full EC2 access), IAM (Identity and Access Management) role creation, RAM (Resource Access Manager) sharing,
+# and so on — purely because it uses the same module as network, which genuinely needs all of that.
 #
-# This module doesn't touch the shared policy document(github_actions_trust_policy), Instead, it creates a second, separate IAM policy(permissions boundary) which is attached to the same TerraformDeploy role.
-# AWS enforces both policies(github_actions_trust_policy and terraform_deploy_boundary) at once and only allows what's permitted by both
-# So even though the shared policy(github_actions_trust_policy) still grants ec2:* to every account, an account whose boundary doesn't
-# include enable_vpc_networking = true can never actually use it network accounts related IAM permissions.
+# This module doesn't touch that shared policy (github_actions_trust_policy). Instead, it creates a second, separate
+# IAM policy — a "permissions boundary" — attached to the same TerraformDeploy role. A permissions boundary is a cap:
+# AWS enforces both policies (the shared one and this boundary) at once, and only allows what BOTH of them permit.
+# So even though the shared policy still grants ec2:* to every account, an account whose boundary doesn't set
+# enable_vpc_networking = true can never actually use those network-related IAM permissions.
 #
-# In short: this file answers "of everything that role could possibly do, what should THIS specific account actually be allowed to use."
+# In short: this file answers "of everything that role could possibly do, what should THIS specific account actually
+# be allowed to use?"
 #
 # ===============================================================================================================================================================================================================
 
@@ -17,15 +20,18 @@ data "aws_caller_identity" "current" {}
 data "aws_iam_policy_document" "terraform_deploy_boundary" {
   # Read-only on this boundary policy's own resource, so `terraform plan`/
   # `apply` can refresh it on every future run without needing any write
-  # access to it. Hardcoded ARN (not a resource attribute reference)
-  # because referencing aws_iam_policy.terraform_deploy_boundary.arn from
-  # inside its own policy document would be a dependency cycle; IAM policy
-  # ARNs are deterministic from account ID + name, so this is safe.
+  # access to it. The ARN (Amazon Resource Name) is hardcoded here (not a
+  # reference to the resource below) because referencing
+  # aws_iam_policy.terraform_deploy_boundary.arn from inside its own policy
+  # document would create a circular dependency. IAM policy ARNs can be
+  # predicted from the account ID plus the policy name, so hardcoding it
+  # here is safe.
   #
-  # Deliberately no write access to this policy (content or attachment) —
-  # if TerraformDeploy could edit or detach its own boundary, the boundary
-  # wouldn't be a real ceiling. Changing it requires the management
-  # break-glass path, same as every other account-security-relevant change.
+  # Deliberately no write access to this policy (its content or its
+  # attachment) — if TerraformDeploy could edit or detach its own boundary,
+  # the boundary wouldn't be a real ceiling on what it can do. Changing it
+  # requires the management account break-glass path, the same as every
+  # other account-security-relevant change.
   statement {
     sid    = "ReadOwnBoundaryPolicy"
     effect = "Allow"
@@ -38,12 +44,14 @@ data "aws_iam_policy_document" "terraform_deploy_boundary" {
   }
 
   # TerraformDeploy and TerraformPlan themselves — modules/github-oidc-roles
-  # creates and manages both in every account, including their inline role
-  # policies and (for TerraformPlan) its two policy attachments. Scoped to
-  # exactly these two role ARNs: TerraformDeploy can manage its own and
-  # TerraformPlan's role definitions, but can't create or modify any role
-  # outside this pair — closing the same privilege-escalation gap
-  # terraform-org's boundary closes for its own fixed role list.
+  # creates and manages both roles in every account, including their inline
+  # role policies and (for TerraformPlan) its two policy attachments. This
+  # is scoped to exactly these two role ARNs: TerraformDeploy can manage its
+  # own and TerraformPlan's role definitions, but can't create or modify any
+  # role outside this pair. That closes off a privilege-escalation path
+  # where a role could otherwise grant itself broader access by creating or
+  # editing other IAM roles — the same gap terraform-org's boundary closes
+  # for its own fixed role list.
   statement {
     sid    = "ManageOwnDeployAndPlanRoles"
     effect = "Allow"
@@ -70,11 +78,11 @@ data "aws_iam_policy_document" "terraform_deploy_boundary" {
     ]
   }
 
-  # TerraformPlanS3Policy — the one standalone customer-managed policy
-  # modules/github-oidc-roles creates in every account (attached to
-  # TerraformPlan for state-locking write access). Name is fixed by that
-  # module, so — unlike a VPC's dynamically-named flow-log role — this can
-  # be scoped to an exact ARN.
+  # TerraformPlanS3Policy — the one standalone, self-managed IAM policy
+  # that modules/github-oidc-roles creates in every account (attached to
+  # TerraformPlan for state-locking write access). Its name is fixed by
+  # that module, so — unlike a VPC's dynamically-named flow-log role — this
+  # can be scoped to an exact ARN.
   statement {
     sid    = "ManageOwnPlanS3Policy"
     effect = "Allow"
@@ -93,9 +101,9 @@ data "aws_iam_policy_document" "terraform_deploy_boundary" {
     resources = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:policy/TerraformPlanS3Policy"]
   }
 
-  # This account's own GitHub OIDC provider — one per account, one exact
-  # URL, so (unlike the roles above) this can be scoped to a single exact
-  # ARN rather than left wide.
+  # This account's own GitHub OIDC (OpenID Connect) provider — one per
+  # account, one exact URL, so (unlike the roles above) this can be scoped
+  # to a single exact ARN rather than left wide.
   statement {
     sid    = "ManageOwnOidcProvider"
     effect = "Allow"
@@ -108,9 +116,10 @@ data "aws_iam_policy_document" "terraform_deploy_boundary" {
     resources = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:oidc-provider/token.actions.githubusercontent.com"]
   }
 
-  # Matches modules/github-oidc-roles' own SSMParameterStore scope exactly
-  # — management account's /organizations/* + /transit-gateway/*, and this
-  # account's own copies of the same two trees.
+  # Matches modules/github-oidc-roles' own SSMParameterStore scope exactly:
+  # the management account's /organizations/* and /transit-gateway/* SSM
+  # (Systems Manager) parameter paths, plus this account's own copies of
+  # the same two trees.
   statement {
     sid    = "SSMOrganizationsAndTgwParameters"
     effect = "Allow"
@@ -132,10 +141,10 @@ data "aws_iam_policy_document" "terraform_deploy_boundary" {
     ]
   }
 
-  # Same as modules/github-oidc-roles' SSMDescribeParameters — this API is
-  # a whole-account search/filter, AWS never lets it be scoped to specific
-  # parameters, so it has to stay wide even in a boundary meant to narrow
-  # things down.
+  # Same as modules/github-oidc-roles' SSMDescribeParameters — this action
+  # is a whole-account search/filter, AWS never lets it be scoped to
+  # specific parameters, so it has to stay wide even in a boundary meant to
+  # narrow things down.
   statement {
     sid       = "SSMDescribeParameters"
     effect    = "Allow"
@@ -152,8 +161,8 @@ data "aws_iam_policy_document" "terraform_deploy_boundary" {
 
   # Only present for an account that actually passes
   # extra_assumable_role_arns to its own github-oidc-roles call (e.g. a
-  # spoke assuming its TGW wiring role in the network account) — see that
-  # variable's description for why this has to match exactly.
+  # spoke assuming its Transit Gateway wiring role in the network account)
+  # — see that variable's description for why this has to match exactly.
   dynamic "statement" {
     for_each = length(var.extra_assumable_role_arns) > 0 ? [1] : []
     content {
@@ -164,7 +173,7 @@ data "aws_iam_policy_document" "terraform_deploy_boundary" {
     }
   }
 
-  # This account's own Terraform state file — locked to just its own
+  # This account's own Terraform state file in S3 — locked to just its own
   # folder, matching modules/github-oidc-roles' own StateFileAccess scope.
   statement {
     sid    = "StateFileAccess"
@@ -191,10 +200,11 @@ data "aws_iam_policy_document" "terraform_deploy_boundary" {
     }
   }
 
-  # modules/vpc's VPC/subnet/route-table/TGW-attachment resources — same
-  # scope as modules/github-oidc-roles' own NetworkAndCompute statement.
-  # Can't be narrowed further than "the whole service": these actions
-  # apply to resources that don't exist yet at plan time.
+  # modules/vpc's VPC (Virtual Private Cloud) / subnet / route-table /
+  # Transit Gateway attachment resources — same scope as
+  # modules/github-oidc-roles' own NetworkAndCompute statement. Can't be
+  # narrowed further than "the whole service": these actions apply to
+  # resources that don't exist yet at plan time.
   dynamic "statement" {
     for_each = var.enable_vpc_networking ? [1] : []
     content {
@@ -205,12 +215,12 @@ data "aws_iam_policy_document" "terraform_deploy_boundary" {
     }
   }
 
-  # modules/vpc's upstream terraform-aws-modules/vpc creates a flow-log
-  # delivery role with a Terraform-generated name whenever
-  # enable_flow_log is set (the module's own default) — unlike the named
-  # roles below, there's no fixed ID to scope this to before the role
-  # exists, same reasoning as modules/github-oidc-roles' own
-  # ManageInstanceRoles statement.
+  # The upstream terraform-aws-modules/vpc module (which modules/vpc
+  # builds on) creates a flow-log delivery role with a Terraform-generated
+  # name whenever enable_flow_log is set (that module's own default) —
+  # unlike the named roles below, there's no fixed ID to scope this to
+  # before the role exists, the same reasoning as modules/github-oidc-roles'
+  # own ManageInstanceRoles statement.
   dynamic "statement" {
     for_each = var.enable_vpc_networking ? [1] : []
     content {
@@ -274,8 +284,10 @@ data "aws_iam_policy_document" "terraform_deploy_boundary" {
   }
 
 
-  # modules/vpc's flow-log encryption key — manage the key, never use it
-  # to encrypt/decrypt, never hand out access to it (no kms:CreateGrant).
+  # modules/vpc's flow-log encryption key (KMS = Key Management Service) —
+  # this only lets Terraform manage the key. It never lets the key be used
+  # to encrypt or decrypt data, and never hands out access to it (no
+  # kms:CreateGrant).
   dynamic "statement" {
     for_each = var.enable_vpc_networking ? [1] : []
     content {
@@ -329,8 +341,9 @@ data "aws_iam_policy_document" "terraform_deploy_boundary" {
     }
   }
 
-  # modules/tgw's RAM resource share — only network turns this on; no
-  # other account in this repo does resource sharing.
+  # modules/tgw's RAM (Resource Access Manager) resource share — only
+  # network turns this on; no other account in this repo does resource
+  # sharing.
   dynamic "statement" {
     for_each = var.enable_ram_sharing ? [1] : []
     content {
@@ -353,10 +366,11 @@ data "aws_iam_policy_document" "terraform_deploy_boundary" {
     }
   }
 
-  # SSO/Identity Store admin — only security turns this on. Mirrors
-  # security/iam-supplemental.tf's inline role policy exactly; that file
-  # is what actually needs this granted (this just has to be at least as
-  # wide, or its applies would start failing against this boundary).
+  # SSO (Single Sign-On) / Identity Store admin — only security turns this
+  # on. Mirrors security/iam-supplemental.tf's inline role policy exactly;
+  # that file is what actually needs this granted (this just has to be at
+  # least as wide, or its applies would start failing against this
+  # boundary).
   dynamic "statement" {
     for_each = var.enable_sso_management ? [1] : []
     content {
@@ -415,9 +429,9 @@ data "aws_iam_policy_document" "terraform_deploy_boundary" {
   }
 
   # Roles this account manages by exact, known name — e.g. network's two
-  # spoke-wiring roles (modules/tgw-spoke-wiring-role), which (unlike the
-  # flow-log role above) have fixed names their caller chose, so they can
-  # be scoped to exact ARNs instead of left wide.
+  # spoke-wiring roles (modules/tgw-spoke-wiring-role). Unlike the flow-log
+  # role above, these have fixed names chosen by whatever calls this
+  # module, so they can be scoped to exact ARNs instead of left wide.
   dynamic "statement" {
     for_each = length(var.manage_named_roles) > 0 ? [1] : []
     content {
@@ -447,9 +461,9 @@ data "aws_iam_policy_document" "terraform_deploy_boundary" {
   }
 
   # Escape hatch for a genuinely one-off need that doesn't fit any of the
-  # toggles above — see extra_policy_json's description. Empty for every
-  # account today; prefer adding a new toggle over reaching for this if a
-  # second account ever needs the same thing.
+  # toggles above — see extra_policy_json's description below. Empty for
+  # every account today; prefer adding a new toggle over reaching for this
+  # if a second account ever needs the same thing.
   source_policy_documents = var.extra_policy_json != "" ? [var.extra_policy_json] : []
 }
 

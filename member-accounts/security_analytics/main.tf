@@ -20,7 +20,8 @@ terraform {
   }
 }
 
-# Provider for reading SSM from the management account (cross-account role).
+# Provider for reading SSM (Systems Manager) parameters from the
+# management account (cross-account role).
 provider "aws" {
   alias  = "management"
   region = var.aws_region
@@ -41,10 +42,11 @@ provider "aws" {
 
 }
 
-# Caps TerraformDeploy to exactly the baseline every account needs — this
-# account has no resources of its own yet (see the file header), so no
-# extra_policy_json on top. See monitoring/main.tf's boundary comment for
-# why that's the intended fail-safe rather than a gap.
+# Caps the TerraformDeploy role at exactly the baseline permissions
+# every account needs. This account has no resources of its own yet
+# (see the file header), so there's no extra_policy_json added on top.
+# See monitoring/main.tf's boundary comment for why that's the intended
+# fail-safe behavior, not an oversight.
 module "terraform_deploy_boundary" {
   source = "../../modules/terraform-deploy-boundary"
 

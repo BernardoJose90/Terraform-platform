@@ -1,24 +1,24 @@
 output "tgw_id" {
-  description = "Transit Gateway ID — also published to SSM at /transit-gateway/id for spoke accounts. Null when networking_enabled = false (use the SSM parameter's frozen value instead if you need it while disabled)."
+  description = "The Transit Gateway (TGW)'s ID. Also published to AWS Systems Manager (SSM) Parameter Store at /transit-gateway/id for the spoke accounts to read. This is null (empty) when networking_enabled = false — use the SSM parameter's frozen value instead if you need the ID while networking is disabled."
   value       = one(module.tgw[*].tgw_id)
 }
 
 output "tgw_route_table_ids" {
-  description = "Map of TGW route table IDs (main, prod_spoke, dev_spoke) — the main/prod_spoke/dev_spoke IDs are also published to SSM for spoke accounts. Null when networking_enabled = false."
+  description = "A map of the Transit Gateway (TGW)'s route table IDs (main, prod_spoke, dev_spoke). The main, prod_spoke, and dev_spoke IDs are also published to SSM for the spoke accounts to read. This is null (empty) when networking_enabled = false."
   value       = one(module.tgw[*].tgw_route_table_ids)
 }
 
 output "ram_resource_share_arn" {
-  description = "RAM resource share ARN — also published to SSM at /transit-gateway/ram_resource_share_arn. Null when networking_enabled = false."
+  description = "The ARN (Amazon Resource Name, AWS's unique identifier format) of the AWS Resource Access Manager (RAM) share that gives the spoke accounts access to the Transit Gateway. Also published to SSM at /transit-gateway/ram_resource_share_arn. This is null (empty) when networking_enabled = false."
   value       = one(module.tgw[*].ram_resource_share_arn)
 }
 
 output "egress_vpc_id" {
-  description = "Null when networking_enabled = false."
+  description = "The egress VPC's ID. This is null (empty) when networking_enabled = false."
   value       = one(module.egress_vpc[*].vpc_id)
 }
 
 output "egress_vpc_cidr" {
-  description = "Null when networking_enabled = false."
+  description = "The egress VPC's IP address range (CIDR block). This is null (empty) when networking_enabled = false."
   value       = one(module.egress_vpc[*].vpc_cidr)
 }

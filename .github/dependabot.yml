@@ -1,8 +1,8 @@
 # Every GitHub Action in this repo is pinned to a commit SHA, not a
 # floating tag, which is safer but means something has to keep those pins
 # up to date. That's what this file does: it bumps the SHA and the
-# trailing "# vX.Y.Z" comment, and opens a normal PR that goes through the
-# usual required checks like anything else.
+# trailing "# vX.Y.Z" comment, and opens a normal PR (Pull Request) that
+# goes through the usual required checks like anything else.
 #
 # Everything is grouped into one PR a week, on purpose, instead of a
 # separate PR per action. Nine small update PRs a week is how people start

@@ -8,7 +8,7 @@ name: Drift Detection
 # it's safe to run on its own with nobody watching.
 #
 # If it finds drift, it does three things, in this exact order:
-#   1. Opens (or updates) a PR on a per-account branch (drift/production,
+#   1. Opens (or updates) a PR (Pull Request) on a per-account branch (drift/production,
 #      drift/network, etc.) with a report of what changed — so a human has
 #      to look at it and decide what to do, and there's a record of that.
 #   2. Posts a message to Slack, but only if a webhook URL is configured.
@@ -56,7 +56,9 @@ jobs:
     name: Discover Accounts
     runs-on: ubuntu-latest
     timeout-minutes: 5
-    # Read-only: only needs to assume the discovery role over OIDC.
+    # Read-only: only needs to assume the discovery role over OIDC (OpenID
+    # Connect — the short-lived sign-in credential these workflows use to
+    # reach AWS, so no long-lived secret has to be stored).
     permissions:
       id-token: write
     outputs:

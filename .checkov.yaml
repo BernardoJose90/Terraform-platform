@@ -1,4 +1,7 @@
-# Checkov configuration — the security scanner that runs on every PR.
+# Checkov configuration. Checkov is the security scanner that runs on
+# every PR (Pull Request) — it checks our Infrastructure as Code (IaC),
+# i.e. the Terraform files, for common misconfigurations before anything
+# gets deployed.
 #
 # Every skip below is a risk we've deliberately decided to accept, with
 # the reason for that decision written down — not a shortcut to make the
@@ -8,8 +11,8 @@
 # the risk is okay to accept and what the real fix would eventually look
 # like, then go fix the code instead of skipping the check.
 #
-# If a local scan and the CI scan disagree, trust CI — it downloads extra
-# modules the local scan doesn't, so it checks more.
+# If a local scan and the CI (Continuous Integration) scan disagree, trust
+# CI — it downloads extra modules the local scan doesn't, so it checks more.
 
 framework:
   - terraform

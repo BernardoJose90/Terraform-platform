@@ -1,3 +1,7 @@
+# Each block below is an AWS provider alias for one AWS account in our organization.
+# They all use the same region (eu-west-2, London) and each points at a different
+# local AWS CLI profile. Other .tf files target a specific account by referencing
+# `provider = aws.<alias>` (e.g. `provider = aws.production`) on a resource or module call.
 provider "aws" {
   alias   = "management"
   region  = "eu-west-2"

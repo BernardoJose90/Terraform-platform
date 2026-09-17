@@ -11,43 +11,43 @@ variable "management_account_id" {
 }
 
 variable "amazon_side_asn" {
-  description = "Amazon side ASN for the Transit Gateway"
+  description = "The Autonomous System Number (ASN) AWS uses to identify its side of the Transit Gateway (TGW) — a network device that connects multiple Virtual Private Clouds (VPCs) together. This is a standard, low-level networking ID that doesn't need to be changed."
   type        = number
   default     = 64512
 }
 
 variable "cidr" {
-  description = "CIDR block for the egress VPC"
+  description = "The IP address range (in CIDR notation, e.g. 10.10.0.0/16) for the egress Virtual Private Cloud (VPC)"
   type        = string
   default     = "10.10.0.0/16"
 }
 
 variable "azs" {
-  description = "AZs to deploy the egress VPC and TGW attachments into"
+  description = "Availability Zones (AZs — separate, isolated data center locations within the AWS region) to deploy the egress VPC and its Transit Gateway (TGW) attachments into"
   type        = list(string)
   default     = ["eu-west-2a", "eu-west-2b"]
 }
 
 variable "private_subnets" {
-  description = "TGW-attachment subnets, one per AZ (private-sub-tgw-a/b). /28 is deliberate — these subnets only ever hold the TGW attachment's own ENI, one per AZ, so a /24 was never needed."
+  description = "The subnets used for the Transit Gateway (TGW) attachment, one per Availability Zone (private-sub-tgw-a/b). These are deliberately small (/28, meaning only 16 addresses) because each one only ever needs to hold the single network interface that the TGW attachment creates — a much larger /24 range was never needed here."
   type        = list(string)
   default     = ["10.10.30.0/28", "10.10.40.0/28"]
 }
 
 variable "public_subnets" {
-  description = "NAT gateway subnets, one per AZ (sub-nat-egress-a/b)"
+  description = "The subnets that hold the NAT gateways, one per Availability Zone (sub-nat-egress-a/b)"
   type        = list(string)
   default     = ["10.10.50.0/24", "10.10.60.0/24"]
 }
 
 variable "prod_cidr" {
-  description = "Production VPC CIDR — used to build the NAT return-path routes in the egress VPC's public route tables"
+  description = "The production VPC's IP address range (CIDR block) — used to build the return-path routes in the egress VPC's public route tables, so replies to NAT'd traffic from production can find their way back"
   type        = string
   default     = "10.20.0.0/16"
 }
 
 variable "dev_cidr" {
-  description = "Development VPC CIDR — used to build the NAT return-path routes in the egress VPC's public route tables"
+  description = "The development VPC's IP address range (CIDR block) — used to build the return-path routes in the egress VPC's public route tables, so replies to NAT'd traffic from development can find their way back"
   type        = string
   default     = "10.30.0.0/16"
 }
@@ -64,13 +64,17 @@ variable "tags" {
 
 variable "networking_enabled" {
   description = <<-EOT
-    Master switch for the billable networking layer in this account.
-    False stops spend; the account, its OIDC roles, its state file and
-    its SSM entries all survive. This is a pause, not a teardown.
+    Master on/off switch for the networking resources in this account
+    that actually cost money (the VPC, NAT gateways, and Transit
+    Gateway). Setting this to false stops that spend, while the account
+    itself, its CI/CD roles, its Terraform state file, and its SSM
+    Parameter Store entries all stay in place. This is a pause, not a
+    full teardown.
 
-    ORDERING: production AND development must both be applied with false
-    BEFORE the network account is flipped. The TGW cannot be deleted while
-    spoke attachments exist.
+    ORDERING: both the production and development accounts must be
+    applied with this set to false BEFORE this network account is
+    switched off. The Transit Gateway cannot be deleted while the spoke
+    accounts still have active attachments to it.
   EOT
   type        = bool
   default     = true
