@@ -608,37 +608,84 @@ jobs:
           echo "  3. Verify SSM parameters and provider configuration"
           exit 1
 
-      # Posts the plan's output as a comment on the PR, so a reviewer can
-      # read it right there without opening the Actions log. Updates the
-      # same comment on a re-run instead of piling up a new one each time
-      # (see the marker/existing-comment logic in the script below).
+      # Converts the plan to JSON so the PR-comment step below can list
+      # resource ADDRESSES only (e.g. aws_subnet.private[2]) — never the
+      # real attribute values (CIDRs, ARNs, account IDs, IAM policy JSON)
+      # that the plain-text plan_output.txt prints inline. Both repos are
+      # public, so anything posted as a PR comment is world-readable; the
+      # full plan text still goes out, just to the "Upload plan log
+      # artifact" step below instead, which needs a GitHub login to
+      # download and expires after 7 days. Same resource-addresses-only
+      # pattern safety-drift-detection.yaml already uses, for the same
+      # reason. This file also gets reused, unchanged, by the Checkov
+      # policy scan and Infracost steps further down.
+      - name: Convert plan to JSON
+        if: steps.plan.outputs.plan_exit_code == '0'
+        working-directory: ${{ matrix.working_directory }}
+        run: terraform show -no-color -json tfplan.binary > plan.json
+
+      # Posts a SUMMARY of the plan as a comment on the PR — counts and
+      # resource addresses, built from plan.json above, never the raw plan
+      # text. Updates the same comment on a re-run instead of piling up a
+      # new one each time (see the marker/existing-comment logic below).
       - name: Post plan as PR comment (Success)
         if: github.event_name == 'pull_request' && steps.plan.outputs.plan_exit_code == '0'
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         with:
           script: |
             const fs = require('fs');
-            const path = `${{ matrix.working_directory }}/plan_output.txt`;
-            let output = '(no output captured)';
+
+            // Tallied from plan.json's resource_changes[], never from the
+            // human-readable plan text — `address` is just a resource name,
+            // with none of the real attribute values that text prints inline.
+            const counts = { add: 0, change: 0, destroy: 0, replace: 0 };
+            const lines = [];
+            let parsed = true;
             try {
-              output = fs.readFileSync(path, 'utf8');
-            } catch (e) {}
-
-            const fullLogLink = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
-
-            if (output.length > 60000) {
-              output = output.slice(0, 60000) + `\n... (truncated, [view full logs](${fullLogLink}))`;
+              const plan = JSON.parse(fs.readFileSync(`${{ matrix.working_directory }}/plan.json`, 'utf8'));
+              for (const rc of (plan.resource_changes || [])) {
+                const actions = rc.change.actions;
+                let symbol;
+                if (actions.length === 1 && actions[0] === 'create') { symbol = '+'; counts.add++; }
+                else if (actions.length === 1 && actions[0] === 'update') { symbol = '~'; counts.change++; }
+                else if (actions.length === 1 && actions[0] === 'delete') { symbol = '-'; counts.destroy++; }
+                else if (actions.includes('create') && actions.includes('delete')) { symbol = '-/+'; counts.replace++; }
+                else { continue; } // no-op / read-only — nothing actually changing
+                lines.push(`${symbol} ${rc.address}`);
+              }
+            } catch (e) {
+              parsed = false;
             }
 
-            const hasChanges = !output.includes("No changes") && !output.includes("0 to add, 0 to change, 0 to destroy");
+            const totalChanges = counts.add + counts.change + counts.destroy + counts.replace;
+            const hasChanges = parsed && totalChanges > 0;
             const isDestructive = '${{ steps.plan.outputs.has_destructive }}' === 'true';
             const statusIcon = isDestructive ? '💥' : (hasChanges ? '📝' : '✅');
             const destructiveBanner = isDestructive
               ? `\n> ⚠️ **This plan destroys or replaces at least one resource in \`${{ matrix.account }}\`.** Review the diff carefully before merging — this is not necessarily wrong, but it needs a deliberate look, not a skim.\n`
               : '';
 
+            const fullLogLink = `${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}`;
+            const artifactNote = `📄 This repo is public, so the full plan (with real CIDRs, ARNs, account IDs, and IAM policy JSON) is deliberately kept out of this comment. To see it, download the \`plan-${{ matrix.account }}\` artifact from [this run](${fullLogLink}) — needs a GitHub login, and expires after 7 days.`;
+
+            const summaryLine = parsed
+              ? `**Summary:** ${counts.add} to add, ${counts.change} to change, ${counts.destroy + counts.replace} to destroy/replace`
+              : '**Summary:** unavailable (could not read plan.json)';
+
+            let changesBlock;
+            if (!parsed) {
+              changesBlock = '_(see the full plan artifact for details)_';
+            } else if (totalChanges === 0) {
+              changesBlock = 'No changes.';
+            } else {
+              const MAX_LINES = 200;
+              const shown = lines.slice(0, MAX_LINES).join('\n');
+              const more = lines.length > MAX_LINES ? `\n... and ${lines.length - MAX_LINES} more (see the full plan artifact)` : '';
+              changesBlock = `\`\`\`\n${shown}${more}\n\`\`\``;
+            }
+
             const marker = `<!-- terraform-plan-account:${{ matrix.account }} -->`;
-            const body = `${marker}\n### ${statusIcon} Terraform Plan — \`${{ matrix.account }}\` (ID: ${{ matrix.account_id }})\n${destructiveBanner}\n<details><summary>Show plan output</summary>\n\n\`\`\`\n${output}\n\`\`\`\n</details>\n\n**Environment:** \`${{ matrix.environment }}\``;
+            const body = `${marker}\n### ${statusIcon} Terraform Plan — \`${{ matrix.account }}\` (ID: ${{ matrix.account_id }})\n${destructiveBanner}\n${summaryLine}\n\n<details><summary>Show changed resources (addresses only, no values)</summary>\n\n${changesBlock}\n</details>\n\n${artifactNote}\n\n**Environment:** \`${{ matrix.environment }}\``;
 
             if (isDestructive) {
               try {
@@ -766,11 +813,10 @@ jobs:
       # scan fails, the job fails and Plan Summary blocks the merge — but
       # the plan artifact and the PR comment are still there for someone to
       # read and review.
-      - name: Convert plan to JSON
-        if: steps.plan.outputs.plan_exit_code == '0'
-        working-directory: ${{ matrix.working_directory }}
-        run: terraform show -no-color -json tfplan.binary > plan.json
-
+      #
+      # plan.json itself was already produced earlier in this job, by the
+      # "Convert plan to JSON" step that feeds the PR-comment summary — no
+      # need to regenerate it here.
       - name: Checkov policy scan (resolved plan)
         if: steps.plan.outputs.plan_exit_code == '0'
         env:
