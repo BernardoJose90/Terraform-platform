@@ -1,12 +1,15 @@
 ###############################################################################
-# IAM Identity Center (SSO): users, groups, permission sets, and who gets
-# assigned what.
+# IAM (Identity and Access Management) Identity Center, also known as
+# SSO (Single Sign-On): this file defines users, groups, permission
+# sets, and who gets assigned what access.
 #
-# This runs from the security account, not the management account —
-# that's the delegated-admin setup AWS itself recommends. See
-# Terraform-Org's organizations.tf and this account's iam-supplemental.tf
-# for the permissions that make that possible. Account IDs are read from
-# SSM parameters published by the management account, via aws.management.
+# This runs from the security account rather than the management
+# account. That's the "delegated admin" setup that AWS itself
+# recommends, so the management account's own permissions can stay as
+# minimal as possible. See Terraform-Org's organizations.tf and this
+# account's iam-supplemental.tf for the permissions that make this
+# possible. Account IDs are read from SSM (Systems Manager) parameters
+# published by the management account, via the aws.management provider.
 ###############################################################################
 
 data "aws_ssoadmin_instances" "this" {}
@@ -40,14 +43,19 @@ locals {
 
 # Permission Sets
 #
-# Everything in this block — permission sets, attachments, groups, and the
-# user below — has prevent_destroy on it. That's not precautionary: this
-# actually happened once already. An earlier incident deleted the user and
-# the network_team group, and would have taken the admin permission set
-# and every account's admin assignment down with it too, if an SCP hadn't
-# happened to block it. Fixing it needed a manual break-glass session.
-# Removing this protection should always be a deliberate, reviewed step —
-# never an accident.
+# Everything in this block - permission sets, policy attachments,
+# groups, and the user below - has prevent_destroy set on it. This
+# isn't just a precaution: it already happened once for real. A past
+# incident accidentally deleted the admin user and the network_team
+# group. It would have also deleted the admin permission set and every
+# account's admin access along with it, except that an SCP (Service
+# Control Policy - an organization-wide guardrail policy) happened to
+# block that part. Recovering from it required a manual "break-glass"
+# session (emergency access granted outside the normal process).
+#
+# Because of that history, removing this protection should always be a
+# deliberate, reviewed decision - never something that happens by
+# accident.
 resource "aws_ssoadmin_permission_set" "administrator" {
   name             = "AdministratorAccess"
   instance_arn     = local.sso_instance_arn

@@ -9,7 +9,7 @@ name: CI Failure Diagnosis (Apply)
 #             (Read, Grep, Glob — no shell, write, network, or AWS), writes
 #             a diagnosis, uploads it as an artifact. Holds the Claude
 #             credential; cannot comment.
-#   comment — downloads the artifact and posts it, either as a PR comment or
+#   comment — downloads the artifact and posts it, either as a PR (Pull Request) comment or
 #             (manual/untraceable apply) to the run's step summary. Holds
 #             pull-requests: write; never runs Claude.
 #

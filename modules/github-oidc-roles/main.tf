@@ -1,31 +1,36 @@
 # =====================================================================================================================================================================
-# This is the module that creates the IAM identities GitHub Actions uses to run Terraform solving two problems:
+# This module creates the IAM (Identity and Access Management) identities that GitHub Actions uses to run Terraform.
+# It solves two separate problems:
 
 # 1. Secure login (authentication), with no stored secrets.
-# It creates an OIDC trust relationship between AWS and GitHub — GitHub proves its identity with a short-lived token on every workflow run,
-# instead of a long-lived AWS access key sitting in a GitHub secret forever (which would be a standing target if ever leaked).
-# The trust policy is scoped tightly: only specific GitHub Environment names (production-approval, automated, teardown-approval)
-# are trusted, plus a break-glass path for a human with MFA in the management account.
+# It sets up OIDC (OpenID Connect) trust between AWS and GitHub. On every workflow run, GitHub proves who it is with a
+# short-lived token, instead of a long-lived AWS access key sitting in a GitHub secret forever (a leaked long-lived key
+# would be a standing risk). The trust policy only lets a few things log in: three specific GitHub Environment names
+# (production-approval, automated, teardown-approval), plus a break-glass path for a human with MFA (multi-factor
+# authentication) in the management account.
 
 # 2. What that identity is allowed to do (authorization).
-# Once logged in, the role needs permissions to actually create/manage infrastructure — VPCs, TGW attachments, IAM roles it needs to hand off to other AWS services,
-# SSM parameters, its own state file in S3, etc. That's the permissions policy document in this file — one shared, wide policy,
-# written to cover whatever any account calling this module might need (since network needs far more than monitoring does, but they both call the same module).
+# Once logged in, the role needs permission to actually create and manage infrastructure: VPCs (Virtual Private Clouds),
+# Transit Gateway attachments, IAM roles it needs to hand off to other AWS services, SSM (Systems Manager) parameters,
+# its own state file in S3, and so on. That's the permissions policy in this file. It's one shared policy, written wide
+# enough to cover whatever any account calling this module might need (a network account needs far more permissions
+# than a monitoring account does, but they both call this same module).
 #
-# It also creates a second, read-only role (TerraformPlan) for PR-time plans, so a plan run can never accidentally write anything.
+# It also creates a second, read-only role (TerraformPlan) for pull-request-time plans, so a plan run can never
+# accidentally change anything.
 # =======================================================================================================================================================================
 
-# Data source block — a read-only lookup, which asks AWS: "who am I, right now, in this Terraform run?"
-# it returns three things about whichever AWS account/credentials Terraform is currently authenticated as:
+# Data source block: a read-only lookup that asks AWS "who am I, right now, in this Terraform run?"
+# It returns three things about whichever AWS account/credentials Terraform is currently authenticated as:
 # account_id — the 12-digit AWS account number
-# arn — the full ARN of the identity being used
-# user_id — a unique identifier for that identity
+# arn — the full ARN (Amazon Resource Name, AWS's unique identifier string) of the identity being used
+# user_id — a unique ID for that identity
 data "aws_caller_identity" "read_current_account" {}
 
 # ====================================================================================================================
-# Resource block - creates a Github Provider this is what lets AWS trust a token from GitHub Actions, instead of
-# needing a stored access key. Every caller(dev, prod security etc) creates and owns its own provider.
-# also added prevent_destroy because every account's ability to log in via GitHub Actions depends on this staying put.
+# Resource block: creates the GitHub OIDC provider. This is what lets AWS trust a token from GitHub Actions, instead
+# of needing a stored access key. Every caller (dev, prod, security, etc.) creates and owns its own provider.
+# prevent_destroy is set because every account's ability to log in via GitHub Actions depends on this staying in place.
 # ====================================================================================================================
 resource "aws_iam_openid_connect_provider" "github" {
   url             = "https://token.actions.githubusercontent.com"
@@ -43,16 +48,14 @@ resource "aws_iam_openid_connect_provider" "github" {
   }
 }
 
-# locals is just a block of named shortcuts which are values computed once,
-# then reused by name later in the file, instead of writing out the full expression every time.
+# "locals" are just named shortcuts: values computed once here, then reused by name later in the file,
+# instead of writing out the full expression every time.
 locals {
-  # This is just a short alias for the OIDC provider resource's ARN
-  # used in the TerraformDeploy & TerraformPlan trust_policy below in the GitHubActionsCI statement,
-  # so we don't have to write out the full resource reference every time.
+  # A short alias for the OIDC provider resource's ARN. Used below in the TerraformDeploy and TerraformPlan trust
+  # policies (the GitHubActionsCI statement), so we don't have to write out the full resource reference every time.
   github_oidc_provider_arn = aws_iam_openid_connect_provider.github.arn
 
-  # Every caller trusts these three GitHub Environments.
-  # allow-list of which three GitHub Environments are trusted to log in as this role.
+  # The allow-list of the three GitHub Environments that are trusted to log in as this role.
   trusted_environment_subs = [
     "repo:${var.github_org}/${var.github_repo}:environment:production-approval",
     "repo:${var.github_org}/${var.github_repo}:environment:automated",
@@ -61,11 +64,11 @@ locals {
 }
 
 # ======================================================================================
-# Trust policy for the terraform_deploy role it answers who is allowed to log in as this role at all?
+# Trust policy for the terraform_deploy role. This answers: "who is allowed to log in as this role at all?"
 # ======================================================================================
 data "aws_iam_policy_document" "github_actions_trust_policy" {
   # Emergency access: an admin in the management account can assume this
-  # role, but only if they've turned on MFA.
+  # role, but only if they have MFA (multi-factor authentication) turned on.
   statement {
     sid     = "ManagementAccountBreakGlass"
     effect  = "Allow"
@@ -81,7 +84,7 @@ data "aws_iam_policy_document" "github_actions_trust_policy" {
     }
   }
 
-  # GitHub Actions assumes this role via OIDC.
+  # GitHub Actions logs in as this role via OIDC.
   statement {
     sid     = "GitHubActionsCI"
     effect  = "Allow"
@@ -107,7 +110,7 @@ data "aws_iam_policy_document" "github_actions_trust_policy" {
 # Deploy role permissions
 # ======================================================================================
 data "aws_iam_policy_document" "permissions" {
-  # VPC, Site-to-Site VPN, and EC2 instances
+  # VPC (Virtual Private Cloud), Site-to-Site VPN, and EC2 instances
   statement {
     sid       = "NetworkAndCompute"
     effect    = "Allow"
@@ -141,10 +144,10 @@ data "aws_iam_policy_document" "permissions" {
       "iam:GetInstanceProfile",
       "iam:AddRoleToInstanceProfile",
       "iam:RemoveRoleFromInstanceProfile",
-      # AWS won't delete a role that still has something attached to it.
-      # Terraform checks for that before deleting, and this permission is
-      # what lets it check — without it, deleting a role fails even though
-      # the delete permission itself is right there.
+      # AWS won't delete a role if something is still attached to it.
+      # Terraform checks for that before deleting a role, and this
+      # permission is what lets it check. Without it, deleting a role fails
+      # even though the delete permission itself is right there.
       "iam:ListInstanceProfilesForRole",
 
       # OIDC and policy management
@@ -161,7 +164,7 @@ data "aws_iam_policy_document" "permissions" {
       "iam:CreatePolicyVersion",
       "iam:DeletePolicyVersion",
       # Creating a policy WITH tags needs an extra permission beyond just
-      # "create" — same pattern you'll see again below for SSM and
+      # "create" — the same pattern shows up again below for SSM and
       # CloudWatch Logs. This one covers the flow-log delivery role's policy.
       "iam:TagPolicy",
       "iam:UntagPolicy",
@@ -171,15 +174,15 @@ data "aws_iam_policy_document" "permissions" {
   }
 
   # Kept as its own statement on purpose, not merged into ManageInstanceRoles
-  # above: AWS treats "I can manage this role" and "I can hand this role to
-  # another AWS service to use" as two different permissions — being able to
+  # above. AWS treats "I can manage this role" and "I can hand this role to
+  # another AWS service to use" as two separate permissions — being able to
   # create a role doesn't automatically let you give it away. We need this
   # because creating a flow log means telling EC2 "use this role to write
-  # logs", which needs its own explicit permission. resources = ["*"]
-  # because the role's name is generated by Terraform, so there's no fixed
-  # ID to lock this down to ahead of time — but the condition below still
-  # limits it so the role can only be handed to the flow-logs service, not
-  # just any AWS service.
+  # logs," which needs its own explicit permission. resources = ["*"] is
+  # used because the role's name is generated by Terraform, so there's no
+  # fixed ID to lock this down to ahead of time — but the condition below
+  # still limits it so the role can only be handed to the flow-logs
+  # service, not just any AWS service.
   statement {
     sid       = "PassFlowLogDeliveryRole"
     effect    = "Allow"
@@ -193,18 +196,19 @@ data "aws_iam_policy_document" "permissions" {
     }
   }
 
-  # Permissions for the encryption key used on flow logs (modules/vpc's
+  # Permissions for the encryption key used on flow logs (see modules/vpc's
   # aws_kms_key.flow_log / aws_kms_alias.flow_log).
   #
-  # Deliberately NOT "kms:*" (every KMS action) — only what's needed to
-  # create, read, update, and delete this one key. Notably missing:
-  # permission to actually USE the key to encrypt/decrypt anything (this
-  # role only manages the key, never reads or writes data with it), and
-  # permission to hand out access to it (kms:CreateGrant) — granting that
-  # broadly is a well-known way a role can quietly gain access to every KMS
-  # key in the account, not just this one. resources = ["*"] is still
-  # needed even so: a brand-new key has no ID yet, so there's nothing to
-  # scope the permission to at the moment it's created.
+  # Deliberately not "kms:*" (every possible KMS action) — only what's
+  # needed to create, read, update, and delete this one key. Notably
+  # missing: permission to actually USE the key to encrypt or decrypt data
+  # (this role only manages the key, it never reads or writes data with
+  # it), and permission to hand out access to it (kms:CreateGrant).
+  # Granting that broadly is a well-known way a role can quietly gain
+  # access to every KMS (Key Management Service) key in the account, not
+  # just this one. resources = ["*"] is still needed even so: a brand-new
+  # key has no ID yet, so there's nothing to scope the permission to at
+  # the moment it's created.
   statement {
     sid    = "FlowLogKmsKey"
     effect = "Allow"
@@ -233,9 +237,9 @@ data "aws_iam_policy_document" "permissions" {
   }
 
   statement {
-    # Used to be VPN-only, but now also covers the flow-log CloudWatch
+    # Used to be VPN-only, but now also covers the flow-log CloudWatch Logs
     # group — both are really just "a CloudWatch log group this account
-    # creates", so the same permissions cover either one.
+    # creates," so the same permissions cover either one.
     sid    = "CloudWatchLogGroups"
     effect = "Allow"
     actions = [
@@ -250,8 +254,8 @@ data "aws_iam_policy_document" "permissions" {
       "logs:UntagResource",
       "logs:ListTagsForResource",
       # Setting the retention period and the encryption key are each their
-      # own separate call behind the scenes, not part of CreateLogGroup —
-      # so each needs its own permission too.
+      # own separate call behind the scenes, not part of creating the log
+      # group — so each needs its own permission too.
       "logs:PutRetentionPolicy",
       "logs:DeleteRetentionPolicy",
       "logs:AssociateKmsKey",
@@ -260,7 +264,7 @@ data "aws_iam_policy_document" "permissions" {
     resources = ["*"]
   }
 
-  # SSM Parameter Store access, both management and current account.
+  # SSM (Systems Manager) Parameter Store access, in both the management account and the current account.
   statement {
     sid    = "SSMParameterStore"
     effect = "Allow"
@@ -270,15 +274,15 @@ data "aws_iam_policy_document" "permissions" {
       "ssm:GetParametersByPath",
       "ssm:PutParameter",
       "ssm:DeleteParameter",
-      # Every SSM parameter here gets tags. Tagging one is its own separate
-      # call from creating it, so it needs its own permission. UntagResource
+      # Every SSM parameter here gets tags. Tagging one is a separate call
+      # from creating it, so it needs its own permission. UntagResource
       # covers the opposite case — a tag that gets removed later.
       "ssm:AddTagsToResource",
       "ssm:RemoveTagsFromResource",
-      # Terraform reads back a parameter's current tags on every plan/apply
-      # to check they still match the code. This action can be scoped to
-      # one specific parameter (unlike DescribeParameters below), so it
-      # belongs up here.
+      # Terraform reads back a parameter's current tags on every plan and
+      # apply, to check they still match the code. This action can be
+      # scoped to one specific parameter (unlike DescribeParameters below),
+      # so it belongs up here.
       "ssm:ListTagsForResource"
     ]
     resources = [
@@ -291,9 +295,9 @@ data "aws_iam_policy_document" "permissions" {
     ]
   }
 
-  # This one can't be scoped to specific parameters at all — it's a
+  # This action can't be scoped to specific parameters at all — it's a
   # search/filter API over the whole parameter store, so AWS always checks
-  # it against the whole account, never one parameter. Scoping it up in
+  # it against the whole account, never one parameter. Scoping it inside
   # SSMParameterStore above would look correct but silently grant nothing,
   # so it needs its own wide-open statement instead.
   statement {
@@ -325,14 +329,14 @@ data "aws_iam_policy_document" "permissions" {
   # this same statement, each locked to its own folder, so one account's
   # pipeline can never read or touch another account's state.
   # state_key_prefix must match the key used in this account's own backend
-  # config.
+  # configuration.
   statement {
     sid    = "StateFileAccess"
     effect = "Allow"
     actions = [
       "s3:GetObject",
       "s3:PutObject",
-      "s3:DeleteObject", # the .tflock file use_lockfile writes/deletes
+      "s3:DeleteObject", # the lock file that Terraform's state locking (use_lockfile) writes and deletes
     ]
     resources = [
       "arn:aws:s3:::${var.state_bucket_name}/${var.state_key_prefix}/*"
@@ -342,7 +346,7 @@ data "aws_iam_policy_document" "permissions" {
   # ListBucket works differently from GetObject/PutObject — it always
   # targets the whole bucket, never one file's path, so it can't be locked
   # to a folder the same way the statement above is. The s3:prefix
-  # condition below is the only way to limit what a ListBucket call sees.
+  # condition below is the only way to limit what a ListBucket call can see.
   statement {
     sid       = "ListOwnPrefixOnly"
     effect    = "Allow"
@@ -369,7 +373,7 @@ data "aws_iam_policy_document" "permissions" {
       "ram:EnableSharingWithAwsOrganization",
       # Same "tag on create" situation as elsewhere: AWS checks this
       # permission before the resource share even has an ID yet, so it
-      # can't be scoped to a specific ARN — has to stay wide open.
+      # can't be scoped to a specific ARN — it has to stay wide open.
       "ram:TagResource",
       "ram:UntagResource",
       "ram:ListTagsForResource"
@@ -379,16 +383,17 @@ data "aws_iam_policy_document" "permissions" {
 
 }
 #
-# resource block - creates the TerraformDeploy role, which is the identity GitHub Actions uses to run Terraform.
+# Resource block: creates the TerraformDeploy role, the identity GitHub Actions uses to run Terraform.
 resource "aws_iam_role" "terraform_deploy" {
   name                 = var.role_name
   assume_role_policy   = data.aws_iam_policy_document.github_actions_trust_policy.json
   max_session_duration = 3600
-  # Defaults to null, meaning no boundary — nothing changes for any caller
+  # Defaults to null, meaning no boundary — nothing changes for a caller
   # that doesn't set this. Re-added 2026-08-25: this was removed the same
-  # day terraform-org stopped calling this module (its sole caller at the
-  # time), but every in-repo account is now adopting a boundary of its
-  # own via modules/terraform-deploy-boundary, so it's needed here again.
+  # day terraform-org stopped calling this module (its only caller at the
+  # time), but every account in this repo is now adopting a permissions
+  # boundary of its own via modules/terraform-deploy-boundary, so it's
+  # needed here again.
   permissions_boundary = var.permissions_boundary_arn
 
   tags = {
@@ -410,8 +415,8 @@ resource "aws_iam_role_policy" "terraform_deploy_policy" {
 }
 
 # ======================================================================================
-# Trust policy for the terraform_plan role it answers who is allowed to log in as this role at all?
-# this role is used for PR-time plans, so it can read resources but not modify them.
+# Trust policy for the terraform_plan role. This answers: "who is allowed to log in as this role at all?"
+# This role is used for pull-request-time plans, so it can read resources but not modify them.
 # ======================================================================================
 data "aws_iam_policy_document" "github_oidc_trust_plan" {
   statement {
@@ -453,7 +458,7 @@ data "aws_iam_policy_document" "github_oidc_trust_plan" {
   }
 }
 
-# Read-only role for the terraform plan workflow: can read resources, not modify them
+# Read-only role for the Terraform plan workflow: can read resources, but not modify them.
 resource "aws_iam_role" "terraform_plan" {
   name                 = "TerraformPlan"
   assume_role_policy   = data.aws_iam_policy_document.github_oidc_trust_plan.json
@@ -471,7 +476,7 @@ resource "aws_iam_role" "terraform_plan" {
 }
 
 # Lets terraform_plan borrow the SSMReadOnly role in the management
-# account, just for reading SSM parameters from there while planning.
+# account, just to read SSM parameters from there while planning.
 resource "aws_iam_role_policy" "terraform_plan_assume_ssm_readonly" {
   name = "AssumeManagementSSMReadOnly"
   role = aws_iam_role.terraform_plan.id
@@ -485,11 +490,13 @@ resource "aws_iam_role_policy" "terraform_plan_assume_ssm_readonly" {
   })
 }
 
-# This resource block grants the read-only TerraformPlan role permission to assume a role in another account (whatever's in extra_assumable_role_arns)
-# but only for accounts that actually pass something in that list which in our case like for production account below
+# Grants the read-only TerraformPlan role permission to assume a role in
+# another account — whatever is listed in extra_assumable_role_arns — but
+# only for accounts that actually pass something in that list. For example,
+# the production account passes:
 #   extra_assumable_role_arns = [
 #     "arn:aws:iam::${nonsensitive(data.aws_ssm_parameter.network_account_id.value)}:role/TgwSpokeWiringProduction",
-#   ].
+#   ]
 resource "aws_iam_role_policy" "terraform_plan_assume_extra_roles" {
   count = length(var.extra_assumable_role_arns) > 0 ? 1 : 0
 
@@ -504,20 +511,21 @@ resource "aws_iam_role_policy" "terraform_plan_assume_extra_roles" {
     }]
   })
 }
-# This resource block attaches the AWS-managed ReadOnlyAccess policy to the terraform_plan role, so it can read resources but not modify them.
+# Attaches the AWS-managed ReadOnlyAccess policy to the terraform_plan role, so it can read resources but not modify them.
 resource "aws_iam_role_policy_attachment" "terraform_plan_readonly" {
   role       = aws_iam_role.terraform_plan.name
   policy_arn = "arn:aws:iam::aws:policy/ReadOnlyAccess"
 }
 
 # Same idea as TerraformDeploy's StateFileAccess above, but for the
-# read-only plan role, and locked to this account's own folder.
+# read-only plan role, locked to this account's own folder.
 #
 # The ReadOnlyAccess policy attached below already grants read access to
-# every bucket in the account, so the read actions here are redundant with
-# that. What actually matters is write access for state locking
+# every bucket in the account, so the read actions here overlap with that.
+# What actually matters is write access for state locking
 # (PutObject/DeleteObject) — ReadOnlyAccess doesn't grant that, and a
-# PR-triggered plan should never be able to write outside its own folder.
+# plan triggered by a pull request should never be able to write outside
+# its own folder.
 
 # This policy is scoped to just this account's own folder, so one account's
 # plan role can never write to another account's state.
@@ -531,7 +539,7 @@ resource "aws_iam_policy" "terraform_plan_s3_role" {
         Effect = "Allow"
         Action = [
           "s3:GetObject",
-          "s3:PutObject",    # required for S3 state locking (.tflock file)
+          "s3:PutObject",    # required for S3 state locking (the lock file)
           "s3:DeleteObject", # required to clean up lock files
         ]
         Resource = ["arn:aws:s3:::${var.state_bucket_name}/${var.state_key_prefix}/*"]
@@ -554,7 +562,7 @@ resource "aws_iam_policy" "terraform_plan_s3_role" {
   })
 }
 
-# This is the attachment of the S3 policy to the terraform_plan role, so it can read/write its own state folder.
+# Attaches the S3 policy to the terraform_plan role, so it can read and write its own state folder.
 resource "aws_iam_role_policy_attachment" "terraform_plan_s3_policy_attachment" {
   role       = aws_iam_role.terraform_plan.name
   policy_arn = aws_iam_policy.terraform_plan_s3_role.arn

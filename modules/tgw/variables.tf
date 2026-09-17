@@ -8,7 +8,7 @@ variable "amazon_side_asn" {
 }
 
 variable "share_with_principals" {
-  description = "Account IDs or Org/OU ARNs to share the TGW with via RAM"
+  description = "Account IDs or AWS Organizations/Organizational Unit (OU) ARNs to share the Transit Gateway (TGW) with, using AWS Resource Access Manager (RAM)."
   type        = list(string)
   sensitive   = false
 }

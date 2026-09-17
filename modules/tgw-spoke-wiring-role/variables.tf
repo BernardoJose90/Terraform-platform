@@ -1,5 +1,5 @@
 variable "name" {
-  description = "IAM role name — must be unique within the network account (e.g. TgwSpokeWiringProduction)."
+  description = "Identity and Access Management (IAM) role name — must be unique within the network account (e.g. TgwSpokeWiringProduction)."
   type        = string
 }
 
@@ -21,12 +21,12 @@ variable "spoke_plan_role_name" {
 }
 
 variable "route_table_arns" {
-  description = "TGW route table ARNs this role may associate/propagate/route into — the spoke's own route table plus main. Never another spoke's table."
+  description = "Transit Gateway (TGW) route table Amazon Resource Names (ARNs) this role may associate, propagate, or add routes into. This should be the spoke's own route table plus the main one — never another spoke's table."
   type        = list(string)
 }
 
 variable "ssm_parameter_arns" {
-  description = "SSM parameter ARNs (in this account) this role may read — tgw_id, ram_resource_share_arn, and the route table IDs it needs."
+  description = "Systems Manager (SSM) parameter ARNs, in this account, that this role may read — tgw_id, ram_resource_share_arn, and the route table IDs it needs."
   type        = list(string)
 }
 

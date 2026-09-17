@@ -1,9 +1,9 @@
 # Runs these checks locally on `git commit`, before anything even gets
-# pushed. Same checks the CI pipeline runs, just faster — no waiting on a
-# push and a pipeline run to find out something's wrong. terraform_fmt is
-# the one that matters most here: CI now fails the whole PR on bad
-# formatting instead of quietly fixing it, so this hook is what catches
-# that before it ever reaches CI.
+# pushed. Same checks the CI (Continuous Integration) pipeline runs, just
+# faster — no waiting on a push and a pipeline run to find out something's
+# wrong. terraform_fmt is the one that matters most here: CI now fails the
+# whole PR (Pull Request) on bad formatting instead of quietly fixing it,
+# so this hook is what catches that before it ever reaches CI.
 #
 # Install once, per clone (macOS):
 #   brew install pre-commit
