@@ -1,6 +1,6 @@
 name: Terraform Plan
 
-# Runs whenever a Pull Request (PR) is opened or updated and is going to be merged into main.
+# Runs whenever a Pull Request (PR) is opened or updated that target main.
 # This workflow only checks what Terraform would change. It does NOT make any changes.
 
 # The list of AWS accounts is automatically loaded from SSM.
@@ -33,10 +33,10 @@ on:
 
   workflow_dispatch:
 
-permissions:
-  id-token: write
-  contents: read
-  pull-requests: write
+permissions: # The workflow needs the following permissions to run
+  id-token: write # required for OIDC (OpenID Connect) to assume the AWS role in this workflow.
+  contents: read # required to allow job to read repo.
+  pull-requests: write # required to write comments to a PR.
   security-events: write   # required so Checkov's findings (in SARIF, a standard format for security-scan results) can be uploaded to GitHub's Security tab
 
 concurrency:
@@ -88,14 +88,14 @@ jobs:
       # True for a same-repo PR, a manual run, or anything that isn't a PR
       # at all. False only when the PR comes from a fork.
       #
-      # GitHub refuses to hand a forked PR an OIDC token — OIDC (OpenID
+      # GitHub refuses to hand a forked PR an OIDC token OIDC (OpenID
       # Connect) is the short-lived sign-in credential these workflows use
-      # to reach AWS, so no long-lived secret has to be stored — or a
+      # to reach AWS, so no long-lived secret has to be stored or a
       # write-scoped GITHUB_TOKEN. That means the `plan` and
       # `discover-accounts` jobs are already safe from a fork PR: they
       # simply fail at "Configure AWS credentials" before `terraform init`
       # ever touches fork-supplied code. `validate-format` no longer runs
-      # `terraform init` either — it only checks formatting now, and
+      # `terraform init` either it only checks formatting now, and
       # per-account validity is already covered by the `plan` matrix and
       # the `tflint` job.
       #
@@ -250,7 +250,7 @@ jobs:
   # This job used to also loop `terraform init && terraform validate` over
   # every account directory, serially. That was removed: it scaled with the
   # account count instead of the PR, and per-account validity is already
-  # covered — the `plan` matrix inits and plans every changed account in
+  # covered the `plan` matrix inits and plans every changed account in
   # parallel (invalid HCL fails it), and the `tflint` job parses and checks
   # references for everyone, forks included, without fetching providers.
   # What's left here is the one thing neither of those does: `terraform fmt`.
@@ -354,7 +354,7 @@ jobs:
   # job always runs so GitHub always gets a status, and the expensive steps
   # skip on a docs-only PR (a skipped step doesn't fail the job).
   #
-  # Scoped to member-accounts/ on purpose — same as `directory:
+  # Scoped to member-accounts/ on purpose same as `directory:
   # member-accounts/` in the Checkov job and `files: ^member-accounts/` in
   # the pre-commit hooks.
   #
@@ -377,7 +377,7 @@ jobs:
   # provenance attestation before installing it. A build provenance
   # attestation is a signed, verifiable record that says "this exact file
   # was built by this exact GitHub Actions workflow, from this exact
-  # commit" — the same proof-of-origin idea this repo already uses further
+  # commit" the same proof-of-origin idea this repo already uses further
   # down for the Terraform plan files themselves.
   lint:
     name: Lint (tflint)
@@ -609,7 +609,7 @@ jobs:
           exit 1
 
       # Converts the plan to JSON so the PR-comment step below can list
-      # resource ADDRESSES only (e.g. aws_subnet.private[2]) — never the
+      # resource ADDRESSES only (e.g. aws_subnet.private[2]) never the
       # real attribute values (CIDRs, ARNs, account IDs, IAM policy JSON)
       # that the plain-text plan_output.txt prints inline. Both repos are
       # public, so anything posted as a PR comment is world-readable; the
@@ -624,7 +624,7 @@ jobs:
         working-directory: ${{ matrix.working_directory }}
         run: terraform show -no-color -json tfplan.binary > plan.json
 
-      # Posts a SUMMARY of the plan as a comment on the PR — counts and
+      # Posts a SUMMARY of the plan as a comment on the PR counts and
       # resource addresses, built from plan.json above, never the raw plan
       # text. Updates the same comment on a re-run instead of piling up a
       # new one each time (see the marker/existing-comment logic below).
@@ -754,7 +754,7 @@ jobs:
       # last uploaded as tfplan-<account> is what apply would use.
       #
       # github.event.pull_request.head.sha is empty on workflow_dispatch
-      # (no PR context) — falls back to github.sha, the commit this run
+      # (no PR context) falls back to github.sha, the commit this run
       # itself checked out, which is what apply's own commit-based fallback
       # path compares against in that case.
       - name: Stamp plan with head commit SHA
@@ -806,11 +806,11 @@ jobs:
       # initialized here, AWS credentials are already assumed, and
       # tfplan.binary is already sitting on disk. A separate job would have
       # to repeat checkout, Terraform setup, the AWS sign-in, and
-      # `terraform init` all over again — once per account — for no extra
+      # `terraform init` all over again once per account for no extra
       # coverage.
       #
       # It's also placed AFTER the plan-file upload on purpose: if this
-      # scan fails, the job fails and Plan Summary blocks the merge — but
+      # scan fails, the job fails and Plan Summary blocks the merge but
       # the plan artifact and the PR comment are still there for someone to
       # read and review.
       #
@@ -822,9 +822,9 @@ jobs:
         env:
           # Without this setting, Checkov only trusts a plan's `after`
           # (final) value for each field. When a resource is created in the
-          # same plan as something it depends on — say, a CloudWatch log
+          # same plan as something it depends on say, a CloudWatch log
           # group's encryption key ID, pointing at a KMS key being created
-          # right alongside it — Terraform can't know that value yet, so it
+          # right alongside it Terraform can't know that value yet, so it
           # shows up as `(known after apply)`, which Checkov treats the
           # same as "not set". A check that just asks "is this set?" (like
           # CKV_AWS_158) then fails, even though the Terraform code
@@ -850,9 +850,7 @@ jobs:
       # Folded into the plan job for the same reason as the Checkov plan scan
       # above: plan.json already exists on disk here, so a standalone job would
       # just repeat checkout + setup-terraform + an OIDC assume + a terraform
-      # init once per account for no extra coverage. Unlike the old standalone
-      # job this needs NO AWS credentials — Infracost only reads plan.json,
-      # it never calls AWS.
+      # init once per account for no extra coverage. Infracost only reads plan.json, it never calls AWS.
       #
       # Advisory only. Every step here is continue-on-error, and none of it is
       # wired into Plan Summary, so a flaky estimate or a missing API key can

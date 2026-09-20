@@ -3,11 +3,11 @@ name: Terraform Apply
 # Runs whenever a change lands on main.
 # Which accounts, directories, roles, and approval tiers exist is worked
 # out at runtime by reading SSM, and only the account folders that
-# actually changed get included — adding a new account never means
+# actually changed get included adding a new account never means
 # editing this workflow.
 #
 # Wherever possible, this applies the EXACT plan that was reviewed on the
-# PR (Pull Request) — not a fresh one — so nothing gets applied based on
+# PR (Pull Request) not a fresh one so nothing gets applied based on
 # state that may have shifted since the review happened.
 #
 # If that reviewed plan can't be found, what happens depends on how this
@@ -19,7 +19,7 @@ name: Terraform Apply
 #
 # Production has to refuse rather than fall back, because a missing or
 # expired artifact, or a failed PR lookup, could otherwise let an
-# unreviewed plan slip through and apply — which defeats the whole point
+# unreviewed plan slip through and apply which defeats the whole point
 # of reviewing plans in the first place. A manual run is different: a
 # person explicitly asked for this apply, so computing a fresh plan for
 # them is fine.
@@ -27,7 +27,7 @@ name: Terraform Apply
 # To find the reviewed plan, this traces the commit that just landed on
 # main back to the PR that produced it. It can't just match github.sha
 # directly, because merge, squash, and rebase merges all create a brand
-# new commit on main — with a different SHA than the one the PR's
+# new commit on main with a different SHA than the one the PR's
 # Terraform plan was actually computed against.
 
 on:
