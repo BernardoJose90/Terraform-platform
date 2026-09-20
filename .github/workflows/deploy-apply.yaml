@@ -1,6 +1,6 @@
 name: Terraform Apply
 
-# Runs whenever a change lands on main.
+# Runs whenever we merge to main.
 # Which accounts, directories, roles, and approval tiers exist is worked
 # out at runtime by reading SSM, and only the account folders that
 # actually changed get included adding a new account never means
