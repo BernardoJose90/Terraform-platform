@@ -188,7 +188,7 @@ module "vpc" {
   azs             = var.azs
   private_subnets = var.private_subnets
 
-  enable_nat_gateway = true
+  enable_nat_gateway = false
   # Only set to a real value while wired into the Transit Gateway (TGW);
   # null when detached. This pairs with allow_no_default_route below so
   # the shared vpc module permits a VPC with no default route out.
