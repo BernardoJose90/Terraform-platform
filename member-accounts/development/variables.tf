@@ -65,3 +65,33 @@ variable "tgw_attachment_enabled" {
   type        = bool
   default     = true
 }
+
+/*
+  EKS cluster is a separate, billable resource that can be paused
+  independently of the networking layer. This is useful for development
+  outside working hours, when the cluster isn't needed but the VPC and
+  its subnets are still useful for other things (e.g. a bastion host or
+  a VPN endpoint).
+*/
+/*
+variable "eks_enabled" {
+  description = <<-EOT
+    Switch for the EKS cluster specifically, independent of
+    networking_enabled — the VPC and dev_purpose_subnets stay up when
+    this is false, only the cluster (and its control-plane cost) goes
+    away. Meant for pausing EKS outside working hours without tearing
+    down the rest of the account.
+
+    ANYTHING ADDED LATER THAT DEPENDS ON THE CLUSTER EXISTING — IRSA
+    roles, an ALB controller, cluster add-ons, Pod Identity associations
+    — must be gated on the same condition
+    (var.networking_enabled && var.eks_enabled), the way module.eks
+    itself is in main.tf, or reference it through a count/for_each-safe
+    accessor (e.g. one(module.eks[*].x)) instead of module.eks[0]
+    directly. Otherwise turning this off would break their plan instead
+    of cleanly deleting them.
+  EOT
+  type        = bool
+  default     = true
+}
+*/

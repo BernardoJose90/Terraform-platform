@@ -4,4 +4,4 @@
 # the network account's own teardown.auto.tfvars is changed to false.
 # Flipping this is a normal PR that rides the existing
 # plan -> approval -> apply pipeline.
-networking_enabled = false
+networking_enabled = true

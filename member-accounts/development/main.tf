@@ -296,3 +296,108 @@ resource "aws_route" "private_to_tgw" {
     }
   }
 }
+
+# ============================================================
+# Subnets for development's own application: EKS (Kubernetes), RDS
+# (database), an internal ALB (load balancer), and a general-purpose
+# tier. Mirrors modules/prod-purpose-subnets' shape (see production's
+# main.tf) so the two accounts stay structurally in sync, but kept as
+# its own module rather than shared code — same reasoning as prod's:
+# the network account doesn't need to know how either account's
+# application is laid out internally.
+#
+# Only eks and resources get a route out to the TGW, and only while this
+# account is actually wired into it (local.tgw_wiring) — same as the
+# rest of this file's egress, an isolated dev VPC has no route out for
+# these subnets either. rds and alb never get one: neither a database
+# nor an internal load balancer should ever start outbound connections
+# on its own.
+# ============================================================
+module "dev_purpose_subnets" {
+  count = var.networking_enabled ? 1 : 0
+
+  source = "../../modules/dev-purpose-subnets"
+  vpc_id = module.vpc[0].vpc_id
+
+  # Only a real value while wired into the TGW — null (and every to_tgw
+  # below false) when running as a standalone, isolated VPC. Pairs with
+  # local.tgw_wiring the same way module.vpc's tgw_id does above.
+  tgw_id = local.tgw_wiring ? nonsensitive(data.aws_ssm_parameter.tgw_id[0].value) : null
+
+  development_workload_subnets = {
+    eks = {
+      route_table_name = "dev-eks-rtb"
+      to_tgw           = local.tgw_wiring
+      subnets = {
+        a = { az = "eu-west-2a", cidr = "10.30.16.0/22", name = "dev-eks-a" }
+        b = { az = "eu-west-2b", cidr = "10.30.32.0/22", name = "dev-eks-b" }
+      }
+    }
+    rds = {
+      route_table_name = "dev-rds-rtb"
+      to_tgw           = false
+      subnets = {
+        a = { az = "eu-west-2a", cidr = "10.30.50.0/24", name = "dev-rds-a" }
+        b = { az = "eu-west-2b", cidr = "10.30.60.0/24", name = "dev-rds-b" }
+      }
+    }
+    alb = {
+      route_table_name = "dev-private-alb-rtb"
+      to_tgw           = false
+      subnets = {
+        a = { az = "eu-west-2a", cidr = "10.30.70.0/24", name = "dev-alb-a" }
+        b = { az = "eu-west-2b", cidr = "10.30.80.0/24", name = "dev-alb-b" }
+      }
+    }
+    resources = {
+      route_table_name = "dev-private-resources-rtb"
+      to_tgw           = local.tgw_wiring
+      subnets = {
+        a = { az = "eu-west-2a", cidr = "10.30.100.0/24", name = "dev-private-resources" }
+      }
+    }
+  }
+
+  tags = var.tags
+
+  # As with aws_route.private_to_tgw above, this module's own to_tgw
+  # routes can't target the TGW until the attachment exists.
+  depends_on = [module.tgw_attachment]
+}
+
+# Gated on var.eks_enabled as well as var.networking_enabled, so the
+# cluster specifically can be paused (e.g. outside working hours) without
+# tearing down the VPC and dev_purpose_subnets underneath it — see the
+# ORDERING note on var.eks_enabled for what anything added later that
+# depends on this cluster (IRSA roles, an ALB controller, add-ons) needs
+# to do to stay safe when this is off.
+/*
+module "eks" {
+  count = var.networking_enabled && var.eks_enabled ? 1 : 0
+
+  source  = "terraform-aws-modules/eks/aws"
+  version = "~> 21.0"
+
+  name               = "Dev-EKS"
+  kubernetes_version = "1.35"
+
+  # Optional
+  endpoint_public_access = false
+
+  # Optional: Adds the current caller identity as an administrator via cluster access entry
+  enable_cluster_creator_admin_permissions = true
+  authentication_mode                      = "API"
+  compute_config = {
+    enabled    = true
+    node_pools = ["general-purpose"]
+  }
+
+  vpc_id = module.vpc[0].vpc_id
+  subnet_ids = [
+    module.dev_purpose_subnets[0].subnet_ids["eks-a"],
+    module.dev_purpose_subnets[0].subnet_ids["eks-b"],
+  ]
+
+
+  tags = var.tags
+}*/
