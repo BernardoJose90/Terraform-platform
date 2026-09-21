@@ -108,13 +108,32 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
-      - name: Fetch failed-step logs
+      # `--log-failed` looks tempting here but is wrong for this workflow:
+      # deploy-plan.yaml's "Terraform Plan" step deliberately sets
+      # continue-on-error: true (so it can capture the exit code and print
+      # its own error summary), which means GitHub does NOT mark that step
+      # itself as failed — only the later "Check Plan Exit Code" step is,
+      # since that's the one that actually exits 1. `--log-failed` would
+      # then hand back only "Check Plan Exit Code" and "Plan Summary" — the
+      # generic wrapper steps that just echo "plan failed, check the logs
+      # above" — and never the real Terraform error, which lives in the
+      # "Terraform Plan" step it skipped over.
+      #
+      # So instead: find whichever job(s) in the run actually failed, and
+      # pull each one's FULL log (every step, "successful" continue-on-error
+      # ones included) rather than filtering by step status at all.
+      - name: Fetch failed-job logs
         if: steps.find-pr.outputs.pr_number != ''
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.event.workflow_run.id }}
-        run: gh run view "$RUN_ID" -R "$REPO" --log-failed > raw_log.txt
+        run: |
+          : > raw_log.txt
+          failed_job_ids=$(gh run view "$RUN_ID" -R "$REPO" --json jobs --jq '.jobs[] | select(.conclusion == "failure") | .databaseId')
+          for job_id in $failed_job_ids; do
+            gh run view "$RUN_ID" -R "$REPO" --job "$job_id" --log >> raw_log.txt
+          done
 
       - name: Trim log to the relevant excerpt
         if: steps.find-pr.outputs.pr_number != ''

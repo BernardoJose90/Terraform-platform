@@ -79,12 +79,30 @@ jobs:
       # Not gated on pr_number: an apply failure is worth diagnosing even
       # with nowhere to comment. Where it's posted is decided in the comment
       # job; whether it runs at all isn't.
-      - name: Fetch failed-step logs
+      #
+      # `--log-failed` looks tempting here but is wrong for this workflow:
+      # deploy-apply.yaml has several steps with continue-on-error: true (so
+      # they can capture an exit code and print their own error summary
+      # first), which means GitHub does NOT mark those steps themselves as
+      # failed — only whatever later step actually exits 1 is. `--log-failed`
+      # would then hand back just that later wrapper step's generic "it
+      # failed, check the logs above" text and skip right over the step that
+      # has the real error.
+      #
+      # So instead: find whichever job(s) in the run actually failed, and
+      # pull each one's FULL log (every step, "successful" continue-on-error
+      # ones included) rather than filtering by step status at all.
+      - name: Fetch failed-job logs
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           REPO: ${{ github.repository }}
           RUN_ID: ${{ github.event.workflow_run.id }}
-        run: gh run view "$RUN_ID" -R "$REPO" --log-failed > raw_log.txt
+        run: |
+          : > raw_log.txt
+          failed_job_ids=$(gh run view "$RUN_ID" -R "$REPO" --json jobs --jq '.jobs[] | select(.conclusion == "failure") | .databaseId')
+          for job_id in $failed_job_ids; do
+            gh run view "$RUN_ID" -R "$REPO" --job "$job_id" --log >> raw_log.txt
+          done
 
       - name: Trim log to the relevant excerpt
         run: |
