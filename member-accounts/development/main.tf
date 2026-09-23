@@ -365,32 +365,31 @@ module "dev_purpose_subnets" {
   depends_on = [module.tgw_attachment]
 }
 
+# ============================================================
 # Gated on var.eks_enabled as well as var.networking_enabled, so the
 # cluster specifically can be paused (e.g. outside working hours) without
-# tearing down the VPC and dev_purpose_subnets underneath it — see the
-# ORDERING note on var.eks_enabled for what anything added later that
-# depends on this cluster (IRSA roles, an ALB controller, add-ons) needs
-# to do to stay safe when this is off.
-/*
+# tearing down the VPC and dev_purpose_subnets underneath it.
+#
+# ORDERING: anything added later that depends on this cluster existing
+# (an ALB controller, Argo CD, more Pod Identity associations) must be
+# gated the same way (var.networking_enabled && var.eks_enabled), or
+# reference it through a count/for_each-safe accessor (e.g.
+# one(module.eks[*].cluster_name)) instead of module.eks[0] directly —
+# otherwise turning eks_enabled off breaks that resource's plan instead
+# of cleanly deleting it.
+#
+# See modules/eks/main.tf for what's fixed (KMS-encrypted secrets, full
+# control-plane logging, access entries instead of aws-auth, IMDSv2,
+# encrypted node volumes, CNI permissions via a dedicated Pod Identity
+# role) versus what's account-specific here.
+# ============================================================
 module "eks" {
   count = var.networking_enabled && var.eks_enabled ? 1 : 0
 
-  source  = "terraform-aws-modules/eks/aws"
-  version = "~> 21.0"
+  source = "../../modules/eks"
 
   name               = "Dev-EKS"
   kubernetes_version = "1.35"
-
-  # Optional
-  endpoint_public_access = false
-
-  # Optional: Adds the current caller identity as an administrator via cluster access entry
-  enable_cluster_creator_admin_permissions = true
-  authentication_mode                      = "API"
-  compute_config = {
-    enabled    = true
-    node_pools = ["general-purpose"]
-  }
 
   vpc_id = module.vpc[0].vpc_id
   subnet_ids = [
@@ -398,6 +397,24 @@ module "eks" {
     module.dev_purpose_subnets[0].subnet_ids["eks-b"],
   ]
 
+  # Public access, restricted to var.eks_endpoint_public_access_cidrs,
+  # stays on as an interim state until Argo CD and break-glass access
+  # exist — see that variable's own description, and
+  # modules/eks/variables.tf, for the reasoning.
+  endpoint_public_access       = true
+  endpoint_public_access_cidrs = var.eks_endpoint_public_access_cidrs
+
+  # Matches the console-built cluster's sizing (2 nodes across 2 AZs),
+  # with a little autoscaling headroom added on top. Adjust instance
+  # size/count here as dev's actual workload needs become clearer.
+  node_groups = {
+    general = {
+      instance_types = ["t3.medium"]
+      min_size       = 2
+      max_size       = 4
+      desired_size   = 2
+    }
+  }
 
   tags = var.tags
-}*/
+}
