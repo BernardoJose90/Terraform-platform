@@ -66,14 +66,11 @@ variable "tgw_attachment_enabled" {
   default     = true
 }
 
-/*
-  EKS cluster is a separate, billable resource that can be paused
-  independently of the networking layer. This is useful for development
-  outside working hours, when the cluster isn't needed but the VPC and
-  its subnets are still useful for other things (e.g. a bastion host or
-  a VPN endpoint).
-*/
-/*
+# EKS cluster is a separate, billable resource that can be paused
+# independently of the networking layer. This is useful for development
+# outside working hours, when the cluster isn't needed but the VPC and
+# its subnets are still useful for other things (e.g. a bastion host or
+# a VPN endpoint).
 variable "eks_enabled" {
   description = <<-EOT
     Switch for the EKS cluster specifically, independent of
@@ -94,4 +91,24 @@ variable "eks_enabled" {
   type        = bool
   default     = true
 }
-*/
+
+variable "eks_endpoint_public_access_cidrs" {
+  description = <<-EOT
+    CIDRs allowed to reach the EKS cluster's public Kubernetes API
+    endpoint, e.g. ["203.0.113.4/32"] for a single IP. No default on
+    purpose — modules/eks refuses to apply with public access on and
+    this left empty, rather than silently falling back to something
+    permissive.
+
+    This is an interim access path: it exists until Argo CD and
+    break-glass access are in place, at which point the plan is to move
+    the endpoint to private-only (see modules/eks/variables.tf). It's
+    also fragile against CI specifically — GitHub-hosted runners get a
+    different egress IP on every run, so nothing in deploy-plan.yaml or
+    deploy-apply.yaml can rely on reaching the cluster's Kubernetes API
+    through this endpoint the way it can reach the EKS control-plane API
+    (which doesn't go through this CIDR restriction at all).
+  EOT
+  type        = list(string)
+  default     = []
+}

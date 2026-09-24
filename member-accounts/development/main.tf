@@ -365,32 +365,42 @@ module "dev_purpose_subnets" {
   depends_on = [module.tgw_attachment]
 }
 
+# ============================================================
 # Gated on var.eks_enabled as well as var.networking_enabled, so the
 # cluster specifically can be paused (e.g. outside working hours) without
-# tearing down the VPC and dev_purpose_subnets underneath it — see the
-# ORDERING note on var.eks_enabled for what anything added later that
-# depends on this cluster (IRSA roles, an ALB controller, add-ons) needs
-# to do to stay safe when this is off.
-/*
+# tearing down the VPC and dev_purpose_subnets underneath it.
+#
+# ORDERING: anything added later that depends on this cluster existing
+# (an ALB controller, Argo CD, more Pod Identity associations) must be
+# gated the same way (var.networking_enabled && var.eks_enabled), or
+# reference it through a count/for_each-safe accessor (e.g.
+# one(module.eks[*].cluster_name)) instead of module.eks[0] directly —
+# otherwise turning eks_enabled off breaks that resource's plan instead
+# of cleanly deleting it.
+#
+# See modules/eks/main.tf for what's fixed (KMS-encrypted secrets, full
+# control-plane logging, access entries instead of aws-auth, IMDSv2,
+# encrypted node volumes, CNI permissions via a dedicated Pod Identity
+# role) versus what's account-specific here.
+# ============================================================
+# The IAM role IAM Identity Center provisions in this account for the
+# "administrators" SSO permission set (see sso.tf's administrators_admin
+# assignment, which already targets this account). Looked up by name
+# instead of hardcoded — the role's ARN has an AWS-generated suffix this
+# repo doesn't control, and would break if the permission set were ever
+# recreated.
+data "aws_iam_roles" "sso_admin" {
+  name_regex  = "AWSReservedSSO_AdministratorAccess_.*"
+  path_prefix = "/aws-reserved/sso.amazonaws.com/"
+}
+
 module "eks" {
   count = var.networking_enabled && var.eks_enabled ? 1 : 0
 
-  source  = "terraform-aws-modules/eks/aws"
-  version = "~> 21.0"
+  source = "../../modules/eks"
 
   name               = "Dev-EKS"
   kubernetes_version = "1.35"
-
-  # Optional
-  endpoint_public_access = false
-
-  # Optional: Adds the current caller identity as an administrator via cluster access entry
-  enable_cluster_creator_admin_permissions = true
-  authentication_mode                      = "API"
-  compute_config = {
-    enabled    = true
-    node_pools = ["general-purpose"]
-  }
 
   vpc_id = module.vpc[0].vpc_id
   subnet_ids = [
@@ -398,6 +408,45 @@ module "eks" {
     module.dev_purpose_subnets[0].subnet_ids["eks-b"],
   ]
 
+  # Public access, restricted to var.eks_endpoint_public_access_cidrs,
+  # stays on as an interim state until Argo CD and break-glass access
+  # exist — see that variable's own description, and
+  # modules/eks/variables.tf, for the reasoning.
+  endpoint_public_access       = true
+  endpoint_public_access_cidrs = var.eks_endpoint_public_access_cidrs
+
+  # Grants james.admin (the SSO "administrators" group, already assigned
+  # AdministratorAccess on this account via member-accounts/security/sso.tf)
+  # cluster-admin Kubernetes RBAC access too. AWS account access and
+  # in-cluster Kubernetes access are separate gates under
+  # authentication_mode = "API" — the SSO assignment alone doesn't imply
+  # this, an access entry is required on top of it. Looked up by name
+  # instead of hardcoded, since IAM Identity Center provisions this role's
+  # ARN per-account with a random suffix Terraform doesn't control.
+  access_entries = {
+    james_admin = {
+      principal_arn = tolist(data.aws_iam_roles.sso_admin.arns)[0]
+
+      policy_associations = {
+        admin = {
+          policy_arn   = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+          access_scope = { type = "cluster" }
+        }
+      }
+    }
+  }
+
+  # Matches the console-built cluster's sizing (2 nodes across 2 AZs),
+  # with a little autoscaling headroom added on top. Adjust instance
+  # size/count here as dev's actual workload needs become clearer.
+  node_groups = {
+    general = {
+      instance_types = ["t3.medium"]
+      min_size       = 2
+      max_size       = 4
+      desired_size   = 2
+    }
+  }
 
   tags = var.tags
-}*/
+}

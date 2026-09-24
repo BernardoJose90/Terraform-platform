@@ -183,6 +183,39 @@ skip-check:
   - CKV2_AWS_19
   - CKV2_AWS_12
 
+  # CKV_AWS_58 — "Ensure EKS Cluster has Secrets Encryption Enabled".
+  # modules/eks/main.tf DOES set this (encryption_config = { resources =
+  # ["secrets"] }, in the module "eks" block) — Checkov just can't see
+  # it. The upstream module only attaches an encryption_config block to
+  # the actual aws_eks_cluster resource via a dynamic block gated on
+  # length(var.encryption_config) > 0, and Checkov's source-code scan
+  # can't resolve that condition through this many nested/external
+  # module hops (this local wrapper module -> terraform-aws-modules/eks/
+  # aws -> the dynamic block). Confirmed real: the separate Checkov pass
+  # later in this same pipeline, which reads the fully resolved plan
+  # instead of raw source, reports 0 failed checks for this cluster.
+  # Same underlying class of problem as the CKV2_AWS_19/12 tool
+  # limitation above, just tripped by a dynamic block instead of count.
+  #
+  # CKV_AWS_37 — "Ensure Amazon EKS control plane logging is enabled for
+  # all log types". modules/eks/main.tf sets enabled_log_types to a
+  # plain literal list of all 5 types — nothing dynamic here at all —
+  # yet Checkov still can't trace it through the same nested/external
+  # module chain. Same resolved-plan evidence as CKV_AWS_58 above: 0
+  # failures.
+  #
+  # CKV2_AWS_5 — "Ensure that Security Groups are attached to another
+  # resource". Flags 4 security groups the upstream EKS module creates
+  # for itself (the cluster SG, the node SG, and the managed/self-
+  # managed node group submodules' own SGs) — each one sits inside a
+  # counted resource inside a module inside another module, the exact
+  # same graph-tracing gap as CKV2_AWS_19/12 above. They're genuinely
+  # attached (EKS wires them to the cluster and its nodes internally);
+  # the resolved-plan scan agrees.
+  - CKV_AWS_58
+  - CKV_AWS_37
+  - CKV2_AWS_5
+
   # CKV_AWS_338 — "CloudWatch log groups should keep logs for at least a
   # year". modules/vpc keeps flow logs for 90 days instead — a deliberate
   # balance between storage cost and how far back you'd actually need to
