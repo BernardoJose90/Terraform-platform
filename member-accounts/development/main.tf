@@ -383,6 +383,17 @@ module "dev_purpose_subnets" {
 # encrypted node volumes, CNI permissions via a dedicated Pod Identity
 # role) versus what's account-specific here.
 # ============================================================
+# The IAM role IAM Identity Center provisions in this account for the
+# "administrators" SSO permission set (see sso.tf's administrators_admin
+# assignment, which already targets this account). Looked up by name
+# instead of hardcoded — the role's ARN has an AWS-generated suffix this
+# repo doesn't control, and would break if the permission set were ever
+# recreated.
+data "aws_iam_roles" "sso_admin" {
+  name_regex  = "AWSReservedSSO_AdministratorAccess_.*"
+  path_prefix = "/aws-reserved/sso.amazonaws.com/"
+}
+
 module "eks" {
   count = var.networking_enabled && var.eks_enabled ? 1 : 0
 
@@ -403,6 +414,27 @@ module "eks" {
   # modules/eks/variables.tf, for the reasoning.
   endpoint_public_access       = true
   endpoint_public_access_cidrs = var.eks_endpoint_public_access_cidrs
+
+  # Grants james.admin (the SSO "administrators" group, already assigned
+  # AdministratorAccess on this account via member-accounts/security/sso.tf)
+  # cluster-admin Kubernetes RBAC access too. AWS account access and
+  # in-cluster Kubernetes access are separate gates under
+  # authentication_mode = "API" — the SSO assignment alone doesn't imply
+  # this, an access entry is required on top of it. Looked up by name
+  # instead of hardcoded, since IAM Identity Center provisions this role's
+  # ARN per-account with a random suffix Terraform doesn't control.
+  access_entries = {
+    james_admin = {
+      principal_arn = tolist(data.aws_iam_roles.sso_admin.arns)[0]
+
+      policy_associations = {
+        admin = {
+          policy_arn   = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+          access_scope = { type = "cluster" }
+        }
+      }
+    }
+  }
 
   # Matches the console-built cluster's sizing (2 nodes across 2 AZs),
   # with a little autoscaling headroom added on top. Adjust instance
