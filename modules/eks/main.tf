@@ -115,6 +115,8 @@ module "eks" {
   enable_cluster_creator_admin_permissions = var.enable_cluster_creator_admin_permissions
   access_entries                           = var.access_entries
 
+  encryption_config = { resources = ["secrets"] }
+
   # before_compute = true for vpc-cni and eks-pod-identity-agent so
   # networking and Pod Identity are both ready before any node tries to
   # join — otherwise the first node group can race the addons that it
