@@ -59,6 +59,25 @@ the code.
   updating every `member-accounts/*/main.tf` call site to match, and name
   which caller(s) still need the update if the log shows more than one
   affected account.
+- **A `terraform init -lockfile=readonly` failure naming a provider the
+  PR's diff never touches is almost always a missing-platform checksum gap,
+  not a version conflict.** `.terraform.lock.hcl` stores per-platform `h1:`
+  hashes, and a lock file produced by a plain local `terraform init` only
+  carries hashes for whichever one platform generated it — often a
+  contributor's own laptop, not `linux_amd64` (what CI runs on). Adding a
+  module that pulls in a previously-unused provider (even transitively,
+  through a third-party module) exposes this gap for exactly those new
+  providers. Confirm by opening that account's `.terraform.lock.hcl` and
+  counting each affected provider's own `h1:` entries directly — don't
+  assume a provider's coverage from a different provider's entry in the
+  same file. The fix is regenerating that account's lock file with
+  `terraform providers lock -platform=...` for every platform actually in
+  use (at minimum `linux_amd64`), then committing it — never touching
+  `-lockfile=readonly` itself. This repo also runs a weekly automated
+  lock-file refresh (Renovate's `lockFileMaintenance`, see
+  `.github/renovate.json5`) that keeps `main` current, but it doesn't run
+  against open feature branches — so this gap is expected the first time a
+  PR introduces a new provider, not a sign that automation failed.
 - **Every account also has its own permissions boundary
   (`module.terraform_deploy_boundary`, from `modules/terraform-deploy-
   boundary`), separate from `module.github-oidc-roles`:** this caps what
@@ -128,6 +147,25 @@ the code.
   the failing workflow's actual GitHub Environment against that hardcoded
   list — not as a missing IAM permission, which is a different fix
   entirely.
+- **A Checkov FAILED result on a resource nested several modules deep may
+  be the same static-analysis blind spot already documented in
+  `.checkov.yaml` for `CKV2_AWS_19` / `CKV2_AWS_12` / `CKV2_AWS_11`, even
+  under a check ID not yet listed there.** Checkov's source-code scan can
+  lose track of a value — a literal list, a variable gated behind a dynamic
+  block, a `count`-indexed resource — once it passes through this repo's
+  own wrapper module (e.g. `modules/eks/main.tf`) and into a third-party
+  registry module. You can confirm whether this repo's *own* code sets the
+  relevant argument correctly by reading the wrapper module directly, but
+  you cannot inspect the third-party module's internals — it isn't checked
+  out for you, and you have no network access, so you cannot fully confirm
+  a resolution failure yourself. If this repo's own code looks correct for
+  a nested/external-module resource, say so, name the separate `Checkov
+  policy scan (resolved plan)` step (runs once per account inside each
+  `Terraform Plan - <account>` job, against the fully resolved plan, and
+  doesn't share this static scan's blind spot) as what a human should check
+  next, and note this matches the known tool-limitation class — rather
+  than writing the finding up as a definite new risk that needs a code
+  change.
 - **`Error acquiring the state lock` can be genuine concurrent access, not
   a stuck lock.** `deploy-plan.yaml`'s concurrency group is scoped per
   PR (`tf-plan-<PR number>`), not per account — two different PRs that
@@ -180,7 +218,12 @@ so open that file, confirm what is there, and follow the reference into the
 module or call site it implicates. Do not speculate about upstream events
 (an earlier merge, an out-of-band change, AWS history) you cannot confirm
 from the log or the code. If neither the log nor the code lets you pin the
-cause down, write "cannot determine" and say what is missing.
+cause down, write "cannot determine" and say what is missing. Any specific
+factual claim you make about file contents as supporting evidence — a
+count, a comparison ("X has more of this than Y"), a structural detail —
+must come from actually reading that file, not from what this kind of file
+typically looks like. If you can't confirm it, drop the claim rather than
+include it as unverified color.
 
 ### Suggested fix
 2–3 sentences. What should change and why. Never write or paste a patch,
