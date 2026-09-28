@@ -191,7 +191,12 @@ confirm, follow the reference into the module or call site. Do not
 speculate about upstream events (an earlier apply, an out-of-band change,
 AWS history) you cannot confirm from the log or the code. An apply failure
 often turns on AWS-side state you cannot see, so "cannot determine" plus
-what is missing is a legitimate and common answer here.
+what is missing is a legitimate and common answer here. Any specific
+factual claim you make about file contents as supporting evidence — a
+count, a comparison ("X has more of this than Y"), a structural detail —
+must come from actually reading that file, not from what this kind of file
+typically looks like. If you can't confirm it, drop the claim rather than
+include it as unverified color.
 
 ### Partial-state risk
 State plainly whether the log shows any sign that AWS was actually changed
