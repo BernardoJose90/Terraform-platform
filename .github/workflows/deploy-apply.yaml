@@ -154,11 +154,11 @@ jobs:
           # on the PR. Same "can't map to one account, so do them all"
           # logic as modules/ above. Keep this list in sync with
           # deploy-plan.yaml's own CHANGED_GLOBAL block — including its
-          # note on why the root providers.tf is deliberately NOT listed
-          # (nothing loads it during a per-account plan).
+          # note on why the root providers.tf and its .terraform.lock.hcl
+          # are deliberately NOT listed (nothing loads either one during a
+          # per-account plan).
           CHANGED_GLOBAL=$(git diff --name-only "$BASE" HEAD -- \
-            .terraform-version \
-            .terraform.lock.hcl || echo "")
+            .terraform-version || echo "")
 
           if [ -n "$CHANGED_GLOBAL" ]; then
             echo "Changed repo-wide files:"

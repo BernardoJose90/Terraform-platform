@@ -190,21 +190,19 @@ jobs:
           #   .tflint.hcl                  — the lint-job policy
           #   .terraform-version           — the single source of the
           #     Terraform version (CI reads it via setup-terraform)
-          #   .terraform.lock.hcl          — root provider lock
           #
-          # NOT here: the root providers.tf. Terraform only reads .tf files
-          # in the directory it runs in, and every member-accounts/<account>
-          # carries its own complete terraform{} / provider blocks — nothing
-          # loads the root file during a per-account plan, so editing it
-          # changes no account's plan and must not force an all-account
-          # replan + reapply.
+          # NOT here: the root providers.tf or its .terraform.lock.hcl.
+          # Terraform only reads .tf files in the directory it runs in, and
+          # every member-accounts/<account> carries its own complete
+          # terraform{} / provider blocks — nothing loads either root file
+          # during a per-account plan, so editing them changes no account's
+          # plan and must not force an all-account replan + reapply.
           CHANGED_GLOBAL=$(git diff --name-only origin/main...HEAD -- \
             .github/workflows/deploy-plan.yaml \
             .github/workflows/deploy-apply.yaml \
             .checkov.yaml \
             .tflint.hcl \
-            .terraform-version \
-            .terraform.lock.hcl || echo "")
+            .terraform-version || echo "")
 
           if [ -n "$CHANGED_GLOBAL" ]; then
             echo "Changed repo-wide files:"
