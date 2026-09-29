@@ -89,7 +89,7 @@ variable "eks_enabled" {
     of cleanly deleting them.
   EOT
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "eks_endpoint_public_access_cidrs" {
