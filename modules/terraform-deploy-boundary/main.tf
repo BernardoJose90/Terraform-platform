@@ -374,10 +374,14 @@ data "aws_iam_policy_document" "terraform_deploy_boundary" {
   }
 
   # EKS provisions its own AWS-managed service-linked roles the first time
-  # they're needed — most notably AWSServiceRoleForAmazonEKSPodIdentity,
-  # which modules/eks's Pod Identity association depends on. Scoped by
-  # AWSServiceName so this can't be used to create a service-linked role
-  # for any other AWS service.
+  # they're needed — AWSServiceRoleForAmazonEKS (cluster creation) and
+  # AWSServiceRoleForAmazonEKSNodegroup (managed node group creation).
+  # Scoped by AWSServiceName so this can't be used to create a
+  # service-linked role for any other AWS service. Deliberately does NOT
+  # include pods.eks.amazonaws.com: AWS's own EKS Pod Identity docs list
+  # iam:PassRole (above) as the only caller-side prerequisite — there is
+  # no documented AWSServiceRoleForAmazonEKSPodIdentity service-linked
+  # role, so granting it here would be an unjustified, unused permission.
   dynamic "statement" {
     for_each = var.enable_eks ? [1] : []
     content {
@@ -388,8 +392,29 @@ data "aws_iam_policy_document" "terraform_deploy_boundary" {
       condition {
         test     = "StringEquals"
         variable = "iam:AWSServiceName"
-        values   = ["eks.amazonaws.com", "eks-nodegroup.amazonaws.com", "pods.eks.amazonaws.com"]
+        values   = ["eks.amazonaws.com", "eks-nodegroup.amazonaws.com"]
       }
+    }
+  }
+
+  # EKS's CreateCluster call needs to grant itself use of the caller-owned
+  # KMS key behind encryption_config (Kubernetes Secrets envelope
+  # encryption) — that's a KMS grant, a separate mechanism from the key
+  # policy already set on that key. AWS's own docs are explicit that
+  # kms:GrantIsForAWSResource cannot be used to scope this for
+  # CreateCluster, so this has to stay unscoped by resource, the same as
+  # the other dynamically-named-key KMS statements above.
+  dynamic "statement" {
+    for_each = var.enable_eks ? [1] : []
+    content {
+      sid    = "EksKmsGrant"
+      effect = "Allow"
+      actions = [
+        "kms:CreateGrant",
+        "kms:ListGrants",
+        "kms:RevokeGrant",
+      ]
+      resources = ["*"]
     }
   }
 
