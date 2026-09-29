@@ -442,7 +442,7 @@ module "eks" {
     }
   }
 
-  # Matches the console-built cluster's sizing (2 nodes across 2 AZs),
+  # Matches the console-built cluster's sizing (2 nodes across 2 AZs)
   # with a little autoscaling headroom added on top. Adjust instance
   # size/count here as dev's actual workload needs become clearer.
   node_groups = {
