@@ -274,3 +274,24 @@ skip-check:
   # the only way in, since neither of those replacements exists yet.
   # Accepted as a temporary, tracked risk — not a permanent exception.
   - CKV_AWS_39
+
+  # CKV_AWS_382 — "Ensure no security groups allow egress from 0.0.0.0:0
+  # to port -1". Real finding: the node security group's "allow all
+  # egress" rule (protocol -1, all ports, 0.0.0.0/0) comes from the
+  # upstream EKS module's own node_security_group_enable_recommended_rules
+  # default (true) — modules/eks/main.tf doesn't override it, so nodes can
+  # reach any destination, any port, any protocol.
+  #
+  # Accepted for now: nodes need broad outbound access (ECR image pulls,
+  # the EKS API, STS, CloudWatch, DNS, and whatever a workload's pods
+  # reach out to), and hand-scoping that at the security-group level is
+  # high-maintenance and brittle — it breaks every time a workload needs a
+  # new external endpoint, with no corresponding security win against a
+  # determined attacker already running code inside a pod.
+  #
+  # The real fix, if this gets tightened later: set
+  # node_security_group_enable_recommended_rules = false and pass a
+  # specific allow-list via node_security_group_additional_rules, or rely
+  # on Kubernetes NetworkPolicy at the pod level / VPC-level egress
+  # monitoring instead of the node security group as the control point.
+  - CKV_AWS_382
