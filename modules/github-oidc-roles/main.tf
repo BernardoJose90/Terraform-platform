@@ -450,6 +450,30 @@ data "aws_iam_policy_document" "permissions" {
     resources = ["*"]
   }
 
+  # modules/eks exposes oidc_provider_arn for a workload that needs IRSA
+  # instead of Pod Identity (e.g. an add-on that doesn't yet support Pod
+  # Identity), so the upstream module's IRSA OIDC provider stays on. This
+  # is a SEPARATE provider from ManageOwnOidcProvider's GitHub Actions one
+  # above — it's per-cluster, dynamically named
+  # (oidc.eks.<region>.amazonaws.com/id/<cluster-specific-id>), so it
+  # can't be scoped to a fixed ARN the way the GitHub one can. Includes
+  # TagOpenIDConnectProvider because the upstream module sets tags at
+  # creation — same "tag on create needs its own permission" pattern as
+  # elsewhere in this file.
+  statement {
+    sid    = "EksOidcProvider"
+    effect = "Allow"
+    actions = [
+      "iam:CreateOpenIDConnectProvider",
+      "iam:GetOpenIDConnectProvider",
+      "iam:DeleteOpenIDConnectProvider",
+      "iam:TagOpenIDConnectProvider",
+      "iam:UntagOpenIDConnectProvider",
+      "iam:ListOpenIDConnectProviderTags",
+    ]
+    resources = ["*"]
+  }
+
 }
 #
 # Resource block: creates the TerraformDeploy role, the identity GitHub Actions uses to run Terraform.
