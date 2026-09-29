@@ -247,3 +247,14 @@ skip-check:
   # opposite results depending on which way it's set. There's no NAT
   # instance anywhere in this design — only NAT gateways.
   - CKV2_AWS_35
+
+  # CKV_AWS_39 — "Ensure Amazon EKS public endpoint is not public". The
+  # development cluster's public endpoint is on deliberately, restricted
+  # to a single /32 CIDR (member-accounts/development/main.tf) — an
+  # interim access path until Argo CD (in-cluster GitOps deploys) and a
+  # break-glass admin path both exist, at which point the plan is to flip
+  # endpoint_public_access to false (see modules/eks/variables.tf's own
+  # description of that variable). Flipping it off today would lock out
+  # the only way in, since neither of those replacements exists yet.
+  # Accepted as a temporary, tracked risk — not a permanent exception.
+  - CKV_AWS_39

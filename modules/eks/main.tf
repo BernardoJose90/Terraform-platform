@@ -46,6 +46,10 @@ terraform {
   }
 }
 
+data "aws_partition" "current" {}
+data "aws_region" "current" {}
+data "aws_caller_identity" "current" {}
+
 locals {
   # Applied to every managed node group regardless of what the caller
   # passes in var.node_groups — see the header comment for why these
@@ -56,7 +60,7 @@ locals {
 
     metadata_options = {
       http_tokens                 = "required" # IMDSv2 only, no IMDSv1 fallback
-      http_put_response_hop_limit = 2
+      http_put_response_hop_limit = 1
     }
 
     # Cluster Autoscaler auto-discovers ASGs by these tags (its
@@ -96,6 +100,68 @@ locals {
   }
 }
 
+# ======================================================================================
+# Dedicated CMK (Customer Master Key) for the control-plane's CloudWatch
+# log group. Not the same key as encryption_config's Secrets key below —
+# reusing that one here would create a circular reference, since it isn't
+# known until module.eks itself is created. Mirrors modules/vpc's
+# aws_kms_key.flow_log / aws_kms_alias.flow_log pattern exactly, just
+# scoped to this cluster's own control-plane log group instead of a VPC's
+# flow logs.
+# ======================================================================================
+data "aws_iam_policy_document" "cluster_log_kms" {
+  statement {
+    sid     = "EnableIAMUserPermissions"
+    effect  = "Allow"
+    actions = ["kms:*"]
+    principals {
+      type        = "AWS"
+      identifiers = ["arn:${data.aws_partition.current.partition}:iam::${data.aws_caller_identity.current.account_id}:root"]
+    }
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "AllowCloudWatchLogsEncryption"
+    effect = "Allow"
+    actions = [
+      "kms:Encrypt",
+      "kms:Decrypt",
+      "kms:ReEncrypt*",
+      "kms:GenerateDataKey*",
+      "kms:Describe*",
+    ]
+    principals {
+      type        = "Service"
+      identifiers = ["logs.${data.aws_region.current.region}.amazonaws.com"]
+    }
+    # See modules/vpc's identical statement for why this "*" is safe — a
+    # key's own policy can only ever grant permissions on itself, so the
+    # actual narrowing happens in the condition below.
+    resources = ["*"]
+
+    condition {
+      test     = "ArnLike"
+      variable = "kms:EncryptionContext:aws:logs:arn"
+      values   = ["arn:${data.aws_partition.current.partition}:logs:${data.aws_region.current.region}:${data.aws_caller_identity.current.account_id}:log-group:/aws/eks/${var.name}/cluster"]
+    }
+  }
+}
+
+resource "aws_kms_key" "cluster_log" {
+  description             = "CMK for ${var.name} EKS control-plane CloudWatch log group"
+  deletion_window_in_days = 30
+  enable_key_rotation     = true
+  policy                  = data.aws_iam_policy_document.cluster_log_kms.json
+
+  tags = var.tags
+}
+
+resource "aws_kms_alias" "cluster_log" {
+  name          = "alias/${var.name}-eks-cluster-log"
+  target_key_id = aws_kms_key.cluster_log.key_id
+}
+
 module "eks" {
   source  = "terraform-aws-modules/eks/aws"
   version = "~> 21.0"
@@ -117,6 +183,7 @@ module "eks" {
   # scheduler are added on top of that here, not left to the default.
   enabled_log_types                      = ["api", "audit", "authenticator", "controllerManager", "scheduler"]
   cloudwatch_log_group_retention_in_days = var.cloudwatch_log_group_retention_in_days
+  cloudwatch_log_group_kms_key_id        = aws_kms_key.cluster_log.arn
 
   # EKS access entries instead of the aws-auth ConfigMap — see header
   # comment. enable_cluster_creator_admin_permissions matters in
