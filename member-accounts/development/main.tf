@@ -140,6 +140,9 @@ module "terraform_deploy_boundary" {
   # subnets used only for production-specific purposes.
   enable_vpc_networking = true
 
+  # This account is the only one running module.eks today.
+  enable_eks = true
+
   extra_assumable_role_arns = local.extra_assumable_role_arns
 }
 
