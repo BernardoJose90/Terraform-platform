@@ -331,6 +331,8 @@ module "dev_purpose_subnets" {
       subnets = {
         a = { az = "eu-west-2a", cidr = "10.30.16.0/22", name = "dev-eks-a" }
         b = { az = "eu-west-2b", cidr = "10.30.32.0/22", name = "dev-eks-b" }
+        c = { az = "eu-west-2c", cidr = "10.30.64.0/22", name = "dev-eks-c" }
+
       }
     }
     rds = {
@@ -406,6 +408,7 @@ module "eks" {
   subnet_ids = [
     module.dev_purpose_subnets[0].subnet_ids["eks-a"],
     module.dev_purpose_subnets[0].subnet_ids["eks-b"],
+    module.dev_purpose_subnets[0].subnet_ids["eks-c"]
   ]
 
   # Public access, restricted to var.eks_endpoint_public_access_cidrs,

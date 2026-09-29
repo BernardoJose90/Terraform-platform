@@ -14,7 +14,7 @@ variable "cidr" {
 variable "azs" {
   description = "Availability Zones (AZs — separate, isolated data center locations within the AWS region) to deploy the development VPC and its Transit Gateway (TGW) attachment into"
   type        = list(string)
-  default     = ["eu-west-2a", "eu-west-2b"]
+  default     = ["eu-west-2a", "eu-west-2b", "eu-west-2c"]
 }
 
 variable "private_subnets" {
