@@ -17,12 +17,13 @@
 #   - The private endpoint is always reachable, regardless of
 #     var.endpoint_public_access — in-VPC callers should never need the
 #     internet to reach the API server.
-#   - Every managed node group: IMDSv2 required, encrypted EBS root
-#     volume, and no AmazonEKS_CNI_Policy on the node role.
+#   - Every managed node group: IMDSv2 required, and an encrypted EBS root
+#     volume.
 #
 # What IS exposed (variables.tf) is what genuinely differs per account:
-# cluster name, subnets, node group sizing, and how open the public
-# endpoint is.
+# cluster name, subnets, node group sizing, how open the public endpoint
+# is, and (temporarily, see var.bootstrap_cni_via_node_role below)
+# whether the node role carries AmazonEKS_CNI_Policy.
 #
 # Modeled on the cluster built by hand in the AWS console for the
 # development account: same three-role IAM split (cluster role, node
@@ -56,7 +57,23 @@ locals {
   # aren't variables. block_device_mappings is finished per-group below,
   # once each group's own disk_size is known.
   node_group_defaults = {
-    iam_role_attach_cni_policy = false
+    # Normally false — CNI permissions come only from the dedicated Pod
+    # Identity role (module.vpc_cni_pod_identity below), never the node
+    # role. Temporary exception: on a cluster's very first bootstrap,
+    # module.vpc_cni_pod_identity can't be created until module.eks
+    # (cluster + addons + node groups) finishes, but node groups can never
+    # go healthy without aws-node already having working credentials —
+    # neither side can go first. This is a confirmed, unfixable-via-
+    # Terraform-ordering limitation of the upstream module, not something
+    # this repo's own code can resolve (see
+    # https://github.com/terraform-aws-modules/terraform-aws-eks/issues/3260,
+    # maintainer bryantbiggs: "deploy the node IAM role with the
+    # permissions required by the VPC CNI and then remove those on a
+    # subsequent apply"). var.bootstrap_cni_via_node_role breaks the
+    # deadlock: set it true for the first apply only, confirm the cluster,
+    # nodes, and the Pod Identity association are all healthy, then set it
+    # back to false and re-apply to remove the fallback.
+    iam_role_attach_cni_policy = var.bootstrap_cni_via_node_role
 
     metadata_options = {
       http_tokens                 = "required" # IMDSv2 only, no IMDSv1 fallback

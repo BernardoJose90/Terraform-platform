@@ -93,6 +93,28 @@ variable "enable_node_monitoring_agent" {
   default     = true
 }
 
+variable "bootstrap_cni_via_node_role" {
+  description = <<-EOT
+    Temporary escape hatch for a confirmed chicken-and-egg deadlock on a
+    cluster's first-ever apply: module.vpc_cni_pod_identity (aws-node's
+    real credential source) can't be created until this module's node
+    groups finish creating, but a node group can never go healthy without
+    aws-node already having working credentials. Terraform's own
+    dependency graph cannot resolve this — see
+    https://github.com/terraform-aws-modules/terraform-aws-eks/issues/3260.
+
+    Set true to attach AmazonEKS_CNI_Policy directly to the node role for
+    one apply, letting nodes boot and the node group go healthy without
+    Pod Identity. Once the cluster, node group, and the Pod Identity
+    association are all confirmed healthy, set this back to false and
+    re-apply to remove the fallback — leave it false the rest of the
+    time. Never leave this true long-term: it's exactly the standing
+    node-role CNI permission this module otherwise avoids by design.
+  EOT
+  type        = bool
+  default     = false
+}
+
 variable "enable_cluster_autoscaler" {
   description = "Create a Pod Identity role for Cluster Autoscaler (scoped to this cluster's own node group ASGs) and tag those ASGs for its auto-discovery. This module only wires up the IAM side — the controller itself is deployed outside Terraform (see main.tf's header comment), so this has no effect until something actually installs it against the cluster-autoscaler service account in kube-system."
   type        = bool
