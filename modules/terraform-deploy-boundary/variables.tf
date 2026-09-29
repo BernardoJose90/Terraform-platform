@@ -51,6 +51,21 @@ variable "enable_vpc_networking" {
   default     = false
 }
 
+variable "enable_eks" {
+  description = <<-EOT
+    Turns on EKS (Elastic Kubernetes Service) permissions: managing the
+    cluster, node groups, add-ons, access entries, and Pod Identity
+    associations that modules/eks creates, plus the IAM permissions EKS
+    itself needs (passing the cluster/node/Pod-Identity roles to the EKS
+    service, and letting EKS create its own service-linked roles).
+
+    Set this to true for an account that calls modules/eks — currently
+    just development.
+  EOT
+  type        = bool
+  default     = false
+}
+
 variable "enable_ram_sharing" {
   description = "Turns on AWS Resource Access Manager (RAM) permissions. Set this to true only for an account that shares a resource via RAM — currently just network (modules/tgw's Transit Gateway (TGW) share to the spokes)."
   type        = bool

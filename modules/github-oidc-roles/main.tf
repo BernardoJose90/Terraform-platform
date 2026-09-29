@@ -381,6 +381,53 @@ data "aws_iam_policy_document" "permissions" {
     resources = ["*"]
   }
 
+  # modules/eks's cluster, node groups, add-ons, access entries, and Pod
+  # Identity associations. eks:* is used the same way ec2:* is above
+  # (NetworkAndCompute) — the service exposes too many fine-grained actions
+  # to enumerate individually. Which accounts can actually use this is
+  # narrowed by their own permissions boundary
+  # (modules/terraform-deploy-boundary's enable_eks), the same way
+  # NetworkAndCompute is narrowed there by enable_vpc_networking.
+  statement {
+    sid       = "EksManagement"
+    effect    = "Allow"
+    actions   = ["eks:*"]
+    resources = ["*"]
+  }
+
+  # Handing the cluster role, node role, and Pod Identity role to the EKS
+  # service — a separate permission from being able to create those roles
+  # (see PassFlowLogDeliveryRole above for why AWS treats these as two
+  # different grants).
+  statement {
+    sid       = "PassEksRoles"
+    effect    = "Allow"
+    actions   = ["iam:PassRole"]
+    resources = ["*"]
+    condition {
+      test     = "StringEquals"
+      variable = "iam:PassedToService"
+      values   = ["eks.amazonaws.com", "pods.eks.amazonaws.com"]
+    }
+  }
+
+  # EKS provisions its own AWS-managed service-linked roles the first time
+  # they're needed — most notably AWSServiceRoleForAmazonEKSPodIdentity,
+  # which modules/eks's Pod Identity association depends on. Scoped by
+  # AWSServiceName so this can't be used to create a service-linked role
+  # for any other AWS service.
+  statement {
+    sid       = "EksServiceLinkedRoles"
+    effect    = "Allow"
+    actions   = ["iam:CreateServiceLinkedRole"]
+    resources = ["*"]
+    condition {
+      test     = "StringEquals"
+      variable = "iam:AWSServiceName"
+      values   = ["eks.amazonaws.com", "eks-nodegroup.amazonaws.com", "pods.eks.amazonaws.com"]
+    }
+  }
+
 }
 #
 # Resource block: creates the TerraformDeploy role, the identity GitHub Actions uses to run Terraform.

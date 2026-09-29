@@ -341,6 +341,58 @@ data "aws_iam_policy_document" "terraform_deploy_boundary" {
     }
   }
 
+  # modules/eks's cluster, node groups, add-ons, access entries, and Pod
+  # Identity associations — same eks:* wildcard reasoning as
+  # NetworkAndCompute's ec2:* above.
+  dynamic "statement" {
+    for_each = var.enable_eks ? [1] : []
+    content {
+      sid       = "EksManagement"
+      effect    = "Allow"
+      actions   = ["eks:*"]
+      resources = ["*"]
+    }
+  }
+
+  # Handing the cluster role, node role, and Pod Identity role to the EKS
+  # service — a separate permission from being able to create those roles
+  # (see ManageFlowLogDeliveryRole above for why AWS treats these as two
+  # different grants).
+  dynamic "statement" {
+    for_each = var.enable_eks ? [1] : []
+    content {
+      sid       = "PassEksRoles"
+      effect    = "Allow"
+      actions   = ["iam:PassRole"]
+      resources = ["*"]
+      condition {
+        test     = "StringEquals"
+        variable = "iam:PassedToService"
+        values   = ["eks.amazonaws.com", "pods.eks.amazonaws.com"]
+      }
+    }
+  }
+
+  # EKS provisions its own AWS-managed service-linked roles the first time
+  # they're needed — most notably AWSServiceRoleForAmazonEKSPodIdentity,
+  # which modules/eks's Pod Identity association depends on. Scoped by
+  # AWSServiceName so this can't be used to create a service-linked role
+  # for any other AWS service.
+  dynamic "statement" {
+    for_each = var.enable_eks ? [1] : []
+    content {
+      sid       = "EksServiceLinkedRoles"
+      effect    = "Allow"
+      actions   = ["iam:CreateServiceLinkedRole"]
+      resources = ["*"]
+      condition {
+        test     = "StringEquals"
+        variable = "iam:AWSServiceName"
+        values   = ["eks.amazonaws.com", "eks-nodegroup.amazonaws.com", "pods.eks.amazonaws.com"]
+      }
+    }
+  }
+
   # modules/tgw's RAM (Resource Access Manager) resource share — only
   # network turns this on; no other account in this repo does resource
   # sharing.
