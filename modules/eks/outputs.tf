@@ -70,3 +70,8 @@ output "vpc_cni_pod_identity_role_arn" {
   description = "ARN of the IAM role Pod Identity grants to the VPC CNI's aws-node DaemonSet."
   value       = module.vpc_cni_pod_identity.iam_role_arn
 }
+
+output "cluster_autoscaler_pod_identity_role_arn" {
+  description = "ARN of the IAM role Pod Identity grants to Cluster Autoscaler's service account (kube-system/cluster-autoscaler). Null unless var.enable_cluster_autoscaler is true."
+  value       = try(module.cluster_autoscaler_pod_identity[0].iam_role_arn, null)
+}

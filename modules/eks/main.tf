@@ -58,6 +58,17 @@ locals {
       http_tokens                 = "required" # IMDSv2 only, no IMDSv1 fallback
       http_put_response_hop_limit = 2
     }
+
+    # Cluster Autoscaler auto-discovers ASGs by these tags (its
+    # --node-group-auto-discovery flag), and the Pod Identity policy below
+    # only grants SetDesiredCapacity/TerminateInstanceInAutoScalingGroup on
+    # ASGs tagged kubernetes.io/cluster/<name>=owned. Without both, the
+    # controller either can't find the ASG or can't act on it.
+    autoscaling_group_tags = var.enable_cluster_autoscaler ? {
+      "k8s.io/cluster-autoscaler/enabled"     = "true"
+      "k8s.io/cluster-autoscaler/${var.name}" = "owned"
+      "kubernetes.io/cluster/${var.name}"     = "owned"
+    } : {}
   }
 
   eks_managed_node_groups = {
@@ -162,6 +173,43 @@ module "vpc_cni_pod_identity" {
       cluster_name    = module.eks.cluster_name
       namespace       = "kube-system"
       service_account = "aws-node"
+    }
+  }
+
+  tags = var.tags
+
+  depends_on = [module.eks]
+}
+
+# ======================================================================================
+# Cluster Autoscaler's IAM side only — the controller itself is deployed
+# outside Terraform (see this repo's Argo CD plans, referenced in
+# member-accounts/development/main.tf's module "eks" call). This just
+# gives the "cluster-autoscaler" service account in kube-system a Pod
+# Identity role scoped to this cluster's own ASGs, via
+# attach_cluster_autoscaler_policy on the same upstream module used for
+# the VPC CNI above — no hand-written IAM policy needed.
+#
+# Optional (var.enable_cluster_autoscaler) because it's a no-op — an
+# unused role and unused ASG tags — until something actually installs the
+# controller against that service account.
+# ======================================================================================
+module "cluster_autoscaler_pod_identity" {
+  count = var.enable_cluster_autoscaler ? 1 : 0
+
+  source  = "terraform-aws-modules/eks-pod-identity/aws"
+  version = "~> 2.9"
+
+  name = "${var.name}-cluster-autoscaler"
+
+  attach_cluster_autoscaler_policy = true
+  cluster_autoscaler_cluster_names = [var.name]
+
+  associations = {
+    main = {
+      cluster_name    = module.eks.cluster_name
+      namespace       = "kube-system"
+      service_account = "cluster-autoscaler"
     }
   }
 
