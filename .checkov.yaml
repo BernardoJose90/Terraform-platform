@@ -216,6 +216,22 @@ skip-check:
   - CKV_AWS_37
   - CKV2_AWS_5
 
+  # CKV_AWS_79 — "Ensure Instance Metadata Service Version 1 is not
+  # enabled" — and CKV_AWS_341 — "Ensure Launch template should not have a
+  # metadata response hop limit greater than 1". Both flag the launch
+  # templates inside the upstream EKS module's eks_managed_node_group AND
+  # self_managed_node_group submodules — the latter isn't even used here
+  # (this repo only ever passes eks_managed_node_groups, never
+  # self_managed_node_groups), so it has zero instances in any real plan.
+  # Same graph-tracing gap as CKV_AWS_58/37 above: modules/eks/main.tf's
+  # node_group_defaults literally sets http_tokens = "required" and
+  # http_put_response_hop_limit = 1 for every node group, and the
+  # resolved-plan Checkov scan (a separate step, reads the actual plan
+  # instead of raw source) confirms both are set correctly — 0 failures
+  # there.
+  - CKV_AWS_79
+  - CKV_AWS_341
+
   # CKV_AWS_338 — "CloudWatch log groups should keep logs for at least a
   # year". modules/vpc keeps flow logs for 90 days instead — a deliberate
   # balance between storage cost and how far back you'd actually need to
