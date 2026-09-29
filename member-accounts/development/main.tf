@@ -407,6 +407,14 @@ module "eks" {
   name               = "Dev-EKS"
   kubernetes_version = "1.35"
 
+  # TEMPORARY — bootstrap-only. Breaks the confirmed chicken-and-egg
+  # deadlock between the Pod Identity association and node group health
+  # (see modules/eks/variables.tf's bootstrap_cni_via_node_role
+  # description). Set back to false and re-apply once the cluster, node
+  # group, and Pod Identity association are all confirmed healthy — do
+  # not leave this true.
+  bootstrap_cni_via_node_role = true
+
   vpc_id = module.vpc[0].vpc_id
   subnet_ids = [
     module.dev_purpose_subnets[0].subnet_ids["eks-a"],
