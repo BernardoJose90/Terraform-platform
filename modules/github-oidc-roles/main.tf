@@ -474,6 +474,34 @@ data "aws_iam_policy_document" "permissions" {
     resources = ["*"]
   }
 
+  # member-accounts/development/main.tf looks up the SSO "administrators"
+  # permission set's IAM role by name_regex (data.aws_iam_roles.sso_admin)
+  # to grant it a cluster-admin access entry, since IAM Identity Center
+  # generates that role's ARN with a suffix this repo doesn't control.
+  # iam:ListRoles is a List-type action — AWS's own Service Authorization
+  # Reference confirms it has no resource-level permissions at all, so
+  # this can't be scoped narrower than "*".
+  statement {
+    sid       = "EksSsoRoleLookup"
+    effect    = "Allow"
+    actions   = ["iam:ListRoles"]
+    resources = ["*"]
+  }
+
+  # The upstream EKS module looks up the latest recommended AMI for a
+  # managed node group via a public, AWS-owned SSM parameter (no account
+  # ID in the ARN — this isn't one of our own parameters, and our other
+  # SSM grants above are scoped to our own account/the management
+  # account's /organizations and /transit-gateway paths, which don't
+  # cover this at all). Scoped to this account's one region and the
+  # /aws/service/eks/ path specifically, not every AWS public parameter.
+  statement {
+    sid       = "EksOptimizedAmiLookup"
+    effect    = "Allow"
+    actions   = ["ssm:GetParameter"]
+    resources = ["arn:aws:ssm:eu-west-2::parameter/aws/service/eks/*"]
+  }
+
 }
 #
 # Resource block: creates the TerraformDeploy role, the identity GitHub Actions uses to run Terraform.
