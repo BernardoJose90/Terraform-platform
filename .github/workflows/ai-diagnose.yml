@@ -141,14 +141,22 @@ jobs:
           # Prefer the text around the first "Error" marker (where
           # Terraform's file/line pointer usually lives) over a blind byte
           # tail. 40000 bytes stays a hard ceiling either way.
+          #
+          # The cap has to be `head -c`, not `tail -c`, on the post-anchor
+          # stream. A later step in the same job (e.g. "Upload SARIF to
+          # GitHub Security tab") can reprint a large chunk of Checkov's
+          # findings after the real failure — if that reprint alone exceeds
+          # 40000 bytes, `tail -c` on the whole post-anchor remainder keeps
+          # only the tail of that unrelated reprint and silently drops the
+          # actual failure the anchor found. `head -c` guarantees the
+          # window starts at the anchor instead.
           if grep -n -i -m1 "error" raw_log.txt > /dev/null 2>&1; then
             start_line=$(grep -n -i -m1 "error" raw_log.txt | cut -d: -f1)
             start_line=$(( start_line > 20 ? start_line - 20 : 1 ))
-            tail -n +"$start_line" raw_log.txt > trimmed_log.txt
+            tail -n +"$start_line" raw_log.txt | head -c 40000 > log_excerpt.txt
           else
-            cp raw_log.txt trimmed_log.txt
+            head -c 40000 raw_log.txt > log_excerpt.txt
           fi
-          tail -c 40000 trimmed_log.txt > log_excerpt.txt
 
       # ubuntu-latest doesn't ship the claude CLI. Pinned to a version
       # confirmed on the npm registry; bump deliberately, not via a floating
