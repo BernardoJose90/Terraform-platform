@@ -178,7 +178,7 @@ module "egress_vpc" {
   # account's CI/CD permissions) can sometimes happen at the same time
   # and conflict, because AWS doesn't make permission changes visible
   # everywhere instantly. If that happens, the fix is to add a retry step
-  # in .github/workflows/terraform-apply.yaml — not to change anything
+  # in .github/workflows/deploy-apply.yaml — not to change anything
   # here.
   name = "egress-vpc"
   cidr = var.cidr

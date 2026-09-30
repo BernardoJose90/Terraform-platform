@@ -82,8 +82,9 @@ the code.
   (`module.terraform_deploy_boundary`, from `modules/terraform-deploy-
   boundary`), separate from `module.github-oidc-roles`:** this caps what
   `TerraformDeploy`'s shared, wide policy is actually *usable* for in that
-  one account, via `enable_vpc_networking` / `enable_ram_sharing` /
-  `enable_sso_management` / `manage_named_roles` toggles set per account.
+  one account, via `enable_vpc_networking` / `enable_eks` /
+  `enable_ram_sharing` / `enable_sso_management` / `manage_named_roles`
+  toggles set per account.
   AWS evaluates the *intersection* of the identity policy and the boundary
   — an `AccessDenied` can come from either one, and AWS's own error text
   does not say which. If a plan fails with `AccessDenied` on an action

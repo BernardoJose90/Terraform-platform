@@ -29,7 +29,7 @@ variable "azs" {
 }
 
 variable "private_subnets" {
-  description = "The subnets used for the Transit Gateway (TGW) attachment, one per Availability Zone (private-sub-tgw-a/b). These are deliberately small (/28, meaning only 16 addresses) because each one only ever needs to hold the single network interface that the TGW attachment creates — a much larger /24 range was never needed here."
+  description = "The subnets used for the Transit Gateway (TGW) attachment, one per Availability Zone (private-sub-tgw-a/b). The default here is /28 (16 addresses), since each subnet only ever needs to hold the single network interface that the TGW attachment creates. Note that this account's terraform.tfvars currently overrides this default to /24 ranges instead, so /28 isn't actually what gets deployed right now."
   type        = list(string)
   default     = ["10.10.30.0/28", "10.10.40.0/28"]
 }

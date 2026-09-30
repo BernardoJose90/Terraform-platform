@@ -134,10 +134,10 @@ module "terraform_deploy_boundary" {
   state_key_prefix      = "development"
   role_name             = "TerraformDeploy"
 
-  # See production/main.tf's comment on its own permissions boundary for
-  # the full reasoning. This account's infrastructure shape (module.vpc,
-  # module.tgw_attachment below) is the same as production's, minus the
-  # subnets used only for production-specific purposes.
+  # This account runs module.vpc and module.tgw_attachment below — same
+  # infrastructure shape as production's own enable_vpc_networking
+  # (see its main.tf), minus the subnets used only for
+  # production-specific purposes.
   enable_vpc_networking = true
 
   # This account is the only one running module.eks today.
@@ -183,7 +183,7 @@ module "vpc" {
   # account's CI/CD permissions) can sometimes happen at the same time
   # and conflict, because AWS doesn't make permission changes visible
   # everywhere instantly. If that happens, the fix is to add a retry step
-  # in .github/workflows/terraform-apply.yaml — not to change anything
+  # in .github/workflows/deploy-apply.yaml — not to change anything
   # here.
   name = "development-vpc"
   cidr = var.cidr
@@ -370,6 +370,17 @@ module "dev_purpose_subnets" {
   depends_on = [module.tgw_attachment]
 }
 
+# The IAM role IAM Identity Center provisions in this account for the
+# "administrators" SSO permission set (see sso.tf's administrators_admin
+# assignment, which already targets this account). Looked up by name
+# instead of hardcoded — the role's ARN has an AWS-generated suffix this
+# repo doesn't control, and would break if the permission set were ever
+# recreated.
+data "aws_iam_roles" "sso_admin" {
+  name_regex  = "AWSReservedSSO_AdministratorAccess_.*"
+  path_prefix = "/aws-reserved/sso.amazonaws.com/"
+}
+
 # ============================================================
 # Gated on var.eks_enabled as well as var.networking_enabled, so the
 # cluster specifically can be paused (e.g. outside working hours) without
@@ -383,22 +394,8 @@ module "dev_purpose_subnets" {
 # otherwise turning eks_enabled off breaks that resource's plan instead
 # of cleanly deleting it.
 #
-# See modules/eks/main.tf for what's fixed (KMS-encrypted secrets, full
-# control-plane logging, access entries instead of aws-auth, IMDSv2,
-# encrypted node volumes, CNI permissions via a dedicated Pod Identity
-# role) versus what's account-specific here.
+# See modules/eks/main.tf's own header for what's fixed vs. exposed there.
 # ============================================================
-# The IAM role IAM Identity Center provisions in this account for the
-# "administrators" SSO permission set (see sso.tf's administrators_admin
-# assignment, which already targets this account). Looked up by name
-# instead of hardcoded — the role's ARN has an AWS-generated suffix this
-# repo doesn't control, and would break if the permission set were ever
-# recreated.
-data "aws_iam_roles" "sso_admin" {
-  name_regex  = "AWSReservedSSO_AdministratorAccess_.*"
-  path_prefix = "/aws-reserved/sso.amazonaws.com/"
-}
-
 module "eks" {
   count = var.networking_enabled && var.eks_enabled ? 1 : 0
 
@@ -407,7 +404,17 @@ module "eks" {
   name               = "Dev-EKS"
   kubernetes_version = "1.35"
 
-  # bootstrap_cni_via_node_role description for why this ever went true.
+  # TEMPORARY, bootstrap-only. On a fresh (or freshly recreated) cluster,
+  # module.vpc_cni_pod_identity can't be created until the node group
+  # goes healthy, but the node group can't go healthy without aws-node
+  # already having credentials — a confirmed, unfixable-via-Terraform-
+  # ordering deadlock in the upstream module (see
+  # modules/eks/variables.tf's bootstrap_cni_via_node_role description,
+  # and https://github.com/terraform-aws-modules/terraform-aws-eks/issues/3260).
+  # Setting this true attaches AmazonEKS_CNI_Policy directly to the node
+  # role for one apply, breaking the deadlock. Once the node group and
+  # the Pod Identity association are both confirmed healthy, set this
+  # back to false and re-apply — do not leave it true long-term.
   bootstrap_cni_via_node_role = true
 
   vpc_id = module.vpc[0].vpc_id
@@ -445,9 +452,11 @@ module "eks" {
     }
   }
 
-  # Matches the console-built cluster's sizing (2 nodes across 2 AZs)
-  # with a little autoscaling headroom added on top. Adjust instance
-  # size/count here as dev's actual workload needs become clearer.
+  # Matches the console-built cluster's sizing (2 nodes across 2 AZs).
+  # min_size/max_size/desired_size are all 2 — a fixed size, no
+  # autoscaling headroom (max_size was reduced from 4 to 2). Adjust
+  # instance size/count here as dev's actual workload needs become
+  # clearer.
   node_groups = {
     general = {
       instance_types = ["t3.medium"]

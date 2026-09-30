@@ -32,6 +32,20 @@ Each account carries a committed `teardown.auto.tfvars` file — that file, not 
 
 **Reverse order from teardown, not "any order": network first, then the two spokes.** Production and development each read the Transit Gateway's ID via an SSM parameter published by network. While disabled, that parameter holds a frozen value from before the TGW was destroyed — re-enabling a spoke before network would point its new TGW attachment at a TGW ID that no longer exists, and the apply would fail. Re-enable network first (a real TGW gets created and the SSM parameters update to the new, live values), then production and development (which now attach to something real).
 
+## A separate, narrower switch: `eks_enabled`
+
+Development also carries its own `eks_enabled` variable, independent of
+`networking_enabled` — it gates only `module.eks` (development's EKS
+cluster), not the VPC or its subnets. It's set in
+`member-accounts/development/terraform.tfvars` (not a committed
+`teardown.auto.tfvars`, and not part of the production/development/network
+ordering above), and exists for pausing just the cluster's control-plane
+cost — e.g. outside working hours — without touching the rest of the
+account. See `eks_enabled`'s description in
+`member-accounts/development/variables.tf` for the full detail, including
+what else must be gated the same way if anything is later added that
+depends on the cluster existing.
+
 ## Related, but a different tool
 
 This is a *pause* — config still declares everything, only `count` changes, fully reversible via PR. A separate, more final tool (`scripts/teardown.sh` / the `deploy-teardown.yaml` workflow) exists for actually decommissioning the project entirely — a real `terraform destroy` across all six accounts, not just these three. Don't reach for that one expecting it to behave like this — it removes things from state, not just from AWS.
