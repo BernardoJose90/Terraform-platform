@@ -11,3 +11,4 @@ private_subnets = ["10.30.10.0/24", "10.30.20.0/24", "10.30.30.0/24"]
 tgw_attachment_enabled = true
 
 eks_endpoint_public_access_cidrs = ["31.205.10.9/32"]
+eks_enabled                      = true
