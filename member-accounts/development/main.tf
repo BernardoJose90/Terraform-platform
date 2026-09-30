@@ -430,6 +430,8 @@ module "eks" {
   # modules/eks/variables.tf, for the reasoning.
   endpoint_public_access       = true
   endpoint_public_access_cidrs = var.eks_endpoint_public_access_cidrs
+  enable_cluster_autoscaler    = true
+
 
   # Grants james.admin (the SSO "administrators" group, already assigned
   # AdministratorAccess on this account via member-accounts/security/sso.tf)
