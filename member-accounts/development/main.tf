@@ -407,9 +407,6 @@ module "eks" {
   name               = "Dev-EKS"
   kubernetes_version = "1.35"
 
-  # Bootstrap complete (confirmed 2026-09-29: 6/6 nodes Ready, node group
-  # ACTIVE with no health issues, aws-node's Pod Identity association
-  # exists). Back to false — see modules/eks/variables.tf's
   # bootstrap_cni_via_node_role description for why this ever went true.
   bootstrap_cni_via_node_role = true
 
