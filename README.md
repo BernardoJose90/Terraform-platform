@@ -74,7 +74,7 @@ This repository contains Terraform configurations for the **six member accounts*
 | **Network** | TGW hub, egress VPC, spoke wiring | `10.10.0.0/16` | eu-west-2 | ✅ Configured |
 | **Monitoring** | CloudWatch, dashboards, alarms | N/A — no VPC | eu-west-2 | ✅ Configured |
 | **Production** | Live production workloads (VPC, EKS/RDS/ALB subnets, TGW spoke) | `10.20.0.0/16` | eu-west-2 | ✅ Configured |
-| **Development** | Development and testing (VPC, TGW spoke) | `10.30.0.0/16` | eu-west-2 | ✅ Configured |
+| **Development** | Development and testing (VPC, TGW spoke, EKS cluster) | `10.30.0.0/16` | eu-west-2 | ✅ Configured |
 
 > The **management account** (AWS Organizations, org-wide SCPs, account creation) is provisioned separately by the [Terraform-Org](https://github.com/BernardoJose90/Terraform-Org) repo, not this one.
 
@@ -89,8 +89,8 @@ Terraform-platform/
 │ ├── 📂 security_analytics/       # AI-driven security analysis
 │ ├── 📂 network/                  # TGW hub, egress VPC, spoke wiring roles
 │ ├── 📂 monitoring/                # CloudWatch, dashboards, alarms
-│ ├── 📂 production/                # VPC, EKS/RDS/ALB subnets, TGW spoke attachment
-│ └── 📂 development/               # VPC, TGW spoke attachment
+│ ├── 📂 production/                # VPC, EKS/RDS/ALB purpose subnets, TGW spoke attachment
+│ └── 📂 development/               # VPC, TGW spoke attachment, EKS cluster (module.eks)
 │   Each account's main.tf calls module "github-oidc-roles" for its
 │   TerraformDeploy/TerraformPlan roles, plus whatever else that account owns.
 │
@@ -102,7 +102,9 @@ Terraform-platform/
 │ ├── 📂 tgw-attachment/           # Spoke VPC → TGW attachment
 │ ├── 📂 tgw-static-routes/        # Static routes on the TGW route table
 │ ├── 📂 tgw-spoke-wiring-role/    # Cross-account role network uses to wire a spoke
-│ └── 📂 prod-purpose-subnets/     # Per-workload subnets + route tables (EKS/RDS/ALB) for production
+│ ├── 📂 prod-purpose-subnets/     # Per-workload subnets + route tables (EKS/RDS/ALB) for production
+│ ├── 📂 dev-purpose-subnets/      # Per-workload subnets + route tables (EKS/RDS/ALB) for development
+│ └── 📂 eks/                      # EKS cluster wrapper (development only) around terraform-aws-modules/eks/aws
 │
 ├── 📂 scripts/                    # teardown.sh, breakglass-bootstrap.sh, apply-boundary.sh
 ├── 📂 docs/                       # teardown.md

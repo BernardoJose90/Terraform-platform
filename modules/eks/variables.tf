@@ -128,10 +128,12 @@ variable "node_groups" {
   description = <<-EOT
     Managed node groups, keyed by an arbitrary name (e.g. "general").
     Every group gets these fixed, non-overridable defaults (see main.tf):
-    IMDSv2 required, an encrypted EBS root volume, and no
-    AmazonEKS_CNI_Policy on the node role — CNI permissions come only
-    from the dedicated Pod Identity role this module creates
-    (module.vpc_cni_pod_identity), not the node role.
+    IMDSv2 required and an encrypted EBS root volume. Whether the node
+    role also carries AmazonEKS_CNI_Policy is NOT fixed — it's controlled
+    by var.bootstrap_cni_via_node_role (normally false, so CNI permissions
+    come only from the dedicated Pod Identity role this module creates,
+    module.vpc_cni_pod_identity; see that variable's description for the
+    temporary exception).
   EOT
   type = map(object({
     subnet_ids     = optional(list(string)) # falls back to var.subnet_ids

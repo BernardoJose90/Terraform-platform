@@ -16,7 +16,11 @@
 # Manager) parameters that the network account publishes, not from
 # reading the network account's Terraform state directly.
 #
-# Everything in this file can be switched off with var.networking_enabled.
+# The networking resources below (the VPC, the TGW attachment, the route
+# table wiring, and the purpose-specific subnets) can all be switched off
+# with var.networking_enabled. The deploy-role and CI/CD setup above
+# (module.terraform_deploy_boundary, module.github-oidc-roles) are not
+# gated by it and stay in place either way.
 ##########################################################################################################
 
 terraform {
