@@ -411,7 +411,7 @@ module "eks" {
   # ACTIVE with no health issues, aws-node's Pod Identity association
   # exists). Back to false — see modules/eks/variables.tf's
   # bootstrap_cni_via_node_role description for why this ever went true.
-  bootstrap_cni_via_node_role = false
+  bootstrap_cni_via_node_role = true
 
   vpc_id = module.vpc[0].vpc_id
   subnet_ids = [
