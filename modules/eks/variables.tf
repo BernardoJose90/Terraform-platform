@@ -112,7 +112,7 @@ variable "bootstrap_cni_via_node_role" {
     node-role CNI permission this module otherwise avoids by design.
   EOT
   type        = bool
-  default     = true
+  default     = false
 }
 
 variable "enable_cluster_autoscaler" {
