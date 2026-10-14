@@ -67,8 +67,10 @@ locals {
 # Trust policy for the terraform_deploy role. This answers: "who is allowed to log in as this role at all?"
 # ======================================================================================
 data "aws_iam_policy_document" "github_actions_trust_policy" {
-  # Emergency access: an admin in the management account can assume this
-  # role, but only if they have MFA (multi-factor authentication) turned on.
+  # Emergency access: only the break glass IAM user(BreakGlassAdmin) in the management
+  # account, and only with MFA. Principal stays as :root (the account),
+  # with aws:PrincipalArn narrowing it to one user. This avoids the trust
+  # silently breaking if the user is ever deleted and recreated.
   statement {
     sid     = "ManagementAccountBreakGlass"
     effect  = "Allow"
@@ -81,6 +83,11 @@ data "aws_iam_policy_document" "github_actions_trust_policy" {
       test     = "Bool"
       variable = "aws:MultiFactorAuthPresent"
       values   = ["true"]
+    }
+    condition {
+      test     = "ArnEquals"
+      variable = "aws:PrincipalArn"
+      values   = ["arn:aws:iam::${var.management_account_id}:user/${var.break_glass_user_name}"]
     }
   }
 
@@ -540,6 +547,10 @@ resource "aws_iam_role_policy" "terraform_deploy_policy" {
 # This role is used for pull-request-time plans, so it can read resources but not modify them.
 # ======================================================================================
 data "aws_iam_policy_document" "github_oidc_trust_plan" {
+  # Emergency access: only the break glass IAM user(BreakGlassAdmin) in the management
+  # account, and only with MFA. Principal stays as :root (the account),
+  # with aws:PrincipalArn narrowing it to one user. This avoids the trust
+  # silently breaking if the user is ever deleted and recreated.
   statement {
     sid     = "ManagementAccountBreakGlass"
     effect  = "Allow"
@@ -552,6 +563,11 @@ data "aws_iam_policy_document" "github_oidc_trust_plan" {
       test     = "Bool"
       variable = "aws:MultiFactorAuthPresent"
       values   = ["true"]
+    }
+    condition {
+      test     = "ArnEquals"
+      variable = "aws:PrincipalArn"
+      values   = ["arn:aws:iam::${var.management_account_id}:user/${var.break_glass_user_name}"]
     }
   }
 
