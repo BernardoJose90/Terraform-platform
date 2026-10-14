@@ -55,6 +55,12 @@ resource "aws_iam_role_policy" "terraform_deploy_sso_identity_center_access" {
           "sso:AttachManagedPolicyToPermissionSet",
           "sso:DetachManagedPolicyFromPermissionSet",
           "sso:ListManagedPoliciesInPermissionSet",
+          # Inline (not AWS-managed) policies on a permission set - a
+          # separate pair of actions from the managed-policy ones above.
+          # Get is needed too, not just Put: Terraform calls it on every
+          # plan/refresh to check the inline policy's current state.
+          "sso:PutInlinePolicyToPermissionSet",
+          "sso:GetInlinePolicyForPermissionSet",
           # Re-provisioning is what actually pushes a changed permission
           # set out to the accounts it's already assigned to. The
           # Update action on its own only changes the definition - it
