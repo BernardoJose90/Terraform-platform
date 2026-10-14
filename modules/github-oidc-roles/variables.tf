@@ -4,6 +4,12 @@ variable "management_account_id" {
   default     = "145678291484"
 }
 
+variable "break_glass_user_name" {
+  description = "IAM user in the management account allowed to assume these roles with MFA"
+  type        = string
+  default     = "BreakGlassAdmin"
+}
+
 variable "role_name" {
   description = "Name to give the Terraform deploy Identity and Access Management (IAM) role."
   type        = string
