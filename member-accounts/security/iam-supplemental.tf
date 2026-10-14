@@ -11,7 +11,7 @@
 # The base role created by modules/github-oidc-roles doesn't include
 # any SSO or Identity Store actions, so this file adds them on top,
 # just for this account.
-###############################################################################
+##########################################################################
 
 resource "aws_iam_role_policy" "terraform_deploy_sso_identity_center_access" {
   name = "SSOIdentityCenterAccess"
