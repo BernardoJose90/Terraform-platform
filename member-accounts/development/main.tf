@@ -381,6 +381,14 @@ data "aws_iam_roles" "sso_admin" {
   path_prefix = "/aws-reserved/sso.amazonaws.com/"
 }
 
+# Same lookup trick as sso_admin above, for the platform-admins group's
+# EKS-Admin permission set (member-accounts/security/sso.tf) — narrower
+# than full AdministratorAccess, scoped to just EKS access.
+data "aws_iam_roles" "sso_eks_admin" {
+  name_regex  = "AWSReservedSSO_EKS-Admin_.*"
+  path_prefix = "/aws-reserved/sso.amazonaws.com/"
+}
+
 # ============================================================
 # Gated on var.eks_enabled as well as var.networking_enabled, so the
 # cluster specifically can be paused (e.g. outside working hours) without
@@ -452,7 +460,32 @@ module "eks" {
         }
       }
     }
+
+    # platform-admins group's EKS-Admin permission set
+    # (member-accounts/security/sso.tf) — same cluster-admin RBAC policy
+    # as james_admin above, but reachable via a narrower AWS-side IAM
+    # permission set instead of full AdministratorAccess.
+    platform_admins = {
+      principal_arn = tolist(data.aws_iam_roles.sso_eks_admin.arns)[0]
+
+      policy_associations = {
+        admin = {
+          policy_arn   = "arn:aws:eks::aws:cluster-access-policy/AmazonEKSClusterAdminPolicy"
+          access_scope = { type = "cluster" }
+        }
+      }
+    }
   }
+
+  # Was left on the module default (true) until now. CI (TerraformDeploy)
+  # doesn't need its own standing Kubernetes RBAC access: it only ever
+  # talks to this module via the EKS/IAM APIs (no kubernetes/helm provider
+  # anywhere in modules/eks), and TerraformDeploy's own IAM policy already
+  # has unscoped eks:* — including eks:CreateAccessEntry — so it can create
+  # the access_entries above without first holding cluster-admin itself.
+  # Turning this off means the only standing cluster-admin paths are the
+  # two explicit access_entries above, not "whoever happened to apply."
+  enable_cluster_creator_admin_permissions = false
 
   # Matches the console-built cluster's sizing (2 nodes across 2 AZs).
   # min_size/max_size/desired_size are all 2 — a fixed size, no

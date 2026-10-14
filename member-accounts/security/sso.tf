@@ -68,6 +68,45 @@ resource "aws_ssoadmin_permission_set" "administrator" {
   }
 }
 
+resource "aws_ssoadmin_permission_set" "EKS-Admin" {
+  name             = "EKS-Admin"
+  instance_arn     = local.sso_instance_arn
+  session_duration = "PT2H"
+  description      = "Full EKS cluster administrator access. For platform engineers only."
+  tags             = { ManagedBy = "Terraform" }
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+# Inline policy (not a managed AWS policy, so it uses a different resource
+# type than the aws_ssoadmin_managed_policy_attachment blocks above) - lets
+# holders generate a kubeconfig and actually use it against the cluster.
+# eks:AccessKubernetesApi is the one that's easy to miss: DescribeCluster
+# alone only lets you read cluster metadata (enough to build a kubeconfig
+# file), not call the cluster's Kubernetes API with it.
+resource "aws_ssoadmin_permission_set_inline_policy" "eks_admin" {
+  instance_arn       = local.sso_instance_arn
+  permission_set_arn = aws_ssoadmin_permission_set.EKS-Admin.arn
+
+  inline_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [
+      {
+        Sid    = "EksClusterAccess"
+        Effect = "Allow"
+        Action = [
+          "eks:DescribeCluster",
+          "eks:ListClusters",
+          "eks:AccessKubernetesApi"
+        ]
+        Resource = "*"
+      }
+    ]
+  })
+}
+
 resource "aws_ssoadmin_managed_policy_attachment" "administrator" {
   instance_arn       = local.sso_instance_arn
   permission_set_arn = aws_ssoadmin_permission_set.administrator.arn
@@ -122,10 +161,21 @@ resource "aws_ssoadmin_managed_policy_attachment" "read_only" {
   }
 }
 
-# Groups
+# Group: Administrators.
 resource "aws_identitystore_group" "administrators" {
   display_name      = "administrators"
   description       = "Platform engineers with full access to all accounts."
+  identity_store_id = local.identity_store_id
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
+# Groups: platform-admins for EKS cluster admin access.
+resource "aws_identitystore_group" "platform-admins" {
+  display_name      = "platform-admins"
+  description       = "Platform engineers with full EKS access to all accounts. This group is used for EKS cluster admin access."
   identity_store_id = local.identity_store_id
 
   lifecycle {
@@ -152,6 +202,18 @@ resource "aws_identitystore_group" "network_team" {
     prevent_destroy = true
   }
 }
+
+# adds james.admin as a member of the platform-admins group in AWS Identity Center (SSO).
+resource "aws_identitystore_group_membership" "james_platform_admins" {
+  identity_store_id = local.identity_store_id
+  group_id          = aws_identitystore_group.platform-admins.group_id
+  member_id         = aws_identitystore_user.james_admin.user_id
+
+  lifecycle {
+    prevent_destroy = true
+  }
+}
+
 
 # Users
 resource "aws_identitystore_user" "james_admin" {
@@ -234,4 +296,22 @@ resource "aws_ssoadmin_account_assignment" "network_team_network_admin" {
   principal_id       = aws_identitystore_group.network_team.group_id
   target_type        = "AWS_ACCOUNT"
   target_id          = local.account_ids_sso["network"]
+}
+
+resource "aws_ssoadmin_account_assignment" "platform_admins_eks_admin_Dev" {
+  instance_arn       = local.sso_instance_arn
+  permission_set_arn = aws_ssoadmin_permission_set.EKS-Admin.arn
+  principal_type     = "GROUP"
+  principal_id       = aws_identitystore_group.platform-admins.group_id
+  target_type        = "AWS_ACCOUNT"
+  target_id          = local.account_ids_sso["development"]
+}
+
+resource "aws_ssoadmin_account_assignment" "platform_admins_eks_admin_prod" {
+  instance_arn       = local.sso_instance_arn
+  permission_set_arn = aws_ssoadmin_permission_set.EKS-Admin.arn
+  principal_type     = "GROUP"
+  principal_id       = aws_identitystore_group.platform-admins.group_id
+  target_type        = "AWS_ACCOUNT"
+  target_id          = local.account_ids_sso["production"]
 }
