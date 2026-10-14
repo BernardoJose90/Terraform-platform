@@ -527,6 +527,8 @@ data "aws_iam_policy_document" "terraform_deploy_boundary" {
         "sso:AttachManagedPolicyToPermissionSet",
         "sso:DetachManagedPolicyFromPermissionSet",
         "sso:ListManagedPoliciesInPermissionSet",
+        "sso:PutInlinePolicyToPermissionSet",
+        "sso:GetInlinePolicyForPermissionSet",
         "sso:ProvisionPermissionSet",
         "sso:DescribeAccountAssignmentCreationStatus",
         "sso:DescribeAccountAssignmentDeletionStatus",
