@@ -701,6 +701,8 @@ jobs:
         run: |
           echo "════════════════════════════════════════════════════════════"
           echo "❌ FAILED: network"
+          echo "⚠️  Every other account's apply will be skipped as a result —"
+          echo "    deliberate (see the 'apply' job's needs/if gate), not a second failure."
           echo "════════════════════════════════════════════════════════════"
 
           if [ -z "$SLACK_WEBHOOK_URL" ]; then
@@ -730,7 +732,7 @@ jobs:
               --arg partial "$PARTIAL" \
               --arg url "$RUN_URL" \
               --arg tail "$TAIL" \
-              '{text: (":rotating_light: *Terraform apply FAILED* — `" + $acct + "` (" + $env + ")\nPartial apply: " + $partial + "\n<" + $url + "|View run>\n```\n" + $tail + "\n```")}')"
+              '{text: (":rotating_light: *Terraform apply FAILED* — `" + $acct + "` (" + $env + ")\nPartial apply: " + $partial + "\n⚠️ Every other account'"'"'s apply was skipped because of this — deliberate, not a second failure.\n<" + $url + "|View run>\n```\n" + $tail + "\n```")}')"
 
       - name: Upload apply artifact
         if: always()
@@ -1081,6 +1083,13 @@ jobs:
           echo ""
           echo "apply-network: ${{ needs.apply-network.result }}"
           echo "apply:         ${{ needs.apply.result }}"
+
+          if [ "${{ needs.apply-network.result }}" = "failure" ] && [ "${{ needs.apply.result }}" = "skipped" ]; then
+            echo ""
+            echo "⚠️  'apply' was skipped because 'apply-network' failed — deliberate"
+            echo "    (other accounts are held behind network to avoid applying"
+            echo "    against incomplete network state), not a second failure."
+          fi
 
       # Without this step, the summary job would always show green,
       # making it useless as a required status check. Only a real
