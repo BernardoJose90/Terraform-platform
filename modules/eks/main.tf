@@ -218,7 +218,16 @@ module "eks" {
   # depends on.
   addons = merge(
     {
-      vpc-cni                = { before_compute = true }
+      # enableNetworkPolicy turns on the VPC CNI's built-in NetworkPolicy
+      # enforcement (supported since v1.14.0-eksbuild.3, well below
+      # whatever version this resolves to) - no separate CNI like Calico
+      # needed. Off by default on every EKS cluster; this is what actually
+      # makes any NetworkPolicy manifest applied in-cluster take effect,
+      # rather than being silently accepted but ignored.
+      vpc-cni = {
+        before_compute       = true
+        configuration_values = jsonencode({ enableNetworkPolicy = "true" })
+      }
       eks-pod-identity-agent = { before_compute = true }
       kube-proxy             = {}
       coredns                = {}
