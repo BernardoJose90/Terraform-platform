@@ -117,7 +117,11 @@ resource "aws_ssoadmin_permission_set_inline_policy" "eks_admin" {
           "eks:ListPodIdentityAssociations",
           "eks:ListAccessEntries",
           "aps:ListScrapers",
+          "eks:ListInsights",
           "eks:DescribeAddonVersions",
+          "backup:ListBackupJobs",
+          "cloudwatch:GetMetricData",
+          "networkflowmonitor:ListMonitors",
           "eks:ListIdentityProviderConfigs"
         ]
         Resource = "*"
