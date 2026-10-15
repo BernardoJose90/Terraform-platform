@@ -94,12 +94,37 @@ resource "aws_ssoadmin_permission_set_inline_policy" "eks_admin" {
     Version = "2012-10-17"
     Statement = [
       {
+        # DescribeClusterVersions, ListFargateProfiles, DescribeNodegroup,
+        # ListNodegroups, ListUpdates, ListAddons, DescribeAddonVersions,
+        # and ListIdentityProviderConfigs aren't needed for kubectl access
+        # itself - they're what the EKS console's Resources/Nodes/version
+        # panels call to render, per AWS's own documented required-permissions
+        # list: https://docs.aws.amazon.com/eks/latest/userguide/view-kubernetes-resources.html
         Sid    = "EksClusterAccess"
         Effect = "Allow"
         Action = [
           "eks:DescribeCluster",
           "eks:ListClusters",
-          "eks:AccessKubernetesApi"
+          "eks:AccessKubernetesApi",
+          "eks:DescribeClusterVersions",
+          "eks:ListFargateProfiles",
+          "eks:DescribeNodegroup",
+          "eks:ListNodegroups",
+          "eks:ListUpdates",
+          "eks:ListAddons",
+          "eks:DescribeAddonVersions",
+          "eks:ListIdentityProviderConfigs"
+        ]
+        Resource = "*"
+      },
+      {
+        # Same AWS-documented list above also calls this - the console
+        # shows the cluster's IAM role by name, which needs a way to look
+        # up roles across the account rather than one it already knows.
+        Sid    = "EksConsoleIamRoleLookup"
+        Effect = "Allow"
+        Action = [
+          "iam:ListRoles"
         ]
         Resource = "*"
       }
