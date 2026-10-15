@@ -112,6 +112,11 @@ resource "aws_ssoadmin_permission_set_inline_policy" "eks_admin" {
           "eks:ListNodegroups",
           "eks:ListUpdates",
           "eks:ListAddons",
+          "eks:ListAccessEntries",
+          "eks:ListCapabilities",
+          "eks:ListPodIdentityAssociations",
+          "eks:ListAccessEntries",
+          "aps:ListScrapers",
           "eks:DescribeAddonVersions",
           "eks:ListIdentityProviderConfigs"
         ]
