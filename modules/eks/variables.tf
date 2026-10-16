@@ -115,8 +115,14 @@ variable "bootstrap_cni_via_node_role" {
   default     = false
 }
 
-variable "enable_cluster_autoscaler" {
-  description = "Create a Pod Identity role for Cluster Autoscaler (scoped to this cluster's own node group ASGs) and tag those ASGs for its auto-discovery. This module only wires up the IAM side — the controller itself is deployed outside Terraform (see main.tf's header comment), so this has no effect until something actually installs it against the cluster-autoscaler service account in kube-system."
+variable "enable_karpenter" {
+  description = "Create Karpenter's controller IAM role (Pod Identity), its node IAM role/instance profile for the nodes it launches, the SQS queue + EventBridge rule for spot-interruption handling, and a karpenter.sh/discovery tag on var.subnet_ids. Supersedes the older Cluster Autoscaler approach entirely — this module only wires up the AWS side; the controller itself, and its NodePool/EC2NodeClass resources, are deployed outside Terraform (see main.tf's header comment), so this has no effect until something actually installs it against the karpenter service account in kube-system."
+  type        = bool
+  default     = false
+}
+
+variable "enable_aws_load_balancer_controller" {
+  description = "Create a Pod Identity role for the AWS Load Balancer Controller (attach_aws_lb_controller_policy on the same upstream eks-pod-identity module used elsewhere in this file). This module only wires up the IAM side — the controller itself is deployed outside Terraform (see main.tf's header comment), so this has no effect until something actually installs it against the aws-load-balancer-controller service account in kube-system."
   type        = bool
   default     = false
 }
