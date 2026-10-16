@@ -79,17 +79,6 @@ locals {
       http_tokens                 = "required" # IMDSv2 only, no IMDSv1 fallback
       http_put_response_hop_limit = 1
     }
-
-    # Cluster Autoscaler auto-discovers ASGs by these tags (its
-    # --node-group-auto-discovery flag), and the Pod Identity policy below
-    # only grants SetDesiredCapacity/TerminateInstanceInAutoScalingGroup on
-    # ASGs tagged kubernetes.io/cluster/<name>=owned. Without both, the
-    # controller either can't find the ASG or can't act on it.
-    autoscaling_group_tags = var.enable_cluster_autoscaler ? {
-      "k8s.io/cluster-autoscaler/enabled"     = "true"
-      "k8s.io/cluster-autoscaler/${var.name}" = "owned"
-      "kubernetes.io/cluster/${var.name}"     = "owned"
-    } : {}
   }
 
   eks_managed_node_groups = {
@@ -275,34 +264,74 @@ module "vpc_cni_pod_identity" {
 }
 
 # ======================================================================================
-# Cluster Autoscaler's IAM side only — the controller itself is deployed
-# outside Terraform (see this repo's Argo CD plans, referenced in
-# member-accounts/development/main.tf's module "eks" call). This just
-# gives the "cluster-autoscaler" service account in kube-system a Pod
-# Identity role scoped to this cluster's own ASGs, via
-# attach_cluster_autoscaler_policy on the same upstream module used for
-# the VPC CNI above — no hand-written IAM policy needed.
+# Karpenter's AWS side only — the controller itself, and its
+# NodePool/EC2NodeClass resources, are deployed outside Terraform (see
+# this repo's Argo CD plans, referenced in
+# member-accounts/development/main.tf's module "eks" call). This creates
+# everything Karpenter needs on the AWS side in one call: the controller's
+# own IAM role (Pod Identity, kube-system/karpenter by default), a
+# *separate* node IAM role + instance profile for the nodes Karpenter
+# itself launches (distinct from this module's own node group role), and
+# the SQS queue + EventBridge rule Karpenter needs for spot-interruption
+# handling.
 #
-# Optional (var.enable_cluster_autoscaler) because it's a no-op — an
-# unused role and unused ASG tags — until something actually installs the
-# controller against that service account.
+# Supersedes Cluster Autoscaler entirely — not meant to run alongside it.
+#
+# Optional (var.enable_karpenter) because it's a no-op — unused roles, an
+# unused queue — until something actually installs the controller against
+# the karpenter service account.
 # ======================================================================================
-module "cluster_autoscaler_pod_identity" {
-  count = var.enable_cluster_autoscaler ? 1 : 0
+module "karpenter" {
+  count = var.enable_karpenter ? 1 : 0
+
+  source  = "terraform-aws-modules/eks/aws//modules/karpenter"
+  version = "~> 21.0"
+
+  cluster_name = module.eks.cluster_name
+
+  tags = var.tags
+
+  depends_on = [module.eks]
+}
+
+# karpenter.sh/discovery is how Karpenter's own EC2NodeClass finds which
+# subnets it's allowed to launch nodes into, without having to hardcode
+# subnet IDs into a Kubernetes resource managed outside Terraform.
+resource "aws_ec2_tag" "karpenter_subnet_discovery" {
+  for_each = var.enable_karpenter ? toset(var.subnet_ids) : toset([])
+
+  resource_id = each.value
+  key         = "karpenter.sh/discovery"
+  value       = var.name
+}
+
+# ======================================================================================
+# AWS Load Balancer Controller's IAM side only — the controller itself is
+# deployed outside Terraform (see this repo's Argo CD plans, referenced in
+# member-accounts/development/main.tf's module "eks" call). Gives the
+# "aws-load-balancer-controller" service account in kube-system a Pod
+# Identity role via attach_aws_lb_controller_policy on the same upstream
+# module used elsewhere in this file — no hand-written IAM policy needed.
+#
+# Not attach_aws_gateway_controller_policy — that's for AWS's separate
+# VPC Lattice-based Gateway API Controller, a different product from this
+# controller's own (Gateway API-capable, as of its v3.0) ALB/NLB support.
+# ======================================================================================
+module "aws_lb_controller_pod_identity" {
+  count = var.enable_aws_load_balancer_controller ? 1 : 0
 
   source  = "terraform-aws-modules/eks-pod-identity/aws"
   version = "~> 2.9"
 
-  name = "${var.name}-cluster-autoscaler"
+  name = "${var.name}-aws-lb-controller"
 
-  attach_cluster_autoscaler_policy = true
-  cluster_autoscaler_cluster_names = [var.name]
+  attach_aws_lb_controller_policy = true
 
   associations = {
     main = {
       cluster_name    = module.eks.cluster_name
       namespace       = "kube-system"
-      service_account = "cluster-autoscaler"
+      service_account = "aws-load-balancer-controller"
     }
   }
 

@@ -370,6 +370,21 @@ module "dev_purpose_subnets" {
   depends_on = [module.tgw_attachment]
 }
 
+# kubernetes.io/role/internal-elb is how the AWS Load Balancer Controller
+# auto-discovers which subnets it's allowed to place internal ALBs/NLBs
+# into. This VPC has no public (internet-facing) subnets at all (see this
+# file's own header), so only the internal-elb tag applies here — there's
+# no equivalent kubernetes.io/role/elb subnet group to tag.
+resource "aws_ec2_tag" "alb_subnet_discovery" {
+  for_each = var.networking_enabled ? {
+    for k, v in module.dev_purpose_subnets[0].subnet_ids : k => v if startswith(k, "alb-")
+  } : {}
+
+  resource_id = each.value
+  key         = "kubernetes.io/role/internal-elb"
+  value       = "1"
+}
+
 # The IAM role IAM Identity Center provisions in this account for the
 # "administrators" SSO permission set (see sso.tf's administrators_admin
 # assignment, which already targets this account). Looked up by name
@@ -438,7 +453,11 @@ module "eks" {
   # modules/eks/variables.tf, for the reasoning.
   endpoint_public_access       = true
   endpoint_public_access_cidrs = var.eks_endpoint_public_access_cidrs
-  enable_cluster_autoscaler    = true
+
+  # Supersedes the old enable_cluster_autoscaler — see modules/eks/variables.tf.
+  enable_karpenter = true
+
+  enable_aws_load_balancer_controller = true
 
 
   # Grants james.admin (the SSO "administrators" group, already assigned

@@ -71,7 +71,17 @@ output "vpc_cni_pod_identity_role_arn" {
   value       = module.vpc_cni_pod_identity.iam_role_arn
 }
 
-output "cluster_autoscaler_pod_identity_role_arn" {
-  description = "ARN of the IAM role Pod Identity grants to Cluster Autoscaler's service account (kube-system/cluster-autoscaler). Null unless var.enable_cluster_autoscaler is true."
-  value       = try(module.cluster_autoscaler_pod_identity[0].iam_role_arn, null)
+output "karpenter_iam_role_arn" {
+  description = "ARN of the IAM role Pod Identity grants to Karpenter's controller service account (kube-system/karpenter). Null unless var.enable_karpenter is true."
+  value       = try(module.karpenter[0].iam_role_arn, null)
+}
+
+output "karpenter_node_iam_role_name" {
+  description = "Name of the IAM role attached to the instance profile for nodes Karpenter itself launches. Null unless var.enable_karpenter is true."
+  value       = try(module.karpenter[0].node_iam_role_name, null)
+}
+
+output "aws_lb_controller_pod_identity_role_arn" {
+  description = "ARN of the IAM role Pod Identity grants to the AWS Load Balancer Controller's service account (kube-system/aws-load-balancer-controller). Null unless var.enable_aws_load_balancer_controller is true."
+  value       = try(module.aws_lb_controller_pod_identity[0].iam_role_arn, null)
 }
