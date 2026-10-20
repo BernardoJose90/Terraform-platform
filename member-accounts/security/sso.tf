@@ -289,6 +289,11 @@ resource "aws_identitystore_group_membership" "james_network_team" {
 }
 
 # Account Assignments
+moved {
+  from = aws_ssoadmin_account_assignment.administrators_admin["security_analytics"]
+  to   = aws_ssoadmin_account_assignment.administrators_admin["infra_shared_services"]
+}
+
 resource "aws_ssoadmin_account_assignment" "administrators_admin" {
   for_each = local.account_ids_sso
 
