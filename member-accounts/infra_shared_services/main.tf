@@ -40,6 +40,18 @@ data "aws_ssm_parameter" "infra_shared_services_account_id" {
   name     = "/organizations/accounts/infra_shared_services"
 }
 
+# Needed to grant development's and production's EKS node roles pull
+# access to the shared ECR registry below.
+data "aws_ssm_parameter" "development_account_id" {
+  provider = aws.management
+  name     = "/organizations/accounts/development"
+}
+
+data "aws_ssm_parameter" "production_account_id" {
+  provider = aws.management
+  name     = "/organizations/accounts/production"
+}
+
 # Main provider for the infra_shared_services account itself, no profile needed.
 provider "aws" {
   region              = var.aws_region
@@ -75,4 +87,24 @@ module "github-oidc-roles" {
   role_name             = "TerraformDeploy"
 
   permissions_boundary_arn = module.terraform_deploy_boundary.arn
+}
+
+# Shared, centralized registry for event-network-hub's container images —
+# build once here, pull cross-account from wherever it's actually running.
+# Production's account ID is included even though it has no EKS cluster
+# yet (same "harmless, just inert until the cluster exists" reasoning as
+# assigning EKS-Admin to production early). push_role_arn is left unset
+# for now: nothing can push to this repository yet, until the GitHub
+# Actions OIDC push role is built.
+module "ecr_event_network_hub" {
+  source = "../../modules/ecr"
+
+  repository_name = "event-network-hub"
+
+  read_access_account_ids = [
+    data.aws_ssm_parameter.development_account_id.value,
+    data.aws_ssm_parameter.production_account_id.value,
+  ]
+
+  tags = var.tags
 }
