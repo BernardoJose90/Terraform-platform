@@ -21,7 +21,7 @@
 # --------------------------------------------------------------------
 #   Tier 1: production, development
 #   Tier 2: network
-#   Tier 3: monitoring, security, security_analytics
+#   Tier 3: monitoring, security, infra_shared_services
 #
 # WHY THIS ORDER: production and development each hold a TGW VPC
 # attachment into the network account's Transit Gateway. If network is
@@ -100,7 +100,7 @@
 # everyone's assignments too, that's a deliberate edit to
 # EXCLUDE_PATTERN_security below, not this script's default behavior.
 #
-# monitoring and security_analytics currently contain nothing but
+# monitoring and infra_shared_services currently contain nothing but
 # module.github-oidc-roles (each account's main.tf is ~60 lines, pure CI
 # bootstrap, nothing else has been added). After exclusions, tier 3
 # destroys nothing at all today, in either account — not a bug, just
@@ -127,14 +127,14 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 TIER1_ACCOUNTS=(production development)
 TIER2_ACCOUNTS=(network)
-TIER3_ACCOUNTS=(monitoring security security_analytics)
+TIER3_ACCOUNTS=(monitoring security infra_shared_services)
 
 # member-accounts/<dir> -> AWS SSO profile name. Only differs for
-# security_analytics (directory uses an underscore, the profile in
+# infra_shared_services (directory uses an underscore, the profile in
 # ~/.aws/config uses a hyphen) — everything else matches its directory.
 profile_for() {
   case "$1" in
-    security_analytics) echo "security-analytics" ;;
+    infra_shared_services) echo "infra-shared-services" ;;
     *) echo "$1" ;;
   esac
 }
@@ -300,7 +300,7 @@ for account in "${TIER2_ACCOUNTS[@]}"; do
 done
 
 echo ""
-echo "########## TIER 3: monitoring / security / security_analytics ##########"
+echo "########## TIER 3: monitoring / security / infra_shared_services ##########"
 for account in "${TIER3_ACCOUNTS[@]}"; do
   teardown_account "$account"
 done

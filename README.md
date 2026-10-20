@@ -86,7 +86,7 @@ This repository contains Terraform configurations for the **six member accounts*
 Terraform-platform/
 ├── 📂 member-accounts/            # All 6 member accounts
 │ ├── 📂 security/                 # SSO (sso.tf), GuardDuty, Security Hub
-│ ├── 📂 security_analytics/       # AI-driven security analysis
+│ ├── 📂 infra_shared_services/    # Shared services (renamed from security_analytics)
 │ ├── 📂 network/                  # TGW hub, egress VPC, spoke wiring roles
 │ ├── 📂 monitoring/                # CloudWatch, dashboards, alarms
 │ ├── 📂 production/                # VPC, EKS/RDS/ALB purpose subnets, TGW spoke attachment
@@ -134,7 +134,7 @@ Before you begin, ensure you have:
 - ✅ AWS IAM Identity Center enabled, delegated to the `security` account
 - ✅ S3 bucket for Terraform state: `james-terraform-state-2026`
 - ✅ SSM Parameter Store access for account IDs and TGW info
-- ✅ For local runs: AWS SSO profiles matching the aliases in root [providers.tf](providers.tf) (`management`, `development`, `security`, `network`, `production`, `monitoring`, `security-analytics`). CI instead assumes each account's `TerraformDeploy`/`TerraformPlan` role via GitHub OIDC — no long-lived credentials either way.
+- ✅ For local runs: AWS SSO profiles matching the aliases in root [providers.tf](providers.tf) (`management`, `development`, `security`, `network`, `production`, `monitoring`, `infra-shared-services`). CI instead assumes each account's `TerraformDeploy`/`TerraformPlan` role via GitHub OIDC — no long-lived credentials either way.
 
 ---
 
@@ -172,7 +172,7 @@ You MUST deploy in this order:
 2. **`security`** — provisions IAM Identity Center (SSO users/groups/permission sets) before anyone needs SSO access to the rest
 3. **`network`** — the TGW hub must exist before either spoke can attach to it
 4. **`production` / `development`** — TGW spokes; each reads `network`'s TGW ID via a data source, so `network` must already be applied
-5. **`monitoring` / `security_analytics`** — no dependency on the others, deploy any time after `security`
+5. **`monitoring` / `infra_shared_services`** — no dependency on the others, deploy any time after `security`
 
 In CI, this ordering is enforced automatically: `deploy-plan.yaml`/`deploy-apply.yaml` discover changed account folders from the PR diff and fan out a matrix job per account, and `deploy-teardown.yaml` runs the reverse order strictly tiered (see [Teardown](#teardown)).
 
@@ -194,7 +194,7 @@ terraform init && terraform apply
 cd ../monitoring
 terraform init && terraform apply
 
-cd ../security_analytics
+cd ../infra_shared_services
 terraform init && terraform apply
 ```
 
@@ -207,7 +207,7 @@ All Terraform state for this repo's accounts lives in one shared S3 bucket, `jam
 | Account | State File Path |
 |---------|-----------------|
 | Security | `security/terraform.tfstate` |
-| Security Analytics | `security-analytics/terraform.tfstate` |
+| Infra Shared Services | `security-analytics/terraform.tfstate` (unchanged — key not migrated on rename, see member-accounts/infra_shared_services/main.tf) |
 | Network | `network/terraform.tfstate` |
 | Monitoring | `monitoring/terraform.tfstate` |
 | Production | `production/terraform.tfstate` |
@@ -360,7 +360,7 @@ or exclusions in one, change the other.
 |---|---|---|
 | 1 | `production`, `development` | Must go first: each holds a TGW VPC attachment into `network`'s Transit Gateway. Destroy `network` first and deleting the TGW fails with `DependencyViolation` while those attachments still exist. Worse, both spokes read `/transit-gateway/id` from `network` via a data source, and data sources are evaluated at *destroy* time too — once `network` is gone, a spoke can't even compute a plan to tear itself down. |
 | 2 | `network` | Runs only once both spokes are fully gone. |
-| 3 | `monitoring`, `security`, `security_analytics` | No dependency on `network` or each other, but run last regardless, to keep the whole script's direction "leaves before roots" throughout. |
+| 3 | `monitoring`, `security`, `infra_shared_services` | No dependency on `network` or each other, but run last regardless, to keep the whole script's direction "leaves before roots" throughout. |
 
 **What's always excluded**, in every account: `module.github-oidc-roles` —
 GitHub Actions' OIDC trust roles. Losing them locks CI out of the account

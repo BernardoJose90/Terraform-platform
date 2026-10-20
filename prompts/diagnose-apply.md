@@ -90,7 +90,7 @@ the code.
   using `workflow_dispatch` as the fix for either of these two conditions.
 - **Multi-account layout:** `member-accounts/<name>/` — currently
   `development`, `monitoring`, `network`, `production`, `security`,
-  `security_analytics` — each an independent Terraform root with its own
+  `infra_shared_services` — each an independent Terraform root with its own
   state and its own `module.github-oidc-roles` call. Identify which
   account's folder the failing step's working directory belongs to before
   diagnosing — a finding in one account's job says nothing about the

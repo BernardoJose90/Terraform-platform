@@ -35,7 +35,7 @@ the code.
   one of the four jobs above, not an apply, a drift check, or a teardown.
 - **Multi-account layout:** `member-accounts/<name>/` — currently
   `development`, `monitoring`, `network`, `production`, `security`,
-  `security_analytics` — each an independent Terraform root with its own
+  `infra_shared_services` — each an independent Terraform root with its own
   state and its own `module.github-oidc-roles` call. A single PR's plan
   run can touch several of these at once (each gets its own matrix leg), so
   identify which account's folder the failing step's working directory or

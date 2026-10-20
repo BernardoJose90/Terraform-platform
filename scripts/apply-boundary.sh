@@ -121,11 +121,11 @@ PLAN_FILE="$(mktemp)"
 JSON_FILE="$(mktemp)"
 trap 'rm -f "$PLAN_FILE" "$JSON_FILE"' EXIT
 
-# security_analytics (state/dir name, underscore) vs security-analytics
+# infra_shared_services (state/dir name, underscore) vs infra-shared-services
 # (the SSO profile name, hyphen). Everything else matches 1:1.
 account_to_profile() {
   case "$1" in
-    security_analytics) echo "security-analytics" ;;
+    infra_shared_services) echo "infra-shared-services" ;;
     *) echo "$1" ;;
   esac
 }

@@ -144,7 +144,7 @@
 
 set -euo pipefail
 
-ACCOUNTS=(network development monitoring production security security_analytics)
+ACCOUNTS=(network development monitoring production security infra_shared_services)
 if [ "$#" -gt 0 ]; then
   ACCOUNTS=("$@")
 fi

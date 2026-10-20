@@ -77,7 +77,7 @@ jobs:
           echo "Requested tier: $TIER"
           echo "  spokes             -> production, development"
           echo "  spokes-and-network -> + network"
-          echo "  all                -> + monitoring, security, security_analytics"
+          echo "  all                -> + monitoring, security, infra_shared_services"
 
   # ──────────────────────────────────────────────────────────────────────────────
   # 2. Discover account IDs from SSM (read-only), to build each account's
@@ -132,7 +132,7 @@ jobs:
 
           echo "tier1_matrix=$(build_matrix 'production development')" >> "$GITHUB_OUTPUT"
           echo "tier2_matrix=$(build_matrix 'network')" >> "$GITHUB_OUTPUT"
-          echo "tier3_matrix=$(build_matrix 'monitoring security security_analytics')" >> "$GITHUB_OUTPUT"
+          echo "tier3_matrix=$(build_matrix 'monitoring security infra_shared_services')" >> "$GITHUB_OUTPUT"
 
   # ──────────────────────────────────────────────────────────────────────────────
   # 3. Tier 1 — spokes. Always runs (every tier option includes this).
@@ -333,7 +333,7 @@ jobs:
           fi
 
   # ──────────────────────────────────────────────────────────────────────────────
-  # 5. Tier 3 — monitoring, security, security_analytics. Only runs for
+  # 5. Tier 3 — monitoring, security, infra_shared_services. Only runs for
   # tier = all. Needs tier 2 to have fully succeeded first, to keep the
   # overall "leaves before roots" direction, even though tier 3 has no
   # actual dependency on network.
@@ -387,7 +387,7 @@ jobs:
           # its IAM Identity Center resources (prevent_destroy-protected,
           # see sso.tf) AND its SSO account assignments (not protected, but
           # excluded as a judgment call — access control, not "workload").
-          # monitoring/security_analytics only ever match the default
+          # monitoring/infra_shared_services only ever match the default
           # (github-oidc-roles), and today contain nothing else at all, so
           # this step is expected to destroy nothing for those two.
           # Keep in sync with exclude_pattern_for() in scripts/teardown.sh.

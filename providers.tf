@@ -39,7 +39,7 @@ provider "aws" {
 }
 
 provider "aws" {
-  alias   = "security-analytics"
+  alias   = "infra-shared-services"
   region  = "eu-west-2"
-  profile = "security-analytics"
+  profile = "infra-shared-services"
 }
