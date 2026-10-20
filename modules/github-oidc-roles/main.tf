@@ -463,6 +463,24 @@ data "aws_iam_policy_document" "permissions" {
     resources = ["*"]
   }
 
+  # modules/ecr's KMS-encrypted repositories (repository_encryption_type
+  # = "KMS", no explicit key, so this is always the AWS-managed aws/ecr
+  # key). resources = ["*"] for the same reason as EksKmsGrant above — an
+  # AWS-managed key's ID isn't known ahead of time to scope to.
+  # DescribeKey/CreateGrant let a repository actually use the key;
+  # RetireGrant is specifically what deleting a repository needs (see
+  # modules/ecr's own header and AWS's ECR encryption-at-rest docs).
+  statement {
+    sid    = "EcrKmsKey"
+    effect = "Allow"
+    actions = [
+      "kms:DescribeKey",
+      "kms:CreateGrant",
+      "kms:RetireGrant",
+    ]
+    resources = ["*"]
+  }
+
   # modules/eks exposes oidc_provider_arn for a workload that needs IRSA
   # instead of Pod Identity (e.g. an add-on that doesn't yet support Pod
   # Identity), so the upstream module's IRSA OIDC provider stays on. This
