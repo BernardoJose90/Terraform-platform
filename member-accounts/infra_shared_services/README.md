@@ -23,7 +23,7 @@
 
 | Name | Type |
 | ---- | ---- |
-| [aws_ssm_parameter.security_analytics_account_id](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/ssm_parameter) | data source |
+| [aws_ssm_parameter.infra_shared_services_account_id](https://registry.terraform.io/providers/hashicorp/aws/latest/docs/data-sources/ssm_parameter) | data source |
 
 ## Inputs
 

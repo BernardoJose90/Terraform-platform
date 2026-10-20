@@ -1,6 +1,6 @@
 ##############################################################################
-# Account: Security Analytics
-# Purpose: AI-generated analysis of medium/low severity security findings
+# Account: Infra Shared Services (renamed from Security Analytics)
+# Purpose: For shared services
 ##############################################################################
 
 terraform {
@@ -12,8 +12,13 @@ terraform {
     }
   }
   backend "s3" {
-    bucket       = "james-terraform-state-2026"           # same bucket as management
-    key          = "security-analytics/terraform.tfstate" # different key
+    bucket = "james-terraform-state-2026" # same bucket as management
+    # Deliberately left as the pre-rename key — renaming it would require a
+    # live state migration (terraform init -migrate-state) against this
+    # account's already-deployed IAM roles, for no functional benefit: this
+    # string is an internal state-storage detail, not user-facing. See
+    # terraform-org/platform/state-bucket-policy.tf's state_bucket_prefix_overrides.
+    key          = "security-analytics/terraform.tfstate"
     region       = "eu-west-2"
     use_lockfile = true # native S3 locking
     encrypt      = true
@@ -30,15 +35,15 @@ provider "aws" {
   }
 }
 
-data "aws_ssm_parameter" "security_analytics_account_id" {
+data "aws_ssm_parameter" "infra_shared_services_account_id" {
   provider = aws.management
-  name     = "/organizations/accounts/security_analytics"
+  name     = "/organizations/accounts/infra_shared_services"
 }
 
-# Main provider for the security_analytics account itself, no profile needed.
+# Main provider for the infra_shared_services account itself, no profile needed.
 provider "aws" {
   region              = var.aws_region
-  allowed_account_ids = [data.aws_ssm_parameter.security_analytics_account_id.value]
+  allowed_account_ids = [data.aws_ssm_parameter.infra_shared_services_account_id.value]
 
 }
 
@@ -50,23 +55,23 @@ provider "aws" {
 module "terraform_deploy_boundary" {
   source = "../../modules/terraform-deploy-boundary"
 
-  account_name          = "security-analytics"
+  account_name          = "infra-shared-services"
   management_account_id = "145678291484"
   state_bucket_name     = "james-terraform-state-2026"
-  state_key_prefix      = "security-analytics" # must match the backend "s3" key above
+  state_key_prefix      = "security-analytics" # must match the backend "s3" key above — not renamed, see header comment
   role_name             = "TerraformDeploy"
 }
 
 module "github-oidc-roles" {
   source       = "../../modules/github-oidc-roles"
-  account_name = "security-analytics"
+  account_name = "infra-shared-services"
 
   github_org  = "BernardoJose90"
   github_repo = "Terraform-platform"
 
   management_account_id = "145678291484"
   state_bucket_name     = "james-terraform-state-2026"
-  state_key_prefix      = "security-analytics" # must match the backend "s3" key above
+  state_key_prefix      = "security-analytics" # must match the backend "s3" key above — not renamed, see header comment
   role_name             = "TerraformDeploy"
 
   permissions_boundary_arn = module.terraform_deploy_boundary.arn
