@@ -60,10 +60,7 @@ provider "aws" {
 }
 
 # Caps the TerraformDeploy role at exactly the baseline permissions
-# every account needs. This account has no resources of its own yet
-# (see the file header), so there's no extra_policy_json added on top.
-# See monitoring/main.tf's boundary comment for why that's the intended
-# fail-safe behavior, not an oversight.
+# every account needs, plus enable_ecr for the shared ECR registry below.
 module "terraform_deploy_boundary" {
   source = "../../modules/terraform-deploy-boundary"
 
@@ -72,6 +69,8 @@ module "terraform_deploy_boundary" {
   state_bucket_name     = "james-terraform-state-2026"
   state_key_prefix      = "security-analytics" # must match the backend "s3" key above — not renamed, see header comment
   role_name             = "TerraformDeploy"
+
+  enable_ecr = true
 }
 
 module "github-oidc-roles" {

@@ -78,6 +78,12 @@ variable "enable_sso_management" {
   default     = false
 }
 
+variable "enable_ecr" {
+  description = "Turns on the KMS permissions (DescribeKey/CreateGrant/RetireGrant) modules/ecr's KMS-encrypted repositories need. Set this to true only for an account that calls modules/ecr — currently just infra_shared_services."
+  type        = bool
+  default     = false
+}
+
 variable "manage_named_roles" {
   description = <<-EOT
     Names — not Amazon Resource Names (ARNs); this account's own account

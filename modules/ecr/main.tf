@@ -19,7 +19,15 @@
 #     exact image from dev to prod" a meaningful, trustworthy operation.
 #   - repository_image_scan_on_push = true. Every image gets scanned for
 #     known vulnerabilities automatically; nothing to opt into per push.
-#   - Encryption at rest (AES256).
+#   - Encryption at rest via KMS (repository_encryption_type = "KMS"),
+#     required by CKV_AWS_136 — not AES256, which Checkov flags. No
+#     repository_kms_key is set, so this always resolves to the
+#     AWS-managed aws/ecr key, not a new customer-managed key: no new
+#     KMS infrastructure to create or manage, same security guarantee.
+#     The caller's TerraformDeploy identity policy and boundary both need
+#     kms:DescribeKey/CreateGrant/RetireGrant for this (see
+#     modules/github-oidc-roles and modules/terraform-deploy-boundary's
+#     EcrKmsKey statements, gated by var.enable_ecr on the boundary side).
 #
 # What IS exposed (variables.tf) is what genuinely differs per
 # repository: its name, which accounts can pull, which one role can
@@ -34,7 +42,7 @@ module "ecr" {
 
   repository_image_tag_mutability = "IMMUTABLE"
   repository_image_scan_on_push   = true
-  repository_encryption_type      = "AES256"
+  repository_encryption_type      = "KMS"
 
   repository_read_access_arns = [
     for account_id in var.read_access_account_ids : "arn:aws:iam::${account_id}:root"

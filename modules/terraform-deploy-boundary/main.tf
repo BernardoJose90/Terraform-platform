@@ -574,6 +574,27 @@ data "aws_iam_policy_document" "terraform_deploy_boundary" {
     }
   }
 
+  # modules/ecr's KMS-encrypted repositories (repository_encryption_type
+  # = "KMS", no explicit key, so this is always the AWS-managed aws/ecr
+  # key). resources = ["*"] for the same reason as the flow-log key above
+  # — an AWS-managed key's ID isn't known ahead of time to scope to.
+  # DescribeKey/CreateGrant let a repository actually use the key;
+  # RetireGrant is specifically what deleting a repository needs (see
+  # modules/ecr's own header and AWS's ECR encryption-at-rest docs).
+  dynamic "statement" {
+    for_each = var.enable_ecr ? [1] : []
+    content {
+      sid    = "EcrKmsKey"
+      effect = "Allow"
+      actions = [
+        "kms:DescribeKey",
+        "kms:CreateGrant",
+        "kms:RetireGrant",
+      ]
+      resources = ["*"]
+    }
+  }
+
   # Roles this account manages by exact, known name — e.g. network's two
   # spoke-wiring roles (modules/tgw-spoke-wiring-role). Unlike the flow-log
   # role above, these have fixed names chosen by whatever calls this
