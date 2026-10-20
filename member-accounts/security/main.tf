@@ -5,7 +5,7 @@
 # threat detection service) and Security Hub (a dashboard that
 # aggregates security findings), and it runs IAM (Identity and Access
 # Management) Access Analyzer.
-###############################################################################
+#############################################################################
 
 terraform {
   required_version = ">= 1.15.0"
