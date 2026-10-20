@@ -112,6 +112,12 @@ data "aws_iam_policy_document" "terraform_deploy_boundary" {
       "iam:ListOpenIDConnectProviders",
       "iam:CreateOpenIDConnectProvider",
       "iam:DeleteOpenIDConnectProvider",
+      # Tag/Untag because the upstream module sets tags on this resource -
+      # same "tag on create (or tag change) needs its own permission"
+      # pattern as the EksOidcProvider statement below.
+      "iam:TagOpenIDConnectProvider",
+      "iam:UntagOpenIDConnectProvider",
+      "iam:ListOpenIDConnectProviderTags",
     ]
     resources = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:oidc-provider/token.actions.githubusercontent.com"]
   }
@@ -608,8 +614,17 @@ data "aws_iam_policy_document" "terraform_deploy_boundary" {
 }
 
 resource "aws_iam_policy" "terraform_deploy_boundary" {
-  name        = "TerraformDeployPermissionsBoundary"
-  description = "Caps TerraformDeploy's effective permissions to what ${var.account_name} actually manages. Not editable by TerraformDeploy itself — see this module's main.tf header."
+  name = "TerraformDeployPermissionsBoundary"
+
+  # Deliberately NOT account-specific (see var.account_name for that,
+  # used in tags below instead) - description is ForceNew on
+  # aws_iam_policy (AWS's IAM API has no "update description" operation),
+  # so embedding var.account_name here would force a destroy-and-recreate
+  # of this exact policy on every account rename. Destroying it requires
+  # iam:DeletePolicyVersion, which TerraformDeploy's own boundary
+  # deliberately doesn't grant it against itself - see this module's
+  # main.tf header. A cosmetic rename should never be able to trip that.
+  description = "Caps TerraformDeploy's effective permissions to what this account actually manages. Not editable by TerraformDeploy itself — see this module's main.tf header."
   policy      = data.aws_iam_policy_document.terraform_deploy_boundary.json
 
   tags = {

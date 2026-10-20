@@ -162,6 +162,12 @@ data "aws_iam_policy_document" "permissions" {
       "iam:ListOpenIDConnectProviders",
       "iam:CreateOpenIDConnectProvider",
       "iam:DeleteOpenIDConnectProvider",
+      # Tag/Untag because the upstream module sets tags on this resource -
+      # same "tag on create (or tag change) needs its own permission"
+      # pattern as the EksOidcProvider statement below.
+      "iam:TagOpenIDConnectProvider",
+      "iam:UntagOpenIDConnectProvider",
+      "iam:ListOpenIDConnectProviderTags",
       "iam:GetPolicy",
       "iam:ListPolicies",
       "iam:CreatePolicy",
