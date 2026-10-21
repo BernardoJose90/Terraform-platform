@@ -552,7 +552,7 @@ module "event_network_hub_pod_identity" {
   source  = "terraform-aws-modules/eks-pod-identity/aws"
   version = "~> 2.9"
 
-  name = "event-network-hub-app"
+  name = "event-network-hub-app_pod_identity"
 
   attach_custom_policy = true
   policy_statements    = []
