@@ -522,3 +522,50 @@ module "eks" {
 
   tags = var.tags
 }
+
+# ======================================================================================
+# Pod Identity for event-network-hub's own app pods — scaffolded now,
+# before modules/rds and modules/s3 are actually called for it (see those
+# modules' own "wait until the app is running" discussion). This is
+# app-specific, not a platform/cluster concern, so it lives here rather
+# than inside modules/eks alongside the VPC CNI/Karpenter/LB Controller
+# associations above.
+#
+# The association (which namespace/service account this role is bound
+# to) doesn't need RDS/S3 to exist — only the permissions below do.
+# namespace/service_account assumed to match event-network-hub-gitops's
+# own manifests; this is an exact string match against what's actually
+# deployed, so double-check those names once that repo's manifests exist.
+#
+# No permissions attached yet (attach_custom_policy = true with an empty
+# policy_statements, rather than any of the attach_*_policy convenience
+# flags) — this role can currently do nothing. Once modules/rds and
+# modules/s3 are wired up for event-network-hub, add here:
+#   - secretsmanager:GetSecretValue scoped to
+#     module.rds_event_network_hub[0].master_user_secret_arn
+#   - s3:GetObject/PutObject/ListBucket scoped to
+#     module.s3_event_network_hub[0].bucket_arn (and that ARN + "/*")
+# ======================================================================================
+module "event_network_hub_pod_identity" {
+  count = var.networking_enabled && var.eks_enabled ? 1 : 0
+
+  source  = "terraform-aws-modules/eks-pod-identity/aws"
+  version = "~> 2.9"
+
+  name = "event-network-hub-app"
+
+  attach_custom_policy = true
+  policy_statements    = []
+
+  associations = {
+    main = {
+      cluster_name    = module.eks[0].cluster_name
+      namespace       = "development"
+      service_account = "event-network-hub-sa"
+    }
+  }
+
+  tags = var.tags
+
+  depends_on = [module.eks]
+}
