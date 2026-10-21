@@ -1,8 +1,8 @@
-# These three data sources look up basic facts about the current AWS
+# These three data sources look up basic facts about the current AWS.
 # account: which AWS partition it's in, which region, and its account ID.
 # They're used below to build this account's own Transit Gateway
 # attachment ARN (Amazon Resource Name — the unique identifier AWS uses to
-# reference a specific resource) prefix, in the WireOwnSpokeAttachment
+# reference a specific resource) prefix, in the WireOwnSpokeAttachment.
 # statement further down.
 data "aws_partition" "current" {}
 data "aws_region" "current" {}
