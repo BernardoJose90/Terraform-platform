@@ -71,6 +71,13 @@ module "terraform_deploy_boundary" {
   role_name             = "TerraformDeploy"
 
   enable_ecr = true
+
+  # event-network-hub's own OIDC push role (below) — a fixed, known name
+  # this account creates, same pattern as network's TGW spoke-wiring
+  # roles.
+  manage_named_roles = [
+    "EventNetworkHubEcrPush",
+  ]
 }
 
 module "github-oidc-roles" {
