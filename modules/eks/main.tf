@@ -305,6 +305,19 @@ resource "aws_ec2_tag" "karpenter_subnet_discovery" {
   value       = var.name
 }
 
+# Same discovery mechanism, for the security group Karpenter's EC2NodeClass
+# attaches to the nodes it launches. Reuses this module's own shared node
+# security group (module.eks.node_security_group_id) rather than creating a
+# second one — Karpenter-launched nodes need the same cluster-to-node and
+# node-to-node access as the static managed node group already has.
+resource "aws_ec2_tag" "karpenter_security_group_discovery" {
+  count = var.enable_karpenter ? 1 : 0
+
+  resource_id = module.eks.node_security_group_id
+  key         = "karpenter.sh/discovery"
+  value       = var.name
+}
+
 # ======================================================================================
 # AWS Load Balancer Controller's IAM side only — the controller itself is
 # deployed outside Terraform (see this repo's Argo CD plans, referenced in
