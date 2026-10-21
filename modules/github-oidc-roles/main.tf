@@ -481,6 +481,35 @@ data "aws_iam_policy_document" "permissions" {
     resources = ["*"]
   }
 
+  # modules/ecr itself — creating/managing the repository, its lifecycle
+  # policy, and its (cross-account) repository policy. Scoped to every
+  # repository in this account rather than a named list (unlike
+  # ManageInstanceRoles' fixed role names) because an account that calls
+  # modules/ecr is specifically a shared-registry account — every
+  # repository in it is fair game, there's no "someone else's repo" to
+  # protect it from here.
+  statement {
+    sid    = "ManageEcrRepositories"
+    effect = "Allow"
+    actions = [
+      "ecr:CreateRepository",
+      "ecr:DeleteRepository",
+      "ecr:DescribeRepositories",
+      "ecr:TagResource",
+      "ecr:UntagResource",
+      "ecr:ListTagsForResource",
+      "ecr:PutLifecyclePolicy",
+      "ecr:GetLifecyclePolicy",
+      "ecr:DeleteLifecyclePolicy",
+      "ecr:SetRepositoryPolicy",
+      "ecr:GetRepositoryPolicy",
+      "ecr:DeleteRepositoryPolicy",
+      "ecr:PutImageTagMutability",
+      "ecr:PutImageScanningConfiguration",
+    ]
+    resources = ["arn:aws:ecr:eu-west-2:${data.aws_caller_identity.read_current_account.account_id}:repository/*"]
+  }
+
   # modules/eks exposes oidc_provider_arn for a workload that needs IRSA
   # instead of Pod Identity (e.g. an add-on that doesn't yet support Pod
   # Identity), so the upstream module's IRSA OIDC provider stays on. This

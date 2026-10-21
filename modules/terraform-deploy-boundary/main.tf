@@ -595,6 +595,38 @@ data "aws_iam_policy_document" "terraform_deploy_boundary" {
     }
   }
 
+  # modules/ecr itself — creating/managing the repository, its lifecycle
+  # policy, and its (cross-account) repository policy. Scoped to every
+  # repository in this account rather than a named list (unlike
+  # ManageNamedRoles' fixed role names below) because an account with
+  # enable_ecr = true is specifically a shared-registry account — every
+  # repository in it is fair game, there's no "someone else's repo" to
+  # protect it from here.
+  dynamic "statement" {
+    for_each = var.enable_ecr ? [1] : []
+    content {
+      sid    = "ManageEcrRepositories"
+      effect = "Allow"
+      actions = [
+        "ecr:CreateRepository",
+        "ecr:DeleteRepository",
+        "ecr:DescribeRepositories",
+        "ecr:TagResource",
+        "ecr:UntagResource",
+        "ecr:ListTagsForResource",
+        "ecr:PutLifecyclePolicy",
+        "ecr:GetLifecyclePolicy",
+        "ecr:DeleteLifecyclePolicy",
+        "ecr:SetRepositoryPolicy",
+        "ecr:GetRepositoryPolicy",
+        "ecr:DeleteRepositoryPolicy",
+        "ecr:PutImageTagMutability",
+        "ecr:PutImageScanningConfiguration",
+      ]
+      resources = ["arn:aws:ecr:eu-west-2:${data.aws_caller_identity.current.account_id}:repository/*"]
+    }
+  }
+
   # Roles this account manages by exact, known name — e.g. network's two
   # spoke-wiring roles (modules/tgw-spoke-wiring-role). Unlike the flow-log
   # role above, these have fixed names chosen by whatever calls this
