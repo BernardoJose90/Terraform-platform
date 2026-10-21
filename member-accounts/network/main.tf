@@ -14,7 +14,7 @@
 #
 # Apply this account first. After that, the two spoke accounts can be
 # applied in either order.
-#######################################################################################
+######################################################################
 
 terraform {
   required_version = ">= 1.15.0"
