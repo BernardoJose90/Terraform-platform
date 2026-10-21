@@ -233,7 +233,7 @@ module "tgw_attachment" {
 # and into "main", so that return traffic coming back through NAT can
 # find its way back here.
 # ============================================================
-resource "aws_ec2_transit_gateway_route_table_association" "this" {
+resource "aws_ec2_transit_gateway_route_table_association" "spoke" {
   count = local.tgw_wiring ? 1 : 0
 
   provider = aws.network

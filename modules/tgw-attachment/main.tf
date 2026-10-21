@@ -7,7 +7,7 @@
 # already been accepted, either by hand, once, or automatically via
 # aws_ram_resource_share_accepter, if that approach is preferred instead.
 
-resource "aws_ec2_transit_gateway_vpc_attachment" "this" {
+resource "aws_ec2_transit_gateway_vpc_attachment" "vpc_attachment" {
   transit_gateway_id = var.tgw_id
   vpc_id             = var.vpc_id
   subnet_ids         = var.subnet_ids
