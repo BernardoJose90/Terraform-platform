@@ -1,4 +1,4 @@
-# ======================================================================================
+# =============================================================================
 # Shared S3 module. Wraps terraform-aws-modules/s3-bucket/aws the same
 # way modules/eks and modules/rds wrap their own upstream modules: one
 # local module that bakes in this platform's own security baseline, so
@@ -26,7 +26,7 @@
 # What IS exposed (variables.tf) is what genuinely differs per bucket:
 # its name, whether Terraform is allowed to force-delete it, and how
 # long (if at all) objects should be auto-expired.
-# ======================================================================================
+# ============================================================================
 
 module "bucket" {
   source  = "terraform-aws-modules/s3-bucket/aws"
