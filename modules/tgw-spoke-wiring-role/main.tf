@@ -29,7 +29,7 @@ data "aws_iam_policy_document" "trust" {
   }
 }
 
-resource "aws_iam_role" "this" {
+resource "aws_iam_role" "spoke_wiring" {
   name                 = var.name
   assume_role_policy   = data.aws_iam_policy_document.trust.json
   max_session_duration = 3600
@@ -130,8 +130,8 @@ data "aws_iam_policy_document" "permissions" {
   }
 }
 
-resource "aws_iam_role_policy" "this" {
+resource "aws_iam_role_policy" "spoke_wiring" {
   name   = "${var.name}Permissions"
-  role   = aws_iam_role.this.id
+  role   = aws_iam_role.spoke_wiring.id
   policy = data.aws_iam_policy_document.permissions.json
 }

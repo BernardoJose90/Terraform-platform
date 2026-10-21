@@ -92,9 +92,7 @@ module "github-oidc-roles" {
 # build once here, pull cross-account from wherever it's actually running.
 # Production's account ID is included even though it has no EKS cluster
 # yet (same "harmless, just inert until the cluster exists" reasoning as
-# assigning EKS-Admin to production early). push_role_arn is left unset
-# for now: nothing can push to this repository yet, until the GitHub
-# Actions OIDC push role is built.
+# assigning EKS-Admin to production early).
 module "ecr_event_network_hub" {
   source = "../../modules/ecr"
 
@@ -105,5 +103,85 @@ module "ecr_event_network_hub" {
     data.aws_ssm_parameter.production_account_id.value,
   ]
 
+  push_role_arn = aws_iam_role.event_network_hub_push.arn
+
   tags = var.tags
+}
+
+# ======================================================================================
+# Push role for event-network-hub's own CI/CD — a separate, app-specific
+# concern from this account's Terraform deploy pipeline (TerraformDeploy/
+# TerraformPlan above), so it's plain resources here rather than added to
+# modules/github-oidc-roles, which exists only for that pipeline.
+#
+# Trusts the SAME OIDC provider module.github-oidc-roles already created
+# in this account (only one provider per unique URL is allowed per
+# account — this can't create a second one for the same URL). The ARN is
+# built the same deterministic way that module builds it internally,
+# since it isn't exposed as an output.
+# ======================================================================================
+data "aws_iam_policy_document" "event_network_hub_push_trust" {
+  statement {
+    sid     = "EventNetworkHubCI"
+    effect  = "Allow"
+    actions = ["sts:AssumeRoleWithWebIdentity"]
+    principals {
+      type        = "Federated"
+      identifiers = ["arn:aws:iam::${data.aws_ssm_parameter.infra_shared_services_account_id.value}:oidc-provider/token.actions.githubusercontent.com"]
+    }
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:aud"
+      values   = ["sts.amazonaws.com"]
+    }
+    # Scoped to the main branch specifically, not the whole repo
+    # (repo:org/repo:*) — only a workflow run that's actually on main can
+    # push an image. Tighten this further to a specific GitHub
+    # Environment sub (repo:org/repo:environment:name), matching
+    # modules/github-oidc-roles' own convention, once one exists for
+    # this repo.
+    condition {
+      test     = "StringEquals"
+      variable = "token.actions.githubusercontent.com:sub"
+      values   = ["repo:BernardoJose90/event-network-hub:ref:refs/heads/main"]
+    }
+  }
+}
+
+resource "aws_iam_role" "event_network_hub_push" {
+  name                 = "EventNetworkHubEcrPush"
+  assume_role_policy   = data.aws_iam_policy_document.event_network_hub_push_trust.json
+  max_session_duration = 3600
+
+  tags = var.tags
+}
+
+data "aws_iam_policy_document" "event_network_hub_push_permissions" {
+  statement {
+    sid    = "EcrAuth"
+    effect = "Allow"
+    # GetAuthorizationToken doesn't support resource-level scoping —
+    # every ECR push/pull call needs it, regardless of which repository.
+    actions   = ["ecr:GetAuthorizationToken"]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "EcrPush"
+    effect = "Allow"
+    actions = [
+      "ecr:BatchCheckLayerAvailability",
+      "ecr:InitiateLayerUpload",
+      "ecr:UploadLayerPart",
+      "ecr:CompleteLayerUpload",
+      "ecr:PutImage",
+    ]
+    resources = [module.ecr_event_network_hub.repository_arn]
+  }
+}
+
+resource "aws_iam_role_policy" "event_network_hub_push" {
+  name   = "EventNetworkHubEcrPush"
+  role   = aws_iam_role.event_network_hub_push.id
+  policy = data.aws_iam_policy_document.event_network_hub_push_permissions.json
 }
