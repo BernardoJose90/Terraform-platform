@@ -175,6 +175,43 @@ skip-check:
   # nothing, which is exactly what this check is asking for. Nothing in
   # our own code overrides that.
   #
+  # CKV_AWS_145 — "Ensure that S3 buckets are encrypted with KMS by
+  # default". CKV_AWS_19 — "Ensure all data stored in the S3 bucket is
+  # securely encrypted at rest". CKV_AWS_21 — "Ensure all data stored in
+  # the S3 bucket have versioning enabled". All three flag
+  # module.s3_event_network_hub (member-accounts/development/main.tf),
+  # built via modules/s3 -> terraform-aws-modules/s3-bucket/aws. We
+  # checked Checkov's own check definitions (graph_checks/aws/
+  # S3KMSEncryptedByDefault.json, S3BucketEncryption.json,
+  # S3BucketVersioning.json): all three require tracing a graph
+  # connection from aws_s3_bucket to a separate resource
+  # (aws_s3_bucket_server_side_encryption_configuration /
+  # aws_s3_bucket_versioning) — the modern, split-resource form this
+  # upstream module version uses instead of inline attributes. This
+  # bucket sits behind a count index, inside modules/s3, inside the
+  # upstream module — the same "counted resource behind two nested
+  # external modules" shape as CKV2_AWS_19/12 above, just hitting the
+  # connection-tracing step instead of the attribute-reading step.
+  # modules/s3/main.tf genuinely sets sse_algorithm = "aws:kms" and
+  # versioning.status = "Enabled".
+  #
+  # CKV_AWS_300 — "Ensure S3 lifecycle configuration sets period for
+  # aborting failed uploads". Same resource. Not a graph check, but the
+  # same practical effect: its rule needs status = "Enabled" and an
+  # abort_incomplete_multipart_upload block with an empty filter, built
+  # here via a concat() of a conditional list and a literal list, passed
+  # through modules/s3 into the upstream module's dynamic "rule" block.
+  # We traced the pinned upstream module version's source by hand and
+  # confirmed this concat() does produce a compliant rule — Checkov's
+  # static source scan just can't resolve an expression this deep across
+  # two nested external module boundaries, the same class of limitation
+  # as the connection-tracing checks above, even though the underlying
+  # mechanism (expression resolution vs. graph connection) differs.
+  - CKV_AWS_145
+  - CKV_AWS_19
+  - CKV_AWS_21
+  - CKV_AWS_300
+
   # Neither of these is an actual risk — they're skipped purely because
   # this particular kind of scan can't see far enough to confirm it. A
   # separate scan pass, later in the same pipeline, reads the fully
@@ -274,6 +311,35 @@ skip-check:
   # the only way in, since neither of those replacements exists yet.
   # Accepted as a temporary, tracked risk — not a permanent exception.
   - CKV_AWS_39
+
+  # ───────────────────────────────────────────────────────────────────────────
+  # Real finding, accepted, bucket doesn't need the feature
+  # ───────────────────────────────────────────────────────────────────────────
+  #
+  # CKV_AWS_144 — "Ensure that S3 bucket has cross-region replication
+  # enabled". CKV2_AWS_62 — "Ensure S3 buckets should have event
+  # notifications enabled". Both flag module.s3_event_network_hub
+  # (member-accounts/development/main.tf) — and both are real: no
+  # aws_s3_bucket_replication_configuration or aws_s3_bucket_notification
+  # resource exists for this bucket, unlike CKV_AWS_145/19/21/300 above.
+  #
+  # This bucket is a dev-only scratch bucket for event-network-hub's own
+  # app-generated exports (force_destroy = true, expiration_days = 2) —
+  # read/written only by the app itself via Pod Identity, nothing else
+  # consumes it. Cross-region replication protects against a regional
+  # outage/disaster for data worth preserving; this data is deliberately
+  # short-lived and reproducible by the app, so there's nothing here
+  # worth replicating. Event notifications exist to trigger a downstream
+  # consumer (Lambda, SQS, EventBridge) when an object lands — no such
+  # consumer exists for this bucket today.
+  #
+  # Accepted for now. If a future bucket built from modules/s3 needs
+  # either (e.g. a production bucket holding real user data, or an
+  # event-driven pipeline reacting to new uploads), that's a reason to
+  # extend modules/s3 with the relevant option — not to leave this skip
+  # covering a different bucket's different risk profile.
+  - CKV_AWS_144
+  - CKV2_AWS_62
 
   # CKV_AWS_382 — "Ensure no security groups allow egress from 0.0.0.0:0
   # to port -1". Real finding: the node security group's "allow all

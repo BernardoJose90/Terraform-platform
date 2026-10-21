@@ -506,17 +506,24 @@ module "eks" {
   # two explicit access_entries above, not "whoever happened to apply."
   enable_cluster_creator_admin_permissions = false
 
-  # Matches the console-built cluster's sizing (2 nodes across 2 AZs).
-  # min_size/max_size/desired_size are all 2 — a fixed size, no
-  # autoscaling headroom (max_size was reduced from 4 to 2). Adjust
-  # instance size/count here as dev's actual workload needs become
-  # clearer.
+  # Shrunk to a single node now that Karpenter (enable_karpenter above)
+  # handles elastic app-workload capacity. This one node is specifically
+  # for core system components that need a stable home — CoreDNS,
+  # kube-proxy, the node-monitoring agent, and Karpenter's own controller
+  # itself, which can never manage the node it's running on without a
+  # chicken-and-egg problem. Not meant to run application pods.
+  #
+  # Key deliberately left as "general", not renamed to something like
+  # "system" — node_groups is consumed via for_each inside modules/eks,
+  # so renaming this key would plan a full destroy-and-recreate of the
+  # node group (same lesson as the "this" resource renames earlier),
+  # not a smooth resize. Only the sizes below actually changed.
   node_groups = {
     general = {
       instance_types = ["t3.medium"]
-      min_size       = 2
-      max_size       = 2
-      desired_size   = 2
+      min_size       = 1
+      max_size       = 1
+      desired_size   = 1
     }
   }
 
@@ -526,20 +533,20 @@ module "eks" {
 # ======================================================================================
 # Pod Identity for event-network-hub's own app pods — scaffolded now,
 # before modules/rds and modules/s3 are actually called for it (see those
-# modules' own "wait until the app is running" discussion). This is
-# app-specific, not a platform/cluster concern, so it lives here rather
-# than inside modules/eks alongside the VPC CNI/Karpenter/LB Controller
-# associations above.
+# modules' own "wait until the app is running" discussion). Uses
+# modules/app-pod-identity rather than hand-writing this, since
+# production will need the exact same thing once its own EKS cluster
+# exists — this isn't hypothetical reuse, event-network-hub is already
+# confirmed to run in both accounts.
 #
 # The association (which namespace/service account this role is bound
-# to) doesn't need RDS/S3 to exist — only the permissions below do.
+# to) doesn't need RDS/S3 to exist — only the permissions do.
 # namespace/service_account assumed to match event-network-hub-gitops's
 # own manifests; this is an exact string match against what's actually
 # deployed, so double-check those names once that repo's manifests exist.
 #
-# No permissions attached yet (attach_custom_policy = true with an empty
-# policy_statements, rather than any of the attach_*_policy convenience
-# flags) — this role can currently do nothing. Once modules/rds and
+# No permissions attached yet (policy_statements left at its default
+# empty list) — this role can currently do nothing. Once modules/rds and
 # modules/s3 are wired up for event-network-hub, add here:
 #   - secretsmanager:GetSecretValue scoped to
 #     module.rds_event_network_hub[0].master_user_secret_arn
@@ -549,23 +556,29 @@ module "eks" {
 module "event_network_hub_pod_identity" {
   count = var.networking_enabled && var.eks_enabled ? 1 : 0
 
-  source  = "terraform-aws-modules/eks-pod-identity/aws"
-  version = "~> 2.9"
+  source = "../../modules/app-pod-identity"
 
-  name = "event-network-hub-app_pod_identity"
-
-  attach_custom_policy = true
-  policy_statements    = []
-
-  associations = {
-    main = {
-      cluster_name    = module.eks[0].cluster_name
-      namespace       = "development"
-      service_account = "event-network-hub-sa"
-    }
-  }
+  name            = "event-network-hub-app-pod_identity"
+  cluster_name    = module.eks[0].cluster_name
+  namespace       = "development"
+  service_account = "event-network-hub-sa"
 
   tags = var.tags
 
   depends_on = [module.eks]
+}
+
+module "s3_event_network_hub" {
+  count = var.networking_enabled && var.eks_enabled ? 1 : 0
+
+  source = "../../modules/s3"
+
+  bucket_name     = "event-network-hub-development"
+  force_destroy   = true
+  expiration_days = 2
+
+  tags = var.tags
+
+  depends_on = [module.eks]
+
 }

@@ -360,6 +360,40 @@ data "aws_iam_policy_document" "terraform_deploy_boundary" {
     }
   }
 
+  # Mirrors modules/github-oidc-roles' KarpenterInterruptionQueue statement.
+  # Gated by the same enable_eks flag rather than a separate one — nothing
+  # in this repo turns on Karpenter without also running EKS, so a
+  # dedicated enable_karpenter boundary flag would just be a second switch
+  # that always moves in lockstep with this one.
+  dynamic "statement" {
+    for_each = var.enable_eks ? [1] : []
+    content {
+      sid    = "KarpenterInterruptionQueue"
+      effect = "Allow"
+      actions = [
+        "sqs:CreateQueue",
+        "sqs:DeleteQueue",
+        "sqs:GetQueueAttributes",
+        "sqs:SetQueueAttributes",
+        "sqs:TagQueue",
+        "sqs:UntagQueue",
+        "sqs:ListQueueTags",
+        "events:PutRule",
+        "events:DescribeRule",
+        "events:DeleteRule",
+        "events:EnableRule",
+        "events:DisableRule",
+        "events:PutTargets",
+        "events:RemoveTargets",
+        "events:ListTargetsByRule",
+        "events:TagResource",
+        "events:UntagResource",
+        "events:ListTagsForResource",
+      ]
+      resources = ["*"]
+    }
+  }
+
   # Handing the cluster role, node role, and Pod Identity role to the EKS
   # service — a separate permission from being able to create those roles
   # (see ManageFlowLogDeliveryRole above for why AWS treats these as two

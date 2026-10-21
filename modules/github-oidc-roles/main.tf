@@ -408,6 +408,43 @@ data "aws_iam_policy_document" "permissions" {
     resources = ["*"]
   }
 
+  # Karpenter's spot-interruption handling (modules/eks's module.karpenter,
+  # gated there by var.enable_karpenter) — its own SQS queue plus the
+  # EventBridge rules/targets that feed EC2 spot-interruption, rebalance,
+  # and instance-state-change notifications into it. Unlike eks:*/ec2:*
+  # above, SQS and EventBridge expose few enough actions to enumerate
+  # individually rather than wildcard the whole service.
+  #
+  # resources = ["*"] for the same reason as EksManagement/PassEksRoles:
+  # the queue and rule names are derived from the cluster name
+  # (Karpenter-<cluster_name>) inside the community module, and this
+  # shared policy has no cluster-name input to scope an exact ARN against.
+  statement {
+    sid    = "KarpenterInterruptionQueue"
+    effect = "Allow"
+    actions = [
+      "sqs:CreateQueue",
+      "sqs:DeleteQueue",
+      "sqs:GetQueueAttributes",
+      "sqs:SetQueueAttributes",
+      "sqs:TagQueue",
+      "sqs:UntagQueue",
+      "sqs:ListQueueTags",
+      "events:PutRule",
+      "events:DescribeRule",
+      "events:DeleteRule",
+      "events:EnableRule",
+      "events:DisableRule",
+      "events:PutTargets",
+      "events:RemoveTargets",
+      "events:ListTargetsByRule",
+      "events:TagResource",
+      "events:UntagResource",
+      "events:ListTagsForResource",
+    ]
+    resources = ["*"]
+  }
+
   # Handing the cluster role, node role, and Pod Identity role to the EKS
   # service — a separate permission from being able to create those roles
   # (see PassFlowLogDeliveryRole above for why AWS treats these as two
