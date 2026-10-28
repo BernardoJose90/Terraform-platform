@@ -81,6 +81,11 @@ output "karpenter_node_iam_role_name" {
   value       = try(module.karpenter[0].node_iam_role_name, null)
 }
 
+output "karpenter_queue_name" {
+  description = "Name of the SQS queue Karpenter uses for spot-interruption handling, needed for the controller's settings.interruptionQueue Helm value. Null unless var.enable_karpenter is true."
+  value       = try(module.karpenter[0].queue_name, null)
+}
+
 output "aws_lb_controller_pod_identity_role_arn" {
   description = "ARN of the IAM role Pod Identity grants to the AWS Load Balancer Controller's service account (kube-system/aws-load-balancer-controller). Null unless var.enable_aws_load_balancer_controller is true."
   value       = try(module.aws_lb_controller_pod_identity[0].iam_role_arn, null)

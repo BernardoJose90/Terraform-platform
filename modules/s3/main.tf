@@ -1,4 +1,4 @@
-# ======================================================================================
+# =============================================================================
 # Shared S3 module. Wraps terraform-aws-modules/s3-bucket/aws the same
 # way modules/eks and modules/rds wrap their own upstream modules: one
 # local module that bakes in this platform's own security baseline, so
@@ -18,13 +18,15 @@
 #     upstream module's own default (true) — we just don't override it
 #     away, and set it explicitly so it's not silently relying on
 #     upstream's default remaining what it is today.
-#   - Server-side encryption (SSE-S3/AES256).
+#   - Server-side encryption (SSE-KMS, AWS-managed aws/s3 key).
 #   - Versioning, so an accidental overwrite or delete isn't permanent.
+#   - Aborting incomplete multipart uploads after 7 days, so an
+#     abandoned/crashed upload doesn't quietly keep costing storage.
 #
 # What IS exposed (variables.tf) is what genuinely differs per bucket:
 # its name, whether Terraform is allowed to force-delete it, and how
 # long (if at all) objects should be auto-expired.
-# ======================================================================================
+# ============================================================================
 
 module "bucket" {
   source  = "terraform-aws-modules/s3-bucket/aws"
@@ -42,24 +44,42 @@ module "bucket" {
     status = "Enabled"
   }
 
+  # KMS (AWS-managed aws/s3 key, no kms_master_key_id set) rather than
+  # SSE-S3/AES256 — same reasoning and same "no new customer key needed"
+  # approach as modules/ecr's repository_encryption_type.
   server_side_encryption_configuration = {
     rule = {
       apply_server_side_encryption_by_default = {
-        sse_algorithm = "AES256"
+        sse_algorithm = "aws:kms"
       }
     }
   }
 
-  lifecycle_rule = var.expiration_days == null ? [] : [
-    {
-      id      = "expire-objects"
-      enabled = true
+  lifecycle_rule = concat(
+    var.expiration_days == null ? [] : [
+      {
+        id      = "expire-objects"
+        enabled = true
 
-      expiration = {
-        days = var.expiration_days
+        expiration = {
+          days = var.expiration_days
+        }
       }
-    }
-  ]
+    ],
+    [
+      # Unconditional, not exposed as a variable — same "no legitimate
+      # reason to turn this off" reasoning as versioning/encryption
+      # above. Cleans up storage silently consumed by multipart uploads
+      # that started but never completed or got aborted (a crashed
+      # upload, a client that gave up partway through).
+      {
+        id      = "abort-incomplete-multipart-uploads"
+        enabled = true
+
+        abort_incomplete_multipart_upload_days = 7
+      }
+    ]
+  )
 
   tags = var.tags
 }
