@@ -622,6 +622,16 @@ resource "aws_iam_role" "terraform_deploy" {
 
   lifecycle {
     prevent_destroy = true
+
+    # This resource never sets its own inline_policy block — the actual
+    # permissions are managed entirely by the separate
+    # aws_iam_role_policy.terraform_deploy_policy resource below. But the
+    # AWS provider still reads back whatever inline policy is attached to
+    # the role for drift detection, so every time that other resource's
+    # content changes, this shows up here too as a spurious "changed
+    # outside of Terraform" replace on the next plan — nothing outside
+    # Terraform actually touched anything.
+    ignore_changes = [inline_policy]
   }
 
 }
