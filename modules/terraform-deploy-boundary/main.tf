@@ -413,6 +413,21 @@ data "aws_iam_policy_document" "terraform_deploy_boundary" {
     }
   }
 
+  # CreateAccessEntry for an EC2_LINUX entry (Karpenter's node role, via the
+  # community karpenter submodule's aws_eks_access_entry.node) also checks
+  # iam:PassRole on that role, but doesn't satisfy PassEksRoles' iam:PassedToService
+  # condition above — so it gets its own unconditioned grant, scoped by name
+  # to this account's Karpenter-* roles instead.
+  dynamic "statement" {
+    for_each = var.enable_eks ? [1] : []
+    content {
+      sid       = "PassKarpenterNodeRoleForAccessEntry"
+      effect    = "Allow"
+      actions   = ["iam:PassRole"]
+      resources = ["arn:aws:iam::${data.aws_caller_identity.current.account_id}:role/Karpenter-*"]
+    }
+  }
+
   # EKS provisions its own AWS-managed service-linked roles the first time
   # they're needed — AWSServiceRoleForAmazonEKS (cluster creation) and
   # AWSServiceRoleForAmazonEKSNodegroup (managed node group creation).
