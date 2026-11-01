@@ -324,25 +324,16 @@ data "aws_iam_policy_document" "terraform_deploy_boundary" {
     }
   }
 
+  # Ceiling for modules/github-oidc-roles' CloudWatchLogGroups statement,
+  # which holds the exact action list. logs:* here rather than mirroring
+  # it, to stay under IAM's 6,144-character managed policy limit (see
+  # ManageAppS3Buckets below).
   dynamic "statement" {
     for_each = var.enable_vpc_networking ? [1] : []
     content {
-      sid    = "FlowLogCloudWatchLogGroup"
-      effect = "Allow"
-      actions = [
-        "logs:CreateLogGroup",
-        "logs:CreateLogStream",
-        "logs:PutLogEvents",
-        "logs:DescribeLogGroups",
-        "logs:DeleteLogGroup",
-        "logs:TagResource",
-        "logs:UntagResource",
-        "logs:ListTagsForResource",
-        "logs:PutRetentionPolicy",
-        "logs:DeleteRetentionPolicy",
-        "logs:AssociateKmsKey",
-        "logs:DisassociateKmsKey",
-      ]
+      sid       = "FlowLogCloudWatchLogGroup"
+      effect    = "Allow"
+      actions   = ["logs:*"]
       resources = ["*"]
     }
   }
@@ -360,7 +351,10 @@ data "aws_iam_policy_document" "terraform_deploy_boundary" {
     }
   }
 
-  # Mirrors modules/github-oidc-roles' KarpenterInterruptionQueue statement.
+  # Ceiling for modules/github-oidc-roles' KarpenterInterruptionQueue
+  # statement, which holds the exact SQS/EventBridge action list. sqs:* and
+  # events:* here rather than mirroring that list, to stay under IAM's
+  # 6,144-character managed policy limit (see ManageAppS3Buckets below).
   # Gated by the same enable_eks flag rather than a separate one — nothing
   # in this repo turns on Karpenter without also running EKS, so a
   # dedicated enable_karpenter boundary flag would just be a second switch
@@ -368,28 +362,9 @@ data "aws_iam_policy_document" "terraform_deploy_boundary" {
   dynamic "statement" {
     for_each = var.enable_eks ? [1] : []
     content {
-      sid    = "KarpenterInterruptionQueue"
-      effect = "Allow"
-      actions = [
-        "sqs:CreateQueue",
-        "sqs:DeleteQueue",
-        "sqs:GetQueueAttributes",
-        "sqs:SetQueueAttributes",
-        "sqs:TagQueue",
-        "sqs:UntagQueue",
-        "sqs:ListQueueTags",
-        "events:PutRule",
-        "events:DescribeRule",
-        "events:DeleteRule",
-        "events:EnableRule",
-        "events:DisableRule",
-        "events:PutTargets",
-        "events:RemoveTargets",
-        "events:ListTargetsByRule",
-        "events:TagResource",
-        "events:UntagResource",
-        "events:ListTagsForResource",
-      ]
+      sid       = "KarpenterInterruptionQueue"
+      effect    = "Allow"
+      actions   = ["sqs:*", "events:*"]
       resources = ["*"]
     }
   }
@@ -673,6 +648,25 @@ data "aws_iam_policy_document" "terraform_deploy_boundary" {
         "ecr:PutImageScanningConfiguration",
       ]
       resources = ["arn:aws:ecr:eu-west-2:${data.aws_caller_identity.current.account_id}:repository/*"]
+    }
+  }
+
+  # Ceiling for modules/github-oidc-roles' ManageAppS3Buckets and
+  # EmptyAppS3BucketsOnDestroy statements, which hold the exact action
+  # list. s3:* rather than mirroring that list because this boundary is a
+  # managed policy, capped by IAM at 6,144 characters, and it was already
+  # within ~50 characters of that before S3 was added. Still scoped to the
+  # same *-<account_name> buckets, so the state bucket stays out of reach.
+  dynamic "statement" {
+    for_each = var.enable_s3 ? [1] : []
+    content {
+      sid     = "ManageAppS3Buckets"
+      effect  = "Allow"
+      actions = ["s3:*"]
+      resources = [
+        "arn:aws:s3:::*-${var.account_name}",
+        "arn:aws:s3:::*-${var.account_name}/*",
+      ]
     }
   }
 

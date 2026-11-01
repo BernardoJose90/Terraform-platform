@@ -19,7 +19,10 @@ module "pod_identity" {
 
   name = var.name
 
-  attach_custom_policy = true
+  # Only when there's something to attach — an empty statement list
+  # renders a policy document with no statements, which IAM rejects as
+  # MalformedPolicyDocument.
+  attach_custom_policy = length(var.policy_statements) > 0
   policy_statements    = var.policy_statements
 
   associations = {
