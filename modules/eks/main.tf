@@ -318,7 +318,7 @@ resource "aws_ec2_tag" "karpenter_security_group_discovery" {
   value       = var.name
 }
 
-# ======================================================================================
+# =============================================================================
 # AWS Load Balancer Controller's IAM side only — the controller itself is
 # deployed outside Terraform (see this repo's Argo CD plans, referenced in
 # member-accounts/development/main.tf's module "eks" call). Gives the
@@ -329,7 +329,7 @@ resource "aws_ec2_tag" "karpenter_security_group_discovery" {
 # Not attach_aws_gateway_controller_policy — that's for AWS's separate
 # VPC Lattice-based Gateway API Controller, a different product from this
 # controller's own (Gateway API-capable, as of its v3.0) ALB/NLB support.
-# ======================================================================================
+# =============================================================================
 module "aws_lb_controller_pod_identity" {
   count = var.enable_aws_load_balancer_controller ? 1 : 0
 
