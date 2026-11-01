@@ -530,7 +530,7 @@ module "eks" {
   tags = var.tags
 }
 
-# ======================================================================================
+# ========================================================================
 # Pod Identity for event-network-hub's own app pods — scaffolded now,
 # before modules/rds and modules/s3 are actually called for it (see those
 # modules' own "wait until the app is running" discussion). Uses
@@ -552,7 +552,7 @@ module "eks" {
 #     module.rds_event_network_hub[0].master_user_secret_arn
 #   - s3:GetObject/PutObject/ListBucket scoped to
 #     module.s3_event_network_hub[0].bucket_arn (and that ARN + "/*")
-# ======================================================================================
+# ======================================================================
 module "event_network_hub_pod_identity" {
   count = var.networking_enabled && var.eks_enabled ? 1 : 0
 
