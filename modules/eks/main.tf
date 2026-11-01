@@ -227,6 +227,16 @@ module "eks" {
 
   eks_managed_node_groups = local.eks_managed_node_groups
 
+  # karpenter.sh/discovery is how Karpenter's EC2NodeClass finds the
+  # security group to attach to the nodes it launches — this module's own
+  # shared node security group, rather than a second one, since
+  # Karpenter-launched nodes need the same cluster-to-node and node-to-node
+  # access as the static managed node group. Set through the upstream
+  # module's own input, not a separate aws_ec2_tag: aws_security_group.node's
+  # tags are authoritative, so it would strip an externally-added tag on
+  # every apply.
+  node_security_group_tags = var.enable_karpenter ? { "karpenter.sh/discovery" = var.name } : {}
+
   tags = var.tags
 }
 
@@ -292,30 +302,6 @@ module "karpenter" {
   tags = var.tags
 
   depends_on = [module.eks]
-}
-
-# karpenter.sh/discovery is how Karpenter's own EC2NodeClass finds which
-# subnets it's allowed to launch nodes into, without having to hardcode
-# subnet IDs into a Kubernetes resource managed outside Terraform.
-resource "aws_ec2_tag" "karpenter_subnet_discovery" {
-  for_each = var.enable_karpenter ? toset(var.subnet_ids) : toset([])
-
-  resource_id = each.value
-  key         = "karpenter.sh/discovery"
-  value       = var.name
-}
-
-# Same discovery mechanism, for the security group Karpenter's EC2NodeClass
-# attaches to the nodes it launches. Reuses this module's own shared node
-# security group (module.eks.node_security_group_id) rather than creating a
-# second one — Karpenter-launched nodes need the same cluster-to-node and
-# node-to-node access as the static managed node group already has.
-resource "aws_ec2_tag" "karpenter_security_group_discovery" {
-  count = var.enable_karpenter ? 1 : 0
-
-  resource_id = module.eks.node_security_group_id
-  key         = "karpenter.sh/discovery"
-  value       = var.name
 }
 
 # =============================================================================

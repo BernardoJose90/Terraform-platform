@@ -116,7 +116,7 @@ variable "bootstrap_cni_via_node_role" {
 }
 
 variable "enable_karpenter" {
-  description = "Create Karpenter's controller IAM role (Pod Identity), its node IAM role/instance profile for the nodes it launches, the SQS queue + EventBridge rule for spot-interruption handling, and a karpenter.sh/discovery tag on var.subnet_ids. Supersedes the older Cluster Autoscaler approach entirely — this module only wires up the AWS side; the controller itself, and its NodePool/EC2NodeClass resources, are deployed outside Terraform (see main.tf's header comment), so this has no effect until something actually installs it against the karpenter service account in kube-system."
+  description = "Create Karpenter's controller IAM role (Pod Identity), its node IAM role/instance profile for the nodes it launches, the SQS queue + EventBridge rule for spot-interruption handling, and a karpenter.sh/discovery = var.name tag on the node security group. The caller must put the same tag on var.subnet_ids itself, through whatever module owns those subnets (this module doesn't, and adding it from here would fight that module's own tags). Supersedes the older Cluster Autoscaler approach entirely — this module only wires up the AWS side; the controller itself, and its NodePool/EC2NodeClass resources, are deployed outside Terraform (see main.tf's header comment), so this has no effect until something actually installs it against the karpenter service account in kube-system."
   type        = bool
   default     = false
 }

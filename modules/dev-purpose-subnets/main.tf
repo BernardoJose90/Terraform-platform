@@ -15,6 +15,7 @@ locals {
     for development_workload_subnet, cfg in var.development_workload_subnets : {
       for az_key, s in cfg.subnets : "${development_workload_subnet}-${az_key}" => merge(s, {
         development_workload_subnet = development_workload_subnet
+        extra_tags                  = cfg.extra_tags
       })
     }
   ]...)
@@ -27,7 +28,7 @@ resource "aws_subnet" "dev_workload_sub" {
   availability_zone = each.value.az
   cidr_block        = each.value.cidr
 
-  tags = merge(var.tags, { Name = each.value.name })
+  tags = merge(var.tags, each.value.extra_tags, { Name = each.value.name })
 }
 
 resource "aws_route_table" "dev_workload_rtb" {

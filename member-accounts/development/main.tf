@@ -123,6 +123,13 @@ locals {
   extra_assumable_role_arns = [
     "arn:aws:iam::${nonsensitive(data.aws_ssm_parameter.network_account_id.value)}:role/TgwSpokeWiringDevelopment",
   ]
+
+  # Shared by module.eks's name and the eks subnets' karpenter.sh/discovery
+  # tag — Karpenter only finds subnets whose tag value matches the cluster
+  # name, so the two must never drift apart. A plain local rather than
+  # module.eks[0].cluster_name, since module.eks itself depends on those
+  # subnets.
+  eks_cluster_name = "Dev-EKS"
 }
 
 module "terraform_deploy_boundary" {
@@ -334,6 +341,10 @@ module "dev_purpose_subnets" {
     eks = {
       route_table_name = "dev-eks-rtb"
       to_tgw           = local.tgw_wiring
+      # How Karpenter's EC2NodeClass finds which subnets it may launch nodes
+      # into. Must match module.eks's name — the security-group half of this
+      # tag is set inside modules/eks (see enable_karpenter there).
+      extra_tags = { "karpenter.sh/discovery" = local.eks_cluster_name }
       subnets = {
         a = { az = "eu-west-2a", cidr = "10.30.16.0/22", name = "dev-eks-a" }
         b = { az = "eu-west-2b", cidr = "10.30.32.0/22", name = "dev-eks-b" }
@@ -352,6 +363,11 @@ module "dev_purpose_subnets" {
     alb = {
       route_table_name = "dev-private-alb-rtb"
       to_tgw           = false
+      # How the AWS Load Balancer Controller auto-discovers which subnets it
+      # may place internal ALBs/NLBs into. This VPC has no public subnets
+      # (see this file's header), so there's no kubernetes.io/role/elb
+      # counterpart to set anywhere.
+      extra_tags = { "kubernetes.io/role/internal-elb" = "1" }
       subnets = {
         a = { az = "eu-west-2a", cidr = "10.30.70.0/24", name = "dev-alb-a" }
         b = { az = "eu-west-2b", cidr = "10.30.80.0/24", name = "dev-alb-b" }
@@ -371,21 +387,6 @@ module "dev_purpose_subnets" {
   # As with aws_route.private_to_tgw above, this module's own to_tgw
   # routes can't target the TGW until the attachment exists.
   depends_on = [module.tgw_attachment]
-}
-
-# kubernetes.io/role/internal-elb is how the AWS Load Balancer Controller
-# auto-discovers which subnets it's allowed to place internal ALBs/NLBs
-# into. This VPC has no public (internet-facing) subnets at all (see this
-# file's own header), so only the internal-elb tag applies here — there's
-# no equivalent kubernetes.io/role/elb subnet group to tag.
-resource "aws_ec2_tag" "alb_subnet_discovery" {
-  for_each = var.networking_enabled ? {
-    for k, v in module.dev_purpose_subnets[0].subnet_ids : k => v if startswith(k, "alb-")
-  } : {}
-
-  resource_id = each.value
-  key         = "kubernetes.io/role/internal-elb"
-  value       = "1"
 }
 
 # The IAM role IAM Identity Center provisions in this account for the
@@ -427,7 +428,7 @@ module "eks" {
 
   source = "../../modules/eks"
 
-  name               = "Dev-EKS"
+  name               = local.eks_cluster_name
   kubernetes_version = "1.35"
 
   # TEMPORARY, bootstrap-only. On a fresh (or freshly recreated) cluster,
@@ -509,18 +510,23 @@ module "eks" {
   # two explicit access_entries above, not "whoever happened to apply."
   enable_cluster_creator_admin_permissions = false
 
-  # Shrunk to a single node now that Karpenter (enable_karpenter above)
-  # handles elastic app-workload capacity. This one node is specifically
-  # for core system components that need a stable home — CoreDNS,
-  # kube-proxy, the node-monitoring agent, and Karpenter's own controller
-  # itself, which can never manage the node it's running on without a
-  # chicken-and-egg problem. Not meant to run application pods.
+  # Fixed-size system node group: Karpenter (enable_karpenter above)
+  # handles elastic app-workload capacity, so these nodes are only for core
+  # components that need a stable home — CoreDNS, kube-proxy, the
+  # node-monitoring agent, Argo CD, and Karpenter's own controller, which
+  # can never manage the node it's running on. Not meant to run application
+  # pods.
   #
-  # Key deliberately left as "general", not renamed to something like
-  # "system" — node_groups is consumed via for_each inside modules/eks,
-  # so renaming this key would plan a full destroy-and-recreate of the
-  # node group (same lesson as the "this" resource renames earlier),
-  # not a smooth resize. Only the sizes below actually changed.
+  # Two nodes rather than one: a t3.medium caps out at 17 pods, which those
+  # add-ons alone fill; and with a single node, losing it takes Karpenter
+  # down with it, leaving nothing to replace capacity until the node
+  # group's ASG recovers. Two spreads Karpenter's and CoreDNS's replicas
+  # across AZs.
+  #
+  # desired_size is only honoured at creation — the upstream module
+  # ignores later changes to it (scaling_config[0].desired_size), so
+  # resizing an existing group means scaling it with
+  # `aws eks update-nodegroup-config` first, then matching it here.
   node_groups = {
     general = {
       instance_types = ["t3.medium"]
