@@ -26,10 +26,18 @@ variable "development_workload_subnets" {
     load balancer typically shouldn't have one. In this account, egress
     only exists at all while wired into the TGW — see the caller's own
     to_tgw wiring for how that's tied to local.tgw_wiring.
+
+    extra_tags is merged onto that purpose's subnets only (not its route
+    table) — for discovery tags controllers look subnets up by, like
+    karpenter.sh/discovery or kubernetes.io/role/internal-elb. Set them
+    here rather than with a separate aws_ec2_tag resource: aws_subnet's own
+    tags argument is authoritative, so it would plan to strip any tag added
+    from outside on every apply.
   EOT
   type = map(object({
     route_table_name = string
     to_tgw           = bool
+    extra_tags       = optional(map(string), {})
     subnets = map(object({
       az   = string
       cidr = string
