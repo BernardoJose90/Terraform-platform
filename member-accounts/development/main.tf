@@ -143,6 +143,9 @@ module "terraform_deploy_boundary" {
   # This account is the only one running module.eks today.
   enable_eks = true
 
+  # module.s3_event_network_hub below.
+  enable_s3 = true
+
   extra_assumable_role_arns = local.extra_assumable_role_arns
 }
 

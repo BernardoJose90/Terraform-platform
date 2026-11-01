@@ -559,6 +559,51 @@ data "aws_iam_policy_document" "permissions" {
     resources = ["arn:aws:ecr:eu-west-2:${data.aws_caller_identity.read_current_account.account_id}:repository/*"]
   }
 
+  # modules/s3 (an app's own private bucket, e.g. event-network-hub's) —
+  # the bucket itself plus the versioning, encryption, lifecycle, and
+  # public access block sub-resources the upstream s3-bucket module
+  # creates, and the Get* reads the provider makes on every refresh.
+  # GetBucket*/PutBucket* wildcards rather than ~25 individual Get/Put
+  # actions, one per bucket sub-resource the provider reads. Scoped by name
+  # to buckets ending in -<account_name> (e.g.
+  # event-network-hub-development), which is this platform's naming
+  # convention for app buckets and keeps the state bucket out of reach.
+  # TagResource/UntagResource/ListTagsForResource cover newer AWS provider
+  # versions that tag buckets through the S3 Control tagging API instead
+  # of Put/GetBucketTagging.
+  statement {
+    sid    = "ManageAppS3Buckets"
+    effect = "Allow"
+    actions = [
+      "s3:CreateBucket",
+      "s3:DeleteBucket",
+      "s3:ListBucket",
+      "s3:ListBucketVersions",
+      "s3:GetBucket*",
+      "s3:PutBucket*",
+      "s3:DeleteBucketPolicy",
+      "s3:GetLifecycleConfiguration",
+      "s3:PutLifecycleConfiguration",
+      "s3:GetEncryptionConfiguration",
+      "s3:PutEncryptionConfiguration",
+      "s3:GetAccelerateConfiguration",
+      "s3:GetReplicationConfiguration",
+      "s3:TagResource",
+      "s3:UntagResource",
+      "s3:ListTagsForResource",
+    ]
+    resources = ["arn:aws:s3:::*-${var.account_name}"]
+  }
+
+  # force_destroy = true (modules/s3's dev setting) means destroying the
+  # bucket first deletes every object and object version left in it.
+  statement {
+    sid       = "EmptyAppS3BucketsOnDestroy"
+    effect    = "Allow"
+    actions   = ["s3:DeleteObject", "s3:DeleteObjectVersion"]
+    resources = ["arn:aws:s3:::*-${var.account_name}/*"]
+  }
+
   # modules/eks exposes oidc_provider_arn for a workload that needs IRSA
   # instead of Pod Identity (e.g. an add-on that doesn't yet support Pod
   # Identity), so the upstream module's IRSA OIDC provider stays on. This

@@ -84,6 +84,12 @@ variable "enable_ecr" {
   default     = false
 }
 
+variable "enable_s3" {
+  description = "Turns on the S3 bucket-management permissions modules/s3 needs, scoped to buckets named *-<account_name>. Set this to true only for an account that calls modules/s3 — currently just development."
+  type        = bool
+  default     = false
+}
+
 variable "manage_named_roles" {
   description = <<-EOT
     Names — not Amazon Resource Names (ARNs); this account's own account
