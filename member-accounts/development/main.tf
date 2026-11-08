@@ -442,7 +442,7 @@ module "eks" {
   # role for one apply, breaking the deadlock. Once the node group and
   # the Pod Identity association are both confirmed healthy, set this
   # back to false and re-apply — do not leave it true long-term.
-  bootstrap_cni_via_node_role = true
+  bootstrap_cni_via_node_role = false
 
   vpc_id = module.vpc[0].vpc_id
   subnet_ids = [
