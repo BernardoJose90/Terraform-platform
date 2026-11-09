@@ -87,6 +87,24 @@ data "aws_ssm_parameter" "tgw_id" {
   name     = "/transit-gateway/id"
 }
 
+# Fails the plan early, with a clear message, if this account is set to
+# attach but the network account's TGW has been torn down. The tgw_id
+# parameter above still holds the last real (now stale) ID in that case,
+# so without this check the plan would fail later with a confusing
+# "couldn't find resource" error on the attachment.
+data "aws_ssm_parameter" "tgw_status" {
+  count    = local.tgw_wiring ? 1 : 0
+  provider = aws.network
+  name     = "/transit-gateway/status"
+
+  lifecycle {
+    postcondition {
+      condition     = nonsensitive(self.value) == "active"
+      error_message = "tgw_attachment_enabled = true, but the network account's Transit Gateway is torn down (/transit-gateway/status is not \"active\"). Set tgw_attachment_enabled = false in terraform.tfvars, or set networking_enabled = true in member-accounts/network/teardown.auto.tfvars and apply the network account first."
+    }
+  }
+}
+
 data "aws_ssm_parameter" "dev_spoke_route_table_id" {
   count    = local.tgw_wiring ? 1 : 0
   provider = aws.network
@@ -229,6 +247,11 @@ module "tgw_attachment" {
   subnet_ids = module.vpc[0].private_subnet_ids
 
   tags = var.tags
+
+  # Check the TGW is actually up (see data.aws_ssm_parameter.tgw_status)
+  # before touching the attachment, so a torn-down TGW fails with that
+  # check's clear message rather than a "couldn't find resource" error.
+  depends_on = [data.aws_ssm_parameter.tgw_status]
 }
 
 # ============================================================

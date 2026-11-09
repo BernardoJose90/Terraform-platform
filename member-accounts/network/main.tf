@@ -464,11 +464,27 @@ resource "aws_ssm_parameter" "tgw_route_table_id_dev_spoke" {
   tags  = var.tags
 }
 
+# Tells the spoke accounts whether the TGW behind the parameters above
+# actually exists. During a teardown the other parameters keep their
+# frozen values, which look exactly like live ones — so without this, a
+# spoke that's still set to attach would plan against a TGW ID that no
+# longer exists and fail with a confusing "couldn't find resource"
+# error. Each spoke checks this value (see the tgw_status data source in
+# production/development's main.tf) and stops with a clear message
+# instead.
+resource "aws_ssm_parameter" "tgw_status" {
+  name  = "/transit-gateway/status"
+  type  = "String"
+  value = var.networking_enabled ? "active" : "torn-down"
+  tags  = var.tags
+}
+
 locals {
   tgw_ssm_parameter_arns = [
     aws_ssm_parameter.tgw_id.arn,
     aws_ssm_parameter.ram_resource_share_arn.arn,
     aws_ssm_parameter.tgw_route_table_id_main.arn,
+    aws_ssm_parameter.tgw_status.arn,
   ]
 
   network_account_id = nonsensitive(data.aws_ssm_parameter.network_account_id.value)
