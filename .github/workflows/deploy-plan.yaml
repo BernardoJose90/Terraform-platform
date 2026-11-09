@@ -261,10 +261,22 @@ jobs:
       - detect-changes
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 0 # the TGW ordering check compares against the PR's base commit
 
       - name: Skipping (no Terraform changes)
         if: needs.detect-changes.outputs.tf_changed != 'true'
         run: echo "Docs or prose only. Nothing to format."
+
+      # Enforces the ORDERING rule from the networking_enabled variables:
+      # no spoke may stay wired into the Transit Gateway (TGW) while the
+      # network account has it torn down, and the network account's flag
+      # can't change in the same PR as a spoke's wiring. It only reads the
+      # committed tfvars (no AWS access), so it fails in seconds — before
+      # discover-accounts and plan run. The script explains each failure.
+      - name: TGW Ordering Check
+        if: needs.detect-changes.outputs.tf_changed == 'true'
+        run: python3 .github/scripts/check-tgw-ordering.py ${{ github.event.pull_request.base.sha && format('--base {0}', github.event.pull_request.base.sha) || '' }}
 
       - name: Resolve Terraform version
         id: tfver

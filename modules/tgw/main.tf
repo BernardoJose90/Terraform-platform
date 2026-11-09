@@ -112,6 +112,16 @@ resource "null_resource" "wait_for_tgw_available" {
 # is captured into `triggers` when this resource is first created, and
 # read back here via self.triggers, instead of referencing
 # aws_ec2_transit_gateway.tgw.id directly.
+#
+# If a spoke never detached at all (the ORDERING rule was skipped), its
+# attachment sits in "available" rather than "deleting", and no amount of
+# waiting will clear it. So instead of silently timing out, this lists
+# every remaining attachment on each poll and fails after ~30 seconds,
+# naming the spoke account, when a spoke attachment isn't being deleted.
+# It also runs before the RAM share is removed (see depends_on below), so
+# the TGW is still shared with that spoke and it can detach cleanly. If
+# the share went first, the spoke's own plan would fail with
+# "couldn't find resource" when trying to read the TGW.
 # ============================================================
 resource "null_resource" "wait_for_attachments_cleared" {
   triggers = {
@@ -123,12 +133,16 @@ resource "null_resource" "wait_for_attachments_cleared" {
   # itself, so on teardown this resource gets destroyed first. That's the
   # whole point: it means this resource's destroy-time provisioner runs
   # and blocks first, before Terraform is allowed to touch the Transit
-  # Gateway or any of its route tables.
+  # Gateway or any of its route tables. The RAM share resources are in
+  # here for the same reason: they're only unshared once the wait passes.
   depends_on = [
     aws_ec2_transit_gateway.tgw,
     aws_ec2_transit_gateway_route_table.main,
     aws_ec2_transit_gateway_route_table.prod_spoke,
     aws_ec2_transit_gateway_route_table.dev_spoke,
+    aws_ram_resource_share.tgw,
+    aws_ram_resource_association.tgw,
+    aws_ram_principal_association.tgw,
   ]
 
   provisioner "local-exec" {
@@ -137,18 +151,45 @@ resource "null_resource" "wait_for_attachments_cleared" {
     command     = <<-EOT
       set -euo pipefail
       TGW_ID="${self.triggers.tgw_id}"
+      SELF_ACCOUNT=$(aws sts get-caller-identity --query Account --output text)
       echo "Waiting for every VPC attachment on $TGW_ID to finish deleting..."
 
+      STUCK_POLLS=0
       for i in $(seq 1 60); do
-        REMAINING=$(aws ec2 describe-transit-gateway-vpc-attachments \
+        # One line per attachment that isn't fully gone yet:
+        # <attachment ID> <VPC owner account> <state> <Name tag>
+        ATTACHMENTS=$(aws ec2 describe-transit-gateway-vpc-attachments \
           --filters "Name=transit-gateway-id,Values=$TGW_ID" \
-          --query "length(TransitGatewayVpcAttachments[?State!=\`deleted\`])" \
-          --output text 2>/dev/null || echo "0")
+          --query "TransitGatewayVpcAttachments[?State!=\`deleted\`].[TransitGatewayAttachmentId,VpcOwnerId,State,Tags[?Key==\`Name\`]|[0].Value]" \
+          --output text 2>/dev/null || echo "")
+        REMAINING=$(printf '%s\n' "$ATTACHMENTS" | grep -c . || true)
         echo "  [$i/60] non-deleted attachments remaining: $REMAINING"
 
         if [ "$REMAINING" = "0" ]; then
           echo "All attachments cleared."
           exit 0
+        fi
+        printf '%s\n' "$ATTACHMENTS" | awk '{ printf "      %s (account %s, %s) is %s\n", $1, $2, $4, $3 }'
+
+        # A spoke's attachment that isn't even being deleted means that
+        # spoke was never detached. Allow a few polls in case its delete
+        # is only just starting, then fail with something actionable.
+        BLOCKING=$(printf '%s\n' "$ATTACHMENTS" | awk -v self="$SELF_ACCOUNT" '$2 != self && $3 != "deleting"')
+        if [ -n "$BLOCKING" ]; then
+          STUCK_POLLS=$((STUCK_POLLS + 1))
+        else
+          STUCK_POLLS=0
+        fi
+
+        if [ "$STUCK_POLLS" -ge 3 ]; then
+          echo ""
+          echo "ERROR: these spoke attachments on $TGW_ID are not being deleted:"
+          printf '%s\n' "$BLOCKING" | awk '{ printf "  %s in account %s (%s) is %s\n", $1, $2, $4, $3 }'
+          echo "A spoke is still attached, which breaks the ORDERING rule. Detach it first:"
+          echo "apply that spoke with networking_enabled = false (development can use"
+          echo "tgw_attachment_enabled = false instead), then re-run this apply."
+          echo "The TGW and its RAM share are left in place so the spoke can still detach."
+          exit 1
         fi
 
         sleep 10
