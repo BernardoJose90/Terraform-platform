@@ -14,6 +14,8 @@ Each account carries a committed `teardown.auto.tfvars` file — that file, not 
 
 **Ordering matters going down: production and development must both be disabled *before* network.** Both spokes hold a Transit Gateway VPC attachment into network's TGW, and AWS refuses to delete a TGW that still has attachments — doing this out of order fails network's apply.
 
+**All three can go in one PR.** When a PR switches network's `networking_enabled` from `true` to `false`, `deploy-apply.yaml` applies the spokes first and network last (`apply-network-last`), and holds network back if a spoke's apply fails. The steps below can also be split into separate PRs, in this order. Either way, the TGW Ordering Check on the PR (`.github/scripts/check-tgw-ordering.py`) fails if network is switched off while a spoke is still wired in. Development can also detach on its own with `tgw_attachment_enabled = false` in its `terraform.tfvars`, keeping its VPC.
+
 1. **Disable production**
    - PR changing `member-accounts/production/teardown.auto.tfvars` to `networking_enabled = false`.
    - Review the plan: expect the VPC, subnets, route tables, TGW attachment, and TGW routing resources to show as destroyed, and **zero** changes to `module.github-oidc-roles`.
@@ -22,7 +24,7 @@ Each account carries a committed `teardown.auto.tfvars` file — that file, not 
 2. **Disable development**
    - Same as above, for `member-accounts/development/teardown.auto.tfvars`.
 
-3. **Disable network — only once both spokes above are merged and applied**
+3. **Disable network — in the same PR as the spokes, or once both spokes above are merged and applied**
    - Same as above, for `member-accounts/network/teardown.auto.tfvars`.
    - This is the one that removes the NAT Gateways (the biggest cost line item) and the Transit Gateway itself.
 
@@ -31,6 +33,8 @@ Each account carries a committed `teardown.auto.tfvars` file — that file, not 
 ## Bringing it back
 
 **Reverse order from teardown, not "any order": network first, then the two spokes.** Production and development each read the Transit Gateway's ID via an SSM parameter published by network. While disabled, that parameter holds a frozen value from before the TGW was destroyed — re-enabling a spoke before network would point its new TGW attachment at a TGW ID that no longer exists, and the apply would fail. Re-enable network first (a real TGW gets created and the SSM parameters update to the new, live values), then production and development (which now attach to something real).
+
+**This direction needs two PRs.** A spoke's plan is computed on its PR, before network has applied, so a PR that turns network back on *and* rewires a spoke fails the TGW Ordering Check. Merge network's change on its own first, then rewire the spokes in a follow-up PR. While network is off, `/transit-gateway/status` reads `torn-down`, and a spoke still set to attach stops at plan time with a message saying so.
 
 ## A separate, narrower switch: `eks_enabled`
 
