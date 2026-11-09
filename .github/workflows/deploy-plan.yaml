@@ -270,8 +270,10 @@ jobs:
 
       # Enforces the ORDERING rule from the networking_enabled variables:
       # no spoke may stay wired into the Transit Gateway (TGW) while the
-      # network account has it torn down, and the network account's flag
-      # can't change in the same PR as a spoke's wiring. It only reads the
+      # network account has it torn down, and the network account can't be
+      # switched back on in the same PR as a spoke is rewired. (A combined
+      # teardown is fine: deploy-apply.yaml then applies the spokes before
+      # the network account.) It only reads the
       # committed tfvars (no AWS access), so it fails in seconds — before
       # discover-accounts and plan run. The script explains each failure.
       - name: TGW Ordering Check

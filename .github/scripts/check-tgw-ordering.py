@@ -9,11 +9,20 @@ the committed flags (no AWS access needed) and fails the PR when:
 
   1. The network account's networking_enabled is false while a spoke is still
      wired into the TGW.
-  2. The network account's networking_enabled changes in the same PR as a
-     spoke's wiring. The spokes must be applied in their own PR first on
-     teardown, and the network account first on rebuild.
+  2. The network account is switched back on in the same PR as a spoke is
+     rewired. A spoke's plan is computed on the PR, before the network
+     account has applied, so it would plan against a TGW that doesn't exist
+     yet. Rebuild the network account in its own PR first.
 
-Usage: check-tgw-ordering.py [--base <git-ref>]
+A teardown (network and spokes switched off together) IS allowed in one PR:
+deploy-apply.yaml applies the spokes first and the network account last
+whenever this script reports the network account is being switched off.
+
+Usage:
+  check-tgw-ordering.py [--base <git-ref>]
+  check-tgw-ordering.py --base <git-ref> --network-direction
+      Prints only "teardown" (network switched off by this change), "rebuild"
+      (switched on) or "none", for deploy-apply.yaml to order its jobs by.
 """
 
 import argparse
@@ -87,7 +96,19 @@ def topology(ref):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--base", help="git ref to compare against (the PR's base)")
+    parser.add_argument(
+        "--network-direction", action="store_true",
+        help="print teardown / rebuild / none and exit (requires --base)",
+    )
     args = parser.parse_args()
+
+    if args.network_direction:
+        if not args.base:
+            parser.error("--network-direction requires --base")
+        before = bool_var("network", "networking_enabled", args.base)
+        after = bool_var("network", "networking_enabled", None)
+        print("teardown" if before and not after else "rebuild" if after and not before else "none")
+        return 0
 
     head = topology(None)
     print(f"{'network.networking_enabled':26} = {head['network']}")
@@ -109,13 +130,18 @@ def main():
 
     if args.base:
         base = topology(args.base)
-        if base["network"] != head["network"]:
+        # Only the rebuild direction is blocked. A combined teardown is safe
+        # because deploy-apply.yaml applies the spokes before the network
+        # account when it's being switched off.
+        if head["network"] and not base["network"]:
             for spoke in ("production", "development"):
-                if base[spoke] != head[spoke]:
+                if head[spoke] and not base[spoke]:
                     errors.append(
-                        f"This PR changes both the network account's networking_enabled and "
-                        f"{spoke}'s TGW wiring. Split them into separate PRs: on teardown, "
-                        "apply the spokes first; on rebuild, apply the network account first."
+                        f"This PR switches the network account back on AND rewires {spoke} "
+                        f"into the TGW. {spoke}'s plan is computed now, before the network "
+                        "account has applied, so it would plan against a TGW that doesn't "
+                        "exist yet. Merge the network account's change on its own first, "
+                        f"then rewire {spoke} in a follow-up PR."
                     )
 
     for error in errors:

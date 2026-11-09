@@ -64,6 +64,13 @@ the code.
   spoke-account apply jobs skipped with no error of their own, the actual
   failure is upstream in `apply-network` — diagnose that job's own error,
   not the downstream skips.
+- **Except on a network teardown, where network applies LAST.** When a push
+  switches `member-accounts/network`'s `networking_enabled` from true to
+  false, `apply-network` is skipped and `apply-network-last` ("Terraform
+  Apply - network (after spokes)", same steps) runs after `apply` instead,
+  because the Transit Gateway can't be deleted while spokes are attached.
+  There, a skipped `apply-network-last` with no error of its own means a
+  spoke's apply failed first — diagnose that spoke's error.
 - **The apply retry loop only covers two specific, narrow failure classes —
   recognize them by name, don't invent others.** Every apply step retries
   up to 3 attempts, but only for `AccessDeniedException` (IAM permissions
