@@ -90,6 +90,11 @@ jobs:
     outputs:
       changed_accounts: ${{ steps.filter.outputs.changed_accounts }}
       has_changes: ${{ steps.filter.outputs.has_changes }}
+      # "teardown" when this push switches the network account's
+      # networking_enabled from true to false, else "rebuild" or "none".
+      # Decides whether network applies first or last — see apply-network
+      # and apply-network-last below.
+      network_direction: ${{ steps.direction.outputs.network_direction }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -121,6 +126,7 @@ jobs:
             echo "No usable github.event.before; falling back to HEAD~1"
             BASE=$(git rev-parse HEAD~1)
           fi
+          echo "base=$BASE" >> "$GITHUB_OUTPUT"
           echo "Diffing $BASE..HEAD"
 
           # modules/ gets checked first, and separately, from everything
@@ -192,6 +198,18 @@ jobs:
 
           echo "changed_accounts=$CHANGED_ACCOUNTS" >> "$GITHUB_OUTPUT"
           echo "has_changes=true" >> "$GITHUB_OUTPUT"
+
+      # On a teardown the order has to flip: spokes must detach from the
+      # Transit Gateway (TGW) before the network account can delete it,
+      # or its apply blocks on attachments it doesn't own. Uses the same
+      # flag resolver as deploy-plan.yaml's TGW Ordering Check.
+      - name: Detect network teardown
+        id: direction
+        run: |
+          DIRECTION=$(python3 .github/scripts/check-tgw-ordering.py \
+            --base "${{ steps.filter.outputs.base }}" --network-direction)
+          echo "Network direction: $DIRECTION"
+          echo "network_direction=$DIRECTION" >> "$GITHUB_OUTPUT"
 
   # ──────────────────────────────────────────────────────────────────────────────
   # 3. Discover accounts from SSM AND filter by changed accounts
@@ -460,22 +478,30 @@ jobs:
   #    the downstream check on needs.apply-network.result — a plain job
   #    with if:false correctly reports "skipped" instead, so that's used
   #    here.
+  #
+  #    The one exception is a teardown (network_direction == "teardown"):
+  #    then this job is skipped and apply-network-last (step 6b) applies
+  #    the network account AFTER every spoke instead, because the Transit
+  #    Gateway can't be deleted while spokes are still attached to it.
   # ──────────────────────────────────────────────────────────────────────────────
   apply-network:
     name: Terraform Apply - network
     needs:
+      - detect-changes
       - discover-accounts
       - resolve-plan-run
     runs-on: ubuntu-latest
     timeout-minutes: 30
-    if: needs.discover-accounts.outputs.network_count == '1'
+    if: needs.discover-accounts.outputs.network_count == '1' && needs.detect-changes.outputs.network_direction != 'teardown'
     environment: ${{ fromJson(needs.discover-accounts.outputs.network_matrix).include[0].environment }}
 
     concurrency:
       group: tf-apply-network
       cancel-in-progress: false
 
-    steps:
+    # Anchored so apply-network-last reuses exactly these steps — the two
+    # jobs differ only in when they run, never in what they do.
+    steps: &apply-network-steps
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Resolve Terraform version
@@ -753,6 +779,9 @@ jobs:
   #    needed. If network WAS needed and it failed, every other account's
   #    apply gets skipped too, so nothing applies against an incomplete or
   #    broken network state.
+  #
+  #    On a teardown apply-network is skipped, so this runs first and
+  #    apply-network-last waits on it instead.
   # ──────────────────────────────────────────────────────────────────────────────
   apply:
     name: Terraform Apply - ${{ matrix.account }}
@@ -1046,6 +1075,36 @@ jobs:
           if-no-files-found: ignore
 
   # ──────────────────────────────────────────────────────────────────────────────
+  # 6b. Apply network LAST, on a teardown only (network_direction ==
+  #     "teardown"). Spokes detach in `apply` above first; the Transit
+  #     Gateway can't be deleted while they're still attached, and once
+  #     its RAM share is gone a still-attached spoke can't even see the
+  #     TGW to detach from it.
+  #
+  #     Same steps as apply-network (via the YAML anchor). Same
+  #     !failure() && !cancelled() rule as `apply`: it still runs when
+  #     `apply` was skipped because only network changed, but if any spoke
+  #     failed to detach, network is held back rather than half torn down.
+  # ──────────────────────────────────────────────────────────────────────────────
+  apply-network-last:
+    name: Terraform Apply - network (after spokes)
+    needs:
+      - detect-changes
+      - discover-accounts
+      - resolve-plan-run
+      - apply
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    if: ${{ needs.discover-accounts.outputs.network_count == '1' && needs.detect-changes.outputs.network_direction == 'teardown' && !failure() && !cancelled() }}
+    environment: ${{ fromJson(needs.discover-accounts.outputs.network_matrix).include[0].environment }}
+
+    concurrency:
+      group: tf-apply-network
+      cancel-in-progress: false
+
+    steps: *apply-network-steps
+
+  # ──────────────────────────────────────────────────────────────────────────────
   # 7. Summary
   # ──────────────────────────────────────────────────────────────────────────────
   summary:
@@ -1054,6 +1113,7 @@ jobs:
       - discover-accounts
       - apply-network
       - apply
+      - apply-network-last
     runs-on: ubuntu-latest
     if: always()
     steps:
@@ -1081,14 +1141,22 @@ jobs:
             echo "No apply matrix (nothing under member-accounts/ or modules/ changed)."
           fi
           echo ""
-          echo "apply-network: ${{ needs.apply-network.result }}"
-          echo "apply:         ${{ needs.apply.result }}"
+          echo "apply-network:      ${{ needs.apply-network.result }}"
+          echo "apply:              ${{ needs.apply.result }}"
+          echo "apply-network-last: ${{ needs.apply-network-last.result }} (teardown only)"
 
           if [ "${{ needs.apply-network.result }}" = "failure" ] && [ "${{ needs.apply.result }}" = "skipped" ]; then
             echo ""
             echo "⚠️  'apply' was skipped because 'apply-network' failed — deliberate"
             echo "    (other accounts are held behind network to avoid applying"
             echo "    against incomplete network state), not a second failure."
+          fi
+
+          if [ "${{ needs.apply.result }}" = "failure" ] && [ "${{ needs.apply-network-last.result }}" = "skipped" ]; then
+            echo ""
+            echo "⚠️  'apply-network-last' was skipped because 'apply' failed — deliberate"
+            echo "    (on a teardown, network is held back until every spoke has"
+            echo "    detached from the Transit Gateway), not a second failure."
           fi
 
       # Without this step, the summary job would always show green,
@@ -1098,7 +1166,8 @@ jobs:
       - name: Fail if any apply failed
         env:
           SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
-          NETWORK_RESULT: ${{ needs.apply-network.result }}
+          # Whichever of the two network jobs actually ran (at most one does).
+          NETWORK_RESULT: ${{ needs.apply-network.result != 'skipped' && needs.apply-network.result || needs.apply-network-last.result }}
           APPLY_RESULT: ${{ needs.apply.result }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
