@@ -79,7 +79,7 @@ variable "access_entries" {
 
 # ======================================================================================
 # Add-ons. vpc-cni, eks-pod-identity-agent, kube-proxy, and coredns are
-# always installed (see main.tf) — these two are optional on top of that.
+# always installed (see main.tf) — these three are optional on top of that.
 # ======================================================================================
 variable "enable_metrics_server" {
   description = "Install the metrics-server addon (needed for `kubectl top` and Horizontal Pod Autoscalers)."
@@ -89,6 +89,12 @@ variable "enable_metrics_server" {
 
 variable "enable_node_monitoring_agent" {
   description = "Install the eks-node-monitoring-agent addon, matching the console-built cluster. Powers node health detection; pair with a node group's own node_repair_config for auto-repair, which this module leaves off by default."
+  type        = bool
+  default     = true
+}
+
+variable "enable_ebs_csi_driver" {
+  description = "Install the aws-ebs-csi-driver addon, with its own Pod Identity role, so PersistentVolumeClaims can be backed by EBS volumes. The StorageClass (e.g. an encrypted gp3 default) is a Kubernetes object applied outside Terraform."
   type        = bool
   default     = true
 }

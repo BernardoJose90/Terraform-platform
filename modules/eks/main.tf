@@ -223,6 +223,20 @@ module "eks" {
     },
     var.enable_metrics_server ? { metrics-server = {} } : {},
     var.enable_node_monitoring_agent ? { eks-node-monitoring-agent = {} } : {},
+    # Not before_compute: the driver's controller is a Deployment that
+    # needs a node to run on. Its credentials come from
+    # module.ebs_csi_pod_identity below, associated through the add-on
+    # itself rather than a separate aws_eks_pod_identity_association —
+    # that role has no dependency on this module, so there's no cycle,
+    # and the controller has credentials from its very first start.
+    var.enable_ebs_csi_driver ? {
+      aws-ebs-csi-driver = {
+        pod_identity_association = [{
+          role_arn        = module.ebs_csi_pod_identity[0].iam_role_arn
+          service_account = "ebs-csi-controller-sa"
+        }]
+      }
+    } : {},
   )
 
   eks_managed_node_groups = local.eks_managed_node_groups
@@ -337,4 +351,34 @@ module "aws_lb_controller_pod_identity" {
   tags = var.tags
 
   depends_on = [module.eks]
+}
+
+# =============================================================================
+# EBS CSI driver's IAM side — the PersistentVolume provisioner for
+# EBS-backed PVCs. The add-on itself is installed by module.eks (addons
+# above), which also creates the Pod Identity association for
+# kube-system/ebs-csi-controller-sa using this role. So no associations
+# here, and no depends_on module.eks: module.eks consumes this role's ARN,
+# so it has to exist first.
+#
+# No aws_ebs_csi_kms_arns: volumes are encrypted with the AWS-managed
+# aws/ebs key (the StorageClass sets encrypted: "true" without a kmsKeyId),
+# which needs no extra key-policy grants. Add a CMK's ARN here if a
+# StorageClass ever points at one.
+#
+# The StorageClass itself is a Kubernetes object, applied outside
+# Terraform — CI can't reach the cluster's Kubernetes API (see
+# member-accounts/development/variables.tf, eks_endpoint_public_access_cidrs).
+# =============================================================================
+module "ebs_csi_pod_identity" {
+  count = var.enable_ebs_csi_driver ? 1 : 0
+
+  source  = "terraform-aws-modules/eks-pod-identity/aws"
+  version = "~> 2.9"
+
+  name = "${var.name}-ebs-csi"
+
+  attach_aws_ebs_csi_policy = true
+
+  tags = var.tags
 }
