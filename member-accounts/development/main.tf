@@ -159,6 +159,7 @@ module "terraform_deploy_boundary" {
   state_key_prefix      = "development"
   role_name             = "TerraformDeploy"
 
+
   # This account runs module.vpc and module.tgw_attachment below — same
   # infrastructure shape as production's own enable_vpc_networking
   # (see its main.tf), minus the subnets used only for
@@ -465,7 +466,7 @@ module "eks" {
   # role for one apply, breaking the deadlock. Once the node group and
   # the Pod Identity association are both confirmed healthy, set this
   # back to false and re-apply — do not leave it true long-term.
-  bootstrap_cni_via_node_role = false
+  bootstrap_cni_via_node_role = true
 
   vpc_id = module.vpc[0].vpc_id
   subnet_ids = [
