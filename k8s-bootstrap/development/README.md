@@ -1,13 +1,33 @@
-# Development cluster: manual bootstrap
+# Development cluster: in-cluster setup
 
 Kubernetes objects that Terraform can't create, because CI can't reach the
-cluster's Kubernetes API (IP allowlist) and has no in-cluster RBAC. Apply
-them once, by hand, from an allowlisted IP. They can move into Argo CD later.
+cluster's Kubernetes API (IP allowlist) and has no in-cluster RBAC. They are
+applied by hand with [install.sh](install.sh), from an allowlisted IP.
 
-Terraform has already created the AWS side: the EBS CSI driver add-on and
-its Pod Identity role, plus Karpenter's controller role (with its Pod
-Identity association for `kube-system/karpenter`), node role, and
-interruption queue.
+Terraform creates the AWS side first: the EBS CSI driver add-on and its Pod
+Identity role, plus Karpenter's controller role (with its Pod Identity
+association for `kube-system/karpenter`), node role, and interruption queue.
+
+## Layout
+
+```
+install.sh                 Applies everything below, in order. Safe to re-run.
+storage/
+  storageclass-gp3.yaml    Default StorageClass (EBS gp3, encrypted)
+karpenter/
+  values.yaml              Helm values for the controller
+  ec2nodeclass.yaml        How nodes are built (role, subnets, AMI, disk)
+  nodepool.yaml            Which instances may be launched, limits, consolidation
+```
+
+## Rules
+
+- **Change a file, then re-run `install.sh`.** No `kubectl edit`, no one-off
+  `--set` flags, no `helm upgrade` by hand. Otherwise this folder stops
+  describing the cluster.
+- **Versions are pinned at the top of `install.sh`.** Bump them in a PR.
+- **Check for drift** now and then: `kubectl diff -f storage/` and
+  `kubectl diff -f karpenter/nodepool.yaml`, and `helm get values karpenter -n kube-system`.
 
 ## 1. Log in to the cluster
 
@@ -26,67 +46,32 @@ The `development` profile uses the AdministratorAccess SSO role, which has
 cluster-admin through the `james_admin` access entry. An EKS-Admin
 permission set profile works too (`platform_admins` entry).
 
-## 2. StorageClass
+## 2. Install or update
 
 ```bash
-kubectl apply -f k8s-bootstrap/development/storageclass-gp3.yaml
-
-# The default gp2 StorageClass, if present, should stop being the default
-kubectl annotate storageclass gp2 storageclass.kubernetes.io/is-default-class=false --overwrite
-
-kubectl get storageclass
-kubectl -n kube-system get pods -l app.kubernetes.io/name=aws-ebs-csi-driver
+export AWS_PROFILE=development      # Terraform reads its outputs with this
+./k8s-bootstrap/development/install.sh   # from the repo root; context defaults to dev-eks
 ```
 
-## 3. Karpenter controller
+The script checks the kube context and API access, reads the queue and node
+role names from Terraform outputs, then:
 
-Pick the latest release from
-https://github.com/aws/karpenter-provider-aws/releases and check it
-supports the cluster's Kubernetes version.
+1. applies the gp3 StorageClass and stops gp2 from being the default;
+2. installs or upgrades Karpenter's CRDs (`karpenter-crd` chart) and the
+   controller (`karpenter` chart);
+3. applies the EC2NodeClass (with the node role filled in) and the NodePool.
 
-```bash
-export KARPENTER_VERSION="<version, e.g. 1.x.y>"
-TF="terraform -chdir=member-accounts/development"
-export QUEUE=$($TF output -raw karpenter_queue_name)
-export NODE_ROLE=$($TF output -raw karpenter_node_iam_role_name)
+If the cluster API times out, check your public IP against the allowlist
+first. It's usually that.
 
-helm upgrade --install karpenter oci://public.ecr.aws/karpenter/karpenter \
-  --version "${KARPENTER_VERSION}" \
-  --namespace kube-system \
-  --set settings.clusterName=Dev-EKS \
-  --set settings.interruptionQueue="${QUEUE}" \
-  --set controller.resources.requests.cpu=250m \
-  --set controller.resources.requests.memory=512Mi \
-  --set controller.resources.limits.memory=512Mi \
-  --wait
-
-kubectl -n kube-system get pods -l app.kubernetes.io/name=karpenter
-```
-
-The chart's default service account (`kube-system/karpenter`) matches the
-Pod Identity association, so no role annotation is needed. Its default
-affinity keeps the controller off nodes Karpenter itself manages, so it
-runs on the `general` managed node group.
-
-## 4. NodeClass and NodePool
-
-```bash
-sed "s/KARPENTER_NODE_ROLE_NAME/${NODE_ROLE}/" \
-  k8s-bootstrap/development/karpenter-nodeclass.yaml | kubectl apply -f -
-kubectl apply -f k8s-bootstrap/development/karpenter-nodepool.yaml
-
-kubectl get ec2nodeclass default   # READY should be True
-kubectl get nodepool default
-```
-
-## 5. Test
+## 3. Test
 
 ```bash
 # Karpenter: a deployment that doesn't fit on the general nodes
 kubectl create deployment inflate --image=public.ecr.aws/eks-distro/kubernetes/pause:3.7 --replicas=5
 kubectl set resources deployment inflate --requests=cpu=1
-kubectl get nodeclaims -w          # a new node should appear
-kubectl delete deployment inflate  # node is removed after ~1 minute
+kubectl get nodeclaims -w          # a new node should appear (Ctrl+C to stop)
+kubectl delete deployment inflate  # node is removed after ~1-2 minutes
 
 # EBS: a PVC is bound once a pod uses it
 kubectl apply -f - <<'EOF'
@@ -113,3 +98,10 @@ EOF
 kubectl get pvc ebs-test   # STATUS Bound
 kubectl delete pod/ebs-test pvc/ebs-test
 ```
+
+## Adding a component
+
+1. Create its AWS side (IAM role, Pod Identity association) in Terraform first.
+2. Add a folder here with its `values.yaml` and manifests.
+3. Add a pinned version and a step to `install.sh`.
+4. Add its checks to this README.
