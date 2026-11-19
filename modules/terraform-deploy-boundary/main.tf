@@ -412,6 +412,11 @@ data "aws_iam_policy_document" "terraform_deploy_boundary" {
   # iam:PassRole (above) as the only caller-side prerequisite — there is
   # no documented AWSServiceRoleForAmazonEKSPodIdentity service-linked
   # role, so granting it here would be an unjustified, unused permission.
+  #
+  # spot.amazonaws.com: AWSServiceRoleForEC2Spot, needed before Karpenter
+  # can launch Spot nodes. Mirrors the same entry in modules/github-oidc-roles.
+  # This boundary change needs the break-glass apply (see this file's header):
+  # TerraformDeploy can't edit its own boundary.
   dynamic "statement" {
     for_each = var.enable_eks ? [1] : []
     content {
@@ -422,7 +427,7 @@ data "aws_iam_policy_document" "terraform_deploy_boundary" {
       condition {
         test     = "StringEquals"
         variable = "iam:AWSServiceName"
-        values   = ["eks.amazonaws.com", "eks-nodegroup.amazonaws.com"]
+        values   = ["eks.amazonaws.com", "eks-nodegroup.amazonaws.com", "spot.amazonaws.com"]
       }
     }
   }
