@@ -1,0 +1,17 @@
+# Helm values for the karpenter chart. Used by ../install.sh.
+#
+# settings.clusterName and settings.interruptionQueue are not here: install.sh
+# passes them from Terraform outputs so they always match what Terraform built.
+#
+# The chart's default service account (kube-system/karpenter) matches the Pod
+# Identity association Terraform created, so no role annotation is needed. Its
+# default affinity keeps the controller off nodes Karpenter itself manages, so
+# it runs on the "general" managed node group.
+
+controller:
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      memory: 512Mi

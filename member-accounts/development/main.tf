@@ -433,6 +433,19 @@ data "aws_iam_roles" "sso_eks_admin" {
 }
 
 # ============================================================
+# EC2 Spot service-linked role. AWS needs it in an account before any Spot
+# instance can be launched there; without it Karpenter's Spot launches fail
+# and every node falls back to on-demand (the NodePool allows both).
+#
+# Account-level, so deliberately NOT gated on eks_enabled: pausing the
+# cluster shouldn't delete it, and AWS refuses to delete it while Spot
+# instances exist anyway.
+# ============================================================
+resource "aws_iam_service_linked_role" "spot" {
+  aws_service_name = "spot.amazonaws.com"
+}
+
+# ============================================================
 # Gated on var.eks_enabled as well as var.networking_enabled, so the
 # cluster specifically can be paused (e.g. outside working hours) without
 # tearing down the VPC and dev_purpose_subnets underneath it.

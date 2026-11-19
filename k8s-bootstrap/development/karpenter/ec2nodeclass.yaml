@@ -2,8 +2,9 @@
 # AMI and disk. Mirrors the managed node group's baseline in modules/eks
 # (IMDSv2 only, encrypted root volume).
 #
-# Replace KARPENTER_NODE_ROLE_NAME with:
-#   terraform -chdir=member-accounts/development output -raw karpenter_node_iam_role_name
+# KARPENTER_NODE_ROLE_NAME is filled in by ../install.sh from the
+# karpenter_node_iam_role_name Terraform output. Don't apply this file
+# directly with kubectl.
 apiVersion: karpenter.k8s.aws/v1
 kind: EC2NodeClass
 metadata:
