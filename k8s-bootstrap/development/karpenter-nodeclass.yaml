@@ -1,0 +1,40 @@
+# How Karpenter launches nodes: which IAM role, subnets, security groups,
+# AMI and disk. Mirrors the managed node group's baseline in modules/eks
+# (IMDSv2 only, encrypted root volume).
+#
+# Replace KARPENTER_NODE_ROLE_NAME with:
+#   terraform -chdir=member-accounts/development output -raw karpenter_node_iam_role_name
+apiVersion: karpenter.k8s.aws/v1
+kind: EC2NodeClass
+metadata:
+  name: default
+spec:
+  role: KARPENTER_NODE_ROLE_NAME
+
+  # Amazon Linux 2023. @latest picks up new AMIs automatically (nodes roll
+  # through drift). Pin to a specific version (e.g. al2023@v20261101)
+  # before production.
+  amiSelectorTerms:
+    - alias: al2023@latest
+
+  # Tagged in member-accounts/development/main.tf (eks-a/b/c subnets) and
+  # modules/eks (node security group).
+  subnetSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: Dev-EKS
+  securityGroupSelectorTerms:
+    - tags:
+        karpenter.sh/discovery: Dev-EKS
+
+  metadataOptions:
+    httpEndpoint: enabled
+    httpTokens: required
+    httpPutResponseHopLimit: 1
+
+  blockDeviceMappings:
+    - deviceName: /dev/xvda
+      ebs:
+        volumeSize: 50Gi
+        volumeType: gp3
+        encrypted: true
+        deleteOnTermination: true

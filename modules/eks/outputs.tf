@@ -86,6 +86,11 @@ output "karpenter_queue_name" {
   value       = try(module.karpenter[0].queue_name, null)
 }
 
+output "ebs_csi_pod_identity_role_arn" {
+  description = "ARN of the IAM role Pod Identity grants to the EBS CSI driver's controller service account (kube-system/ebs-csi-controller-sa). Null unless var.enable_ebs_csi_driver is true."
+  value       = try(module.ebs_csi_pod_identity[0].iam_role_arn, null)
+}
+
 output "aws_lb_controller_pod_identity_role_arn" {
   description = "ARN of the IAM role Pod Identity grants to the AWS Load Balancer Controller's service account (kube-system/aws-load-balancer-controller). Null unless var.enable_aws_load_balancer_controller is true."
   value       = try(module.aws_lb_controller_pod_identity[0].iam_role_arn, null)
