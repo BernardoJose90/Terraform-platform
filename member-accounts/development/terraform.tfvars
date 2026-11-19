@@ -7,7 +7,7 @@ private_subnets = ["10.30.10.0/24", "10.30.20.0/24", "10.30.30.0/24"]
 
 # Development runs as a standalone, isolated VPC for now — detached from the
 # Transit Gateway. No egress, no cross-account routing, no dependency on the
-# network account. Set true (with the network account applied) to reattach.
+# network account. Set true (with the network account applied) to reattach..
 tgw_attachment_enabled = true
 
 eks_endpoint_public_access_cidrs = ["187.40.36.24/32", "187.40.36.19/32"]
