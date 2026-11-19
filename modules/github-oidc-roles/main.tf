@@ -482,6 +482,13 @@ data "aws_iam_policy_document" "permissions" {
   # iam:PassRole (above) as the only caller-side prerequisite — there is
   # no documented AWSServiceRoleForAmazonEKSPodIdentity service-linked
   # role, so granting it here would be an unjustified, unused permission.
+  #
+  # spot.amazonaws.com: AWSServiceRoleForEC2Spot, which EC2 requires before
+  # any Spot instance can launch in the account (Karpenter's NodePool
+  # prefers Spot). Created by aws_iam_service_linked_role.spot in
+  # member-accounts/development/main.tf. Like the rest of this policy it's
+  # granted in every account; the boundary only allows it where enable_eks
+  # is true.
   statement {
     sid       = "EksServiceLinkedRoles"
     effect    = "Allow"
@@ -490,7 +497,7 @@ data "aws_iam_policy_document" "permissions" {
     condition {
       test     = "StringEquals"
       variable = "iam:AWSServiceName"
-      values   = ["eks.amazonaws.com", "eks-nodegroup.amazonaws.com"]
+      values   = ["eks.amazonaws.com", "eks-nodegroup.amazonaws.com", "spot.amazonaws.com"]
     }
   }
 
