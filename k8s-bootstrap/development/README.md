@@ -99,6 +99,63 @@ kubectl get pvc ebs-test   # STATUS Bound
 kubectl delete pod/ebs-test pvc/ebs-test
 ```
 
+## Before disabling EKS (`eks_enabled = false`)
+
+Do this **before** merging the PR that sets `eks_enabled = false`, while the
+cluster and Karpenter's controller are still running. Karpenter creates AWS
+resources that aren't in Terraform state (EC2 instances, an instance profile),
+and only the controller can clean them up. Terraform destroys the
+controller's IAM role early in the teardown, so after that nothing removes
+them.
+
+```bash
+# 1. Karpenter's nodes: deleting the NodePool drains and terminates them
+kubectl delete nodepool default
+kubectl get nodeclaims                 # wait until empty
+
+# 2. Karpenter's instance profile: deleting the EC2NodeClass removes it
+kubectl delete ec2nodeclass default
+kubectl get ec2nodeclass               # wait until empty
+
+# 3. EBS volumes from PVCs: these outlive the cluster if left behind
+kubectl get pvc -A                     # delete any that remain (and the pods using them)
+```
+
+Then check nothing is left in AWS:
+
+```bash
+aws ec2 describe-instances --profile development --region eu-west-2 \
+  --filters Name=tag-key,Values=karpenter.sh/nodepool \
+            Name=instance-state-name,Values=pending,running \
+  --query 'Reservations[].Instances[].InstanceId'          # []
+
+aws iam list-instance-profiles --profile development \
+  --query "InstanceProfiles[?starts_with(InstanceProfileName, 'Dev-EKS_')].InstanceProfileName"   # []
+```
+
+**If you skip step 2**, the destroy fails deleting the Karpenter node role:
+`AccessDenied ... iam:RemoveRoleFromInstanceProfile` on a `Dev-EKS_<number>`
+instance profile. TerraformDeploy's boundary deliberately doesn't allow that
+action. Remove the profile with your SSO admin login, then rerun the apply:
+
+```bash
+aws iam remove-role-from-instance-profile --profile development \
+  --instance-profile-name <Dev-EKS_number> --role-name <Karpenter node role>
+aws iam delete-instance-profile --profile development \
+  --instance-profile-name <Dev-EKS_number>
+```
+
+### Bringing the cluster back
+
+1. Set `eks_enabled = true` **and** `bootstrap_cni_via_node_role = true`
+   (`member-accounts/development/main.tf`) for the first apply. A new cluster
+   needs it, see that variable's description.
+2. Once the nodes are Ready, run `install.sh` (above).
+3. Set `bootstrap_cni_via_node_role = false` and apply again.
+
+The Spot service-linked role and the deploy role's permissions aren't gated on
+`eks_enabled`, so they stay in place while the cluster is off.
+
 ## Adding a component
 
 1. Create its AWS side (IAM role, Pod Identity association) in Terraform first.
