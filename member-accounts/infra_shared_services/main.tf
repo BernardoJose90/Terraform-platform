@@ -165,6 +165,7 @@ data "aws_iam_policy_document" "event_network_hub_push_trust" {
 }
 
 resource "aws_iam_role" "event_network_hub_push" {
+  # checkov:skip=CKV_AWS_393:False positive, same as CKV_AWS_358 on event_network_hub_push_trust. Checkov's repo regex doesn't accept GitHub's immutable sub (owner@id/repo@id).
   name                 = "EventNetworkHubEcrPush"
   assume_role_policy   = data.aws_iam_policy_document.event_network_hub_push_trust.json
   max_session_duration = 3600
