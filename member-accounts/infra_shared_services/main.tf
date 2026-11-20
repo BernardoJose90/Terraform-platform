@@ -128,6 +128,7 @@ module "ecr_event_network_hub" {
 # since it isn't exposed as an output.
 # ======================================================================================
 data "aws_iam_policy_document" "event_network_hub_push_trust" {
+  # checkov:skip=CKV_AWS_358:False positive. Checkov's repo regex doesn't accept GitHub's immutable sub (owner@id/repo@id). The sub is pinned to one repo by ID, on main only.
   statement {
     sid     = "EventNetworkHubCI"
     effect  = "Allow"
@@ -147,15 +148,24 @@ data "aws_iam_policy_document" "event_network_hub_push_trust" {
     # Environment sub (repo:org/repo:environment:name), matching
     # modules/github-oidc-roles' own convention, once one exists for
     # this repo.
+    #
+    # event-network-hub uses GitHub's immutable OIDC subject format
+    # (use_immutable_subject: true), which adds the owner's and repo's
+    # numeric IDs: repo:<owner>@<owner id>/<repo>@<repo id>:... The IDs
+    # don't change on rename, and a deleted repo re-created under the same
+    # name gets a new ID, so it can't inherit this trust. Terraform-platform
+    # itself still uses the plain repo:<owner>/<repo> format. Check with:
+    #   gh api repos/BernardoJose90/event-network-hub/actions/oidc/customization/sub
     condition {
       test     = "StringEquals"
       variable = "token.actions.githubusercontent.com:sub"
-      values   = ["repo:BernardoJose90/event-network-hub:ref:refs/heads/main"]
+      values   = ["repo:BernardoJose90@77443528/event-network-hub@1427064848:ref:refs/heads/main"]
     }
   }
 }
 
 resource "aws_iam_role" "event_network_hub_push" {
+  # checkov:skip=CKV_AWS_393:False positive, same as CKV_AWS_358 on event_network_hub_push_trust. Checkov's repo regex doesn't accept GitHub's immutable sub (owner@id/repo@id).
   name                 = "EventNetworkHubEcrPush"
   assume_role_policy   = data.aws_iam_policy_document.event_network_hub_push_trust.json
   max_session_duration = 3600
