@@ -657,6 +657,11 @@ data "aws_iam_policy_document" "permissions" {
       "secretsmanager:TagResource",
       "secretsmanager:DeleteSecret",
       "secretsmanager:DescribeSecret",
+      # modules/rds' explicit 7-day rotation schedule
+      # (aws_secretsmanager_secret_rotation in the upstream module):
+      # RotateSecret sets it, CancelRotateSecret removes it on destroy.
+      "secretsmanager:RotateSecret",
+      "secretsmanager:CancelRotateSecret",
     ]
     resources = ["arn:aws:secretsmanager:eu-west-2:${data.aws_caller_identity.read_current_account.account_id}:secret:rds!*"]
   }
