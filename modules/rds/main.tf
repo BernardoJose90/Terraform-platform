@@ -78,9 +78,9 @@ module "db" {
   create_db_subnet_group = true
   subnet_ids             = var.subnet_ids
 
-  # RDS already rotates its managed master secret every 7 days by default,
-  # but leaving that implicit fails Checkov's CKV_AWS_304 (rotation <= 90
-  # days). Same 7 days, now stated in code. rotate_immediately = false so an
+  # RDS already rotates its managed master secret every 7 days by default;
+  # this sets an explicit 25-day schedule instead, well inside Checkov's
+  # CKV_AWS_304 limit of 90 days. rotate_immediately = false so an
   # apply never rotates the password mid-deploy; the next scheduled window
   # does. The app reads the secret at connect time, so rotation needs no
   # restart.

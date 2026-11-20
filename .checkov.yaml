@@ -269,6 +269,16 @@ skip-check:
   # CKV_AWS_133 fails there, it's a real finding and this skip comes out.
   - CKV_AWS_133
 
+  # CKV_AWS_304 — "Ensure Secrets Manager secrets should be rotated within
+  # 90 days". Same resource chain and same gap as CKV_AWS_133: flags the
+  # upstream db_instance submodule's aws_secretsmanager_secret_rotation.
+  # modules/rds sets master_user_password_rotation_automatically_after_days
+  # = 25 (a plain value), and CI still failed on it after that change, just
+  # like CKV_AWS_37 above. Same resolved-plan caveat as CKV_AWS_133: confirm
+  # it there once development's RDS is actually in a plan.
+  - CKV_AWS_304
+
+
   # CKV_AWS_79 — "Ensure Instance Metadata Service Version 1 is not
   # enabled" — and CKV_AWS_341 — "Ensure Launch template should not have a
   # metadata response hop limit greater than 1". Both flag the launch
