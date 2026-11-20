@@ -90,6 +90,12 @@ variable "enable_s3" {
   default     = false
 }
 
+variable "enable_rds" {
+  description = "Turns on the RDS permissions modules/rds needs: the instance and its subnet group, the RDS-managed master password secret (rds!*), and the rds.amazonaws.com service-linked role. Set this to true only for an account that calls modules/rds — currently just development."
+  type        = bool
+  default     = false
+}
+
 variable "manage_named_roles" {
   description = <<-EOT
     Names — not Amazon Resource Names (ARNs); this account's own account

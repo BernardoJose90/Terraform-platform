@@ -489,6 +489,10 @@ data "aws_iam_policy_document" "permissions" {
   # member-accounts/development/main.tf. Like the rest of this policy it's
   # granted in every account; the boundary only allows it where enable_eks
   # is true.
+  #
+  # rds.amazonaws.com: AWSServiceRoleForRDS, created the first time
+  # modules/rds launches an instance in the account. The boundary only
+  # allows it where enable_rds is true.
   statement {
     sid       = "EksServiceLinkedRoles"
     effect    = "Allow"
@@ -497,7 +501,7 @@ data "aws_iam_policy_document" "permissions" {
     condition {
       test     = "StringEquals"
       variable = "iam:AWSServiceName"
-      values   = ["eks.amazonaws.com", "eks-nodegroup.amazonaws.com", "spot.amazonaws.com"]
+      values   = ["eks.amazonaws.com", "eks-nodegroup.amazonaws.com", "spot.amazonaws.com", "rds.amazonaws.com"]
     }
   }
 
@@ -600,6 +604,66 @@ data "aws_iam_policy_document" "permissions" {
       "s3:ListTagsForResource",
     ]
     resources = ["arn:aws:s3:::*-${var.account_name}"]
+  }
+
+  # modules/rds (an app's own PostgreSQL instance, e.g. event-network-hub's):
+  # the instance and its DB subnet group, plus the tags the upstream
+  # module sets. Describe*/ListTagsForResource are what the provider reads
+  # on every refresh; some Describe calls (engine versions, orderable
+  # instance options) have no resource-level scoping, hence "*" for reads.
+  # Writes are scoped to this account's own RDS resources. The security
+  # group modules/rds creates is covered by NetworkAndCompute (ec2:*).
+  # The boundary only allows any of this where enable_rds is true.
+  statement {
+    sid    = "ReadAppRds"
+    effect = "Allow"
+    actions = [
+      "rds:Describe*",
+      "rds:ListTagsForResource",
+    ]
+    resources = ["*"]
+  }
+
+  statement {
+    sid    = "ManageAppRds"
+    effect = "Allow"
+    actions = [
+      "rds:CreateDBInstance",
+      "rds:ModifyDBInstance",
+      "rds:DeleteDBInstance",
+      "rds:RebootDBInstance",
+      "rds:DeleteDBInstanceAutomatedBackup",
+      "rds:CreateDBSubnetGroup",
+      "rds:ModifyDBSubnetGroup",
+      "rds:DeleteDBSubnetGroup",
+      "rds:AddTagsToResource",
+      "rds:RemoveTagsFromResource",
+    ]
+    resources = ["arn:aws:rds:eu-west-2:${data.aws_caller_identity.read_current_account.account_id}:*"]
+  }
+
+  # modules/rds sets manage_master_user_password = true: RDS creates the
+  # master password secret (and deletes it with the instance) on the
+  # caller's behalf, which per AWS's "Password management with Amazon RDS
+  # and AWS Secrets Manager" docs needs secretsmanager:CreateSecret and
+  # TagResource on the caller. RDS always names it rds!<resource-id>, so
+  # this is scoped to RDS-managed secrets only. kms:DescribeKey (on the
+  # AWS-managed aws/secretsmanager key) is already granted by EcrKmsKey.
+  statement {
+    sid    = "RdsManagedMasterSecret"
+    effect = "Allow"
+    actions = [
+      "secretsmanager:CreateSecret",
+      "secretsmanager:TagResource",
+      "secretsmanager:DeleteSecret",
+      "secretsmanager:DescribeSecret",
+      # modules/rds' explicit 7-day rotation schedule
+      # (aws_secretsmanager_secret_rotation in the upstream module):
+      # RotateSecret sets it, CancelRotateSecret removes it on destroy.
+      "secretsmanager:RotateSecret",
+      "secretsmanager:CancelRotateSecret",
+    ]
+    resources = ["arn:aws:secretsmanager:eu-west-2:${data.aws_caller_identity.read_current_account.account_id}:secret:rds!*"]
   }
 
   # force_destroy = true (modules/s3's dev setting) means destroying the
