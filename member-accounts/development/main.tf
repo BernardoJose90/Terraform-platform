@@ -172,6 +172,11 @@ module "terraform_deploy_boundary" {
   # module.s3_event_network_hub below.
   enable_s3 = true
 
+  # module.rds_event_network_hub below. Changes this account's boundary, so
+  # it needs the break-glass apply (TerraformDeploy can't edit its own
+  # boundary) before CI can create the instance.
+  enable_rds = true
+
   extra_assumable_role_arns = local.extra_assumable_role_arns
 }
 
@@ -577,27 +582,21 @@ module "eks" {
 }
 
 # ========================================================================
-# Pod Identity for event-network-hub's own app pods — scaffolded now,
-# before modules/rds and modules/s3 are actually called for it (see those
-# modules' own "wait until the app is running" discussion). Uses
+# Pod Identity for event-network-hub's own app pods. Uses
 # modules/app-pod-identity rather than hand-writing this, since
 # production will need the exact same thing once its own EKS cluster
 # exists — this isn't hypothetical reuse, event-network-hub is already
 # confirmed to run in both accounts.
 #
-# The association (which namespace/service account this role is bound
-# to) doesn't need RDS/S3 to exist — only the permissions do.
-# namespace/service_account assumed to match event-network-hub-gitops's
-# own manifests; this is an exact string match against what's actually
-# deployed, so double-check those names once that repo's manifests exist.
+# namespace/service_account must match the Helm chart in Platform-Gitops
+# (apps/event-network-hub): this is an exact string match against what's
+# actually deployed.
 #
-# No permissions attached yet (policy_statements left at its default
-# empty list) — this role can currently do nothing. Once modules/rds and
-# modules/s3 are wired up for event-network-hub, add here:
-#   - secretsmanager:GetSecretValue scoped to
-#     module.rds_event_network_hub[0].master_user_secret_arn
-#   - s3:GetObject/PutObject/ListBucket scoped to
-#     module.s3_event_network_hub[0].bucket_arn (and that ARN + "/*")
+# Permissions: read the RDS-managed master password secret (the app
+# fetches it at connect time, so RDS's automatic rotation is picked up
+# without a restart), and read/write/delete objects in the app's bucket.
+# The secret uses the AWS-managed aws/secretsmanager key, which needs no
+# kms:Decrypt grant for a same-account caller.
 # ======================================================================
 module "event_network_hub_pod_identity" {
   count = var.networking_enabled && var.eks_enabled ? 1 : 0
@@ -609,11 +608,33 @@ module "event_network_hub_pod_identity" {
   namespace       = "development"
   service_account = "event-network-hub-sa"
 
+  policy_statements = [
+    {
+      sid       = "ReadDatabaseSecret"
+      actions   = ["secretsmanager:GetSecretValue"]
+      resources = [module.rds_event_network_hub[0].master_user_secret_arn]
+    },
+    {
+      sid       = "ListAppBucket"
+      actions   = ["s3:ListBucket"]
+      resources = [module.s3_event_network_hub[0].bucket_arn]
+    },
+    {
+      sid       = "ReadWriteAppObjects"
+      actions   = ["s3:GetObject", "s3:PutObject", "s3:DeleteObject"]
+      resources = ["${module.s3_event_network_hub[0].bucket_arn}/*"]
+    },
+  ]
+
   tags = var.tags
 
   depends_on = [module.eks]
 }
 
+# Uploaded workbooks and generated PDFs. No expiration: the app's database
+# points at these objects, so expiring them would leave broken documents.
+# force_destroy stays true — this is development, and pausing the cluster
+# (eks_enabled = false) deletes the bucket and its contents.
 module "s3_event_network_hub" {
   count = var.networking_enabled && var.eks_enabled ? 1 : 0
 
@@ -621,10 +642,49 @@ module "s3_event_network_hub" {
 
   bucket_name     = "event-network-hub-development"
   force_destroy   = true
-  expiration_days = 2
+  expiration_days = null
 
   tags = var.tags
 
   depends_on = [module.eks]
 
+}
+
+# ========================================================================
+# event-network-hub's PostgreSQL database. Prototype sizing: smallest
+# Graviton instance, single-AZ, 1 day of automated backups, no deletion
+# protection and no final snapshot.
+#
+# Gated on eks_enabled like the bucket above, because the only client
+# allowed in is the EKS node security group (Karpenter's nodes use the
+# same group, via the karpenter.sh/discovery tag). So pausing the cluster
+# DELETES THE DATABASE and its data, with no final snapshot. Fine for
+# test data; set skip_final_snapshot = false (and keep a snapshot) before
+# anything worth keeping goes in.
+# ========================================================================
+module "rds_event_network_hub" {
+  count = var.networking_enabled && var.eks_enabled ? 1 : 0
+
+  source = "../../modules/rds"
+
+  identifier = "event-network-hub-development"
+  db_name    = "event_network_hub"
+
+  vpc_id = module.vpc[0].vpc_id
+  subnet_ids = [
+    module.dev_purpose_subnets[0].subnet_ids["rds-a"],
+    module.dev_purpose_subnets[0].subnet_ids["rds-b"],
+  ]
+  allowed_security_group_id = module.eks[0].node_security_group_id
+
+  instance_class          = "db.t4g.micro"
+  allocated_storage       = 20
+  multi_az                = false
+  backup_retention_period = 1
+  deletion_protection     = false
+  skip_final_snapshot     = true
+
+  tags = var.tags
+
+  depends_on = [module.eks]
 }

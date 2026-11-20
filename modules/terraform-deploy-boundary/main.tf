@@ -417,8 +417,13 @@ data "aws_iam_policy_document" "terraform_deploy_boundary" {
   # can launch Spot nodes. Mirrors the same entry in modules/github-oidc-roles.
   # This boundary change needs the break-glass apply (see this file's header):
   # TerraformDeploy can't edit its own boundary.
+  #
+  # rds.amazonaws.com: AWSServiceRoleForRDS, created the first time an RDS
+  # instance is launched in the account. Appended here (under enable_rds)
+  # rather than as its own statement to save characters against the
+  # 6,144-character limit (see ManageAppS3Buckets below).
   dynamic "statement" {
-    for_each = var.enable_eks ? [1] : []
+    for_each = var.enable_eks || var.enable_rds ? [1] : []
     content {
       sid       = "EksServiceLinkedRoles"
       effect    = "Allow"
@@ -427,7 +432,10 @@ data "aws_iam_policy_document" "terraform_deploy_boundary" {
       condition {
         test     = "StringEquals"
         variable = "iam:AWSServiceName"
-        values   = ["eks.amazonaws.com", "eks-nodegroup.amazonaws.com", "spot.amazonaws.com"]
+        values = concat(
+          var.enable_eks ? ["eks.amazonaws.com", "eks-nodegroup.amazonaws.com", "spot.amazonaws.com"] : [],
+          var.enable_rds ? ["rds.amazonaws.com"] : [],
+        )
       }
     }
   }
@@ -672,6 +680,36 @@ data "aws_iam_policy_document" "terraform_deploy_boundary" {
         "arn:aws:s3:::*-${var.account_name}",
         "arn:aws:s3:::*-${var.account_name}/*",
       ]
+    }
+  }
+
+  # Ceiling for modules/github-oidc-roles' ManageAppRds and
+  # RdsManagedMasterSecret statements, which hold the exact action lists.
+  # rds:* rather than mirroring that list, for the same 6,144-character
+  # reason as ManageAppS3Buckets above. kms:DescribeKey is what RDS needs
+  # from the caller to use the AWS-managed aws/rds and aws/secretsmanager
+  # keys.
+  dynamic "statement" {
+    for_each = var.enable_rds ? [1] : []
+    content {
+      sid       = "ManageAppRds"
+      effect    = "Allow"
+      actions   = ["rds:*", "kms:DescribeKey"]
+      resources = ["*"]
+    }
+  }
+
+  # manage_master_user_password (baked into modules/rds): RDS creates and
+  # later deletes the master password secret as the caller, so the caller
+  # needs these on it. RDS always names that secret rds!<resource-id>, so
+  # this stays scoped to RDS-managed secrets — no app secret is reachable.
+  dynamic "statement" {
+    for_each = var.enable_rds ? [1] : []
+    content {
+      sid       = "RdsManagedMasterSecret"
+      effect    = "Allow"
+      actions   = ["secretsmanager:*"]
+      resources = ["arn:aws:secretsmanager:eu-west-2:${data.aws_caller_identity.current.account_id}:secret:rds!*"]
     }
   }
 
